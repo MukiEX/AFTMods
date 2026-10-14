@@ -18,6 +18,7 @@
 #include "../shader_ft.hpp"
 #include "../sprite.hpp"
 #include "../stage.hpp"
+#include "../stereo.hpp"
 #include "../wrap.hpp"
 #include "draw_object.hpp"
 #include <Helpers.h>
@@ -2157,20 +2158,23 @@ namespace mdl {
         if (-camera_info.data.clip_near < min_depth || -camera_info.data.clip_far > max_depth)
             return 0;
 
+        // Widen the side planes so objects visible to either stereo eye survive culling.
+        const float_t cull_radius = radius + stereo_cull_margin((float_t)-min_depth);
+
         float_t v5 = vec3::dot(camera_info.data.fpn_left, _center);
-        if (v5 < -radius)
+        if (v5 < -cull_radius)
             return 0;
 
         float_t v6 = vec3::dot(camera_info.data.fpn_right, _center);
-        if (v6 < -radius)
+        if (v6 < -cull_radius)
             return 0;
 
         float_t v7 = vec3::dot(camera_info.data.fpn_bottom, _center);
-        if (v7 < -radius)
+        if (v7 < -cull_radius)
             return 0;
 
         float_t v8 = vec3::dot(camera_info.data.fpn_top, _center);
-        if (v8 < -radius)
+        if (v8 < -cull_radius)
             return 0;
 
         if (-camera_info.data.clip_near >= max_depth && -camera_info.data.clip_far <= min_depth

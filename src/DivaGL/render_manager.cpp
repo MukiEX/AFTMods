@@ -25,6 +25,7 @@
 #include "sss.hpp"
 #include "stage_param.hpp"
 #include "static_var.hpp"
+#include "stereo.hpp"
 #include "texture.hpp"
 #include <Helpers.h>
 
@@ -270,6 +271,29 @@ namespace rndr {
             rend_data_ctx.state.set_depth_mask(GL_TRUE);
         }
 
+        if (stereo_enabled())
+            render_all_stereo();
+        else
+            render_all_passes();
+
+        mdl::etc_obj_manager->post_draw();
+        sprite_manager_post_draw();
+
+        render_data_context rend_data_ctx(GL_REND_STATE_POST_2D);
+        rend_data_ctx.state.get();
+        rend_data_ctx.state.bind_vertex_array(0);
+        rend_data_ctx.state.disable_primitive_restart();
+        rend_data_ctx.state.bind_uniform_buffer(0);
+        rend_data_ctx.state.bind_uniform_buffer_base(0, 0);
+        rend_data_ctx.state.bind_uniform_buffer_base(1, 0);
+        rend_data_ctx.state.bind_uniform_buffer_base(2, 0);
+        rend_data_ctx.state.bind_uniform_buffer_base(3, 0);
+        rend_data_ctx.state.bind_uniform_buffer_base(4, 0);
+        rend_data_ctx.state.bind_shader_storage_buffer(0);
+        rend_data_ctx.state.bind_shader_storage_buffer_base(0, 0);
+    }
+
+    void RenderManager::render_all_passes() {
         {
             render_data_context rend_data_ctx(GL_REND_STATE_PRE_3D);
             rend_data_ctx.state.begin_event("rndpass_render_all_pass::Caller::execute_pre3d");
@@ -298,22 +322,44 @@ namespace rndr {
             rend_data_ctx.state.end_event();
             rend_data_ctx.state.finish();
         }
+    }
 
-        mdl::etc_obj_manager->post_draw();
-        sprite_manager_post_draw();
+    // Renders the full pipeline once per eye and composites the results side by side.
+    void RenderManager::render_all_stereo() {
+        rndr::Render* rend = render;
+        cam_data center_cam = rctx->render_manager_cam;
 
-        render_data_context rend_data_ctx(GL_REND_STATE_POST_2D);
-        rend_data_ctx.state.get();
-        rend_data_ctx.state.bind_vertex_array(0);
-        rend_data_ctx.state.disable_primitive_restart();
-        rend_data_ctx.state.bind_uniform_buffer(0);
-        rend_data_ctx.state.bind_uniform_buffer_base(0, 0);
-        rend_data_ctx.state.bind_uniform_buffer_base(1, 0);
-        rend_data_ctx.state.bind_uniform_buffer_base(2, 0);
-        rend_data_ctx.state.bind_uniform_buffer_base(3, 0);
-        rend_data_ctx.state.bind_uniform_buffer_base(4, 0);
-        rend_data_ctx.state.bind_shader_storage_buffer(0);
-        rend_data_ctx.state.bind_shader_storage_buffer_base(0, 0);
+        // TAA history would blend the two eyes together, so it's off for stereo frames.
+        // The camera's TAA jitter is already suppressed in init_projection_matrix.
+        const int32_t taa = rend->taa;
+        const float_t taa_blend = rend->taa_blend;
+        rend->taa = 0;
+        rend->taa_blend = 1.0f;
+
+        // Per-frame ring buffers that must advance once per frame, not once per eye.
+        const int32_t exposure_history_counter = rend->exposure_history_counter;
+        const int32_t exposure_query_index = rend->exposure_query_index;
+        const int32_t lens_flare_query_index = rend->lens_flare_query_index;
+
+        for (int32_t i = 0; i < 2; i++) {
+            const int32_t eye_sign = i ? 1 : -1;
+            if (i) {
+                rend->exposure_history_counter = exposure_history_counter;
+                rend->exposure_query_index = exposure_query_index;
+                rend->lens_flare_query_index = lens_flare_query_index;
+            }
+
+            stereo_make_eye_cam(center_cam, rctx->render_manager_cam, eye_sign);
+            stereo_eye_begin(eye_sign);
+            render_all_passes();
+            stereo_eye_end(eye_sign);
+        }
+
+        stereo_present();
+
+        rctx->render_manager_cam = center_cam;
+        rend->taa = taa;
+        rend->taa_blend = taa_blend;
     }
 
     void RenderManager::render_single_pass(render_data_context& rend_data_ctx, RenderPassID id) {
@@ -943,7 +989,8 @@ namespace rndr {
 
             cam_data screen_cam = cam;
             screen_cam.set_fov(32.2673416137695f * DEG_TO_RAD_FLOAT);
-            screen_cam.calc_persp_proj_mat_offset(1.0f, render_get()->get_taa_offset());
+            screen_cam.calc_persp_proj_mat_offset(1.0f, render_get()->get_taa_offset()
+                + stereo_get_proj_offset(screen_cam.get_fov(), screen_cam.get_aspect()));
             screen_cam.calc_view_proj_mat();
             rend_data_ctx.set_batch_scene_camera(screen_cam);
 
@@ -1046,9 +1093,10 @@ namespace rndr {
             gl_get_error_print();
         }
 
-        fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), 0,
-            0, 0, rctx->screen_width, rctx->screen_height,
-            0, 0, rctx->screen_width, rctx->screen_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        if (!stereo_in_eye_pass())
+            fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), 0,
+                0, 0, rctx->screen_width, rctx->screen_height,
+                0, 0, rctx->screen_width, rctx->screen_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
         rend_data_ctx.state.bind_framebuffer(0);
         rend_data_ctx.state.end_event();
@@ -1165,6 +1213,7 @@ HOOK(void, FASTCALL, render_manager_init_render_textures, 0x0000000140502560, in
 }
 
 HOOK(void, FASTCALL, render_manager_free_data, 0x0000000140502770) {
+    stereo_free();
     if (reflect_full_ptr)
         reflect_full_ptr->free();
     render_manager_free_render_textures();

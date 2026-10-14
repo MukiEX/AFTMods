@@ -22,3 +22,10 @@ extern bool sv_shared_storage_uniform_buffer;
 extern bool sv_task_movie_player_no_interop;
 
 extern bool sv_texture_skinning_buffer;
+
+extern int32_t sv_stereo_mode;
+extern int32_t sv_stereo_separation;
+extern int32_t sv_stereo_convergence;
+extern bool sv_stereo_swap_eyes;
+extern int32_t sv_stereo_hud_parallax;
+extern bool sv_stereo_bg_infinity;

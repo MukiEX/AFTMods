@@ -8,6 +8,7 @@
 #include "object.hpp"
 #include "render.hpp"
 #include "render_context.hpp"
+#include "stereo.hpp"
 #include <Helpers.h>
 
 HOOK(void, FASTCALL, init_projection_matrix, 0x00000001401F8E90) {
@@ -61,7 +62,8 @@ HOOK(void, FASTCALL, init_projection_matrix, 0x00000001401F8E90) {
     mat4_transpose(&pmat_pre2d, &camera_info.data.vpmat_pre2d);
 
     vec2 persp_scale = 1.0f;
-    vec2 persp_offset = render_get()->get_taa_offset();
+    // No TAA jitter in stereo: TAA is off there and eye projections are rebuilt anyway.
+    vec2 persp_offset = stereo_enabled() ? vec2(0.0f) : render_get()->get_taa_offset();
     mat4 proj;
     mat4_persp_offset(camera_info.data.pers * DEG_TO_RAD_FLOAT, (float_t)camera_info.data.aspect,
         camera_info.data.clip_near, camera_info.data.clip_far, &persp_scale, &persp_offset, &proj);
@@ -80,6 +82,7 @@ HOOK(void, FASTCALL, ctrl_camera, 0x00000001401F8970) {
 
     extern render_context* rctx;
     rctx->render_manager_cam.get();
+    stereo_update_camera(rctx->render_manager_cam);
 }
 
 void camera_patch() {
@@ -104,22 +107,27 @@ int32_t check_screen_aabb(const AABB* aabb, const mat4* mat) {
     mat4_transpose(&view_mat, &view_mat);
 
     vec4 vtx[8];
+    float_t max_depth = 0.0f;
     for (int32_t i = 0; i < 8; i++) {
         mat4_transform_point(&view_mat, &points[i], (vec3*)&vtx[i]);
         vtx[i].w = 1.0f;
+        max_depth = max_def(max_depth, -vtx[i].z);
     }
+
+    // Widen the side planes so objects visible to either stereo eye survive culling.
+    const float_t side_margin = stereo_cull_margin(max_depth);
 
     vec4 plane[6];
     *(vec3*)&plane[0] = { 0.0f, 0.0f, -1.0f };
     plane[0].w = -camera_info.data.clip_near;
     *(vec3*)&plane[1] = camera_info.data.fpn_left;
-    plane[1].w = 0.0f;
+    plane[1].w = side_margin;
     *(vec3*)&plane[2] = camera_info.data.fpn_right;
-    plane[2].w = 0.0f;
+    plane[2].w = side_margin;
     *(vec3*)&plane[3] = camera_info.data.fpn_bottom;
-    plane[3].w = 0.0f;
+    plane[3].w = side_margin;
     *(vec3*)&plane[4] = camera_info.data.fpn_top;
-    plane[4].w = 0.0f;
+    plane[4].w = side_margin;
     *(vec3*)&plane[5] = { 0.0f, 0.0f, 1.0f };
     plane[5].w = camera_info.data.clip_far;
 

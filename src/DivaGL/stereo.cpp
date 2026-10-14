@@ -1,0 +1,221 @@
+/*
+    Side-by-side stereoscopic rendering for DivaGL
+
+    How it works:
+    - RenderManager::render_all runs the whole render pipeline (shadow, SSS, reflections,
+      3D, post-process, sprites) once per eye with an offset camera.
+    - Eye cameras are parallel (no toe-in) with an asymmetric frustum, so objects at the
+      convergence distance land on the screen plane with zero parallax.
+    - After each eye, screen_buffer (final composited frame) is scaled into its half of
+      an SBS buffer; the SBS buffer is then copied to screen_buffer and the backbuffer.
+
+    All matrices here follow KKdLib's row-vector convention (v * View * Proj,
+    translation in row3), which is what cam_data stores.
+*/
+
+#include "stereo.hpp"
+#include "camera_render.hpp"
+#include "render_context.hpp"
+#include "render_texture.hpp"
+#include "shared.hpp"
+#include "static_var.hpp"
+
+extern render_context* rctx;
+
+float_t sprite_stereo_offset[4] = {};
+
+// Heap-allocated so no GL/texture release runs from a static destructor at process exit.
+static RenderTexture* stereo_buffer = 0;
+static int32_t stereo_buffer_width = 0;
+static int32_t stereo_buffer_height = 0;
+
+static int32_t stereo_current_eye = 0;
+
+// Updated once per frame from the center camera
+static float_t stereo_half_sep = 0.0f;     // half the eye separation, world units
+static float_t stereo_conv_dist = 1.0f;    // convergence (zero parallax) distance, world units
+
+bool stereo_enabled() {
+    return sv_stereo_mode > STEREO_MODE_OFF && sv_stereo_mode < STEREO_MODE_MAX;
+}
+
+bool stereo_in_eye_pass() {
+    return stereo_current_eye != 0;
+}
+
+void stereo_update_camera(const cam_data& center) {
+    if (!stereo_enabled()) {
+        stereo_half_sep = 0.0f;
+        return;
+    }
+
+    stereo_half_sep = (float_t)sv_stereo_separation * 0.001f * 0.5f;
+
+    float_t conv;
+    if (sv_stereo_convergence > 0)
+        conv = (float_t)sv_stereo_convergence * 0.01f;
+    else {
+        // Auto: converge on the camera's interest point. PV cameras almost always
+        // aim at the singer, which puts her on the screen plane.
+        const mat4& view = center.view_mat;
+        const vec3 forward = -vec3(view.row0.z, view.row1.z, view.row2.z);
+        conv = vec3::dot(center.interest - center.view_point, forward);
+    }
+
+    // Keep the convergence plane sane: never closer than the near plane or 10 cm,
+    // never so far that the stereo shift vanishes.
+    const float_t min_conv = max_def(center.min_distance * 2.0f, 0.1f);
+    stereo_conv_dist = clamp_def(conv, min_conv, 1000.0f);
+}
+
+float_t stereo_cull_margin(float_t depth) {
+    if (!stereo_enabled() || stereo_half_sep <= 0.0f)
+        return 0.0f;
+
+    // An eye frustum differs from the center one by at most half_sep in front of the
+    // convergence plane, and by half_sep * (depth / conv - 1) behind it.
+    return stereo_half_sep * max_def(1.0f, depth / stereo_conv_dist);
+}
+
+static float_t stereo_proj_shift(int32_t eye_sign, float_t fov_y, float_t aspect) {
+    if (!eye_sign)
+        return 0.0f;
+
+    // NDC x of a point at the convergence distance on the center axis is
+    // -p00 * e / conv in the eye camera; shift it back to 0.
+    const float_t p00 = 1.0f / (aspect * tanf(fov_y * 0.5f));
+    const float_t e = stereo_half_sep * (float_t)eye_sign;
+    return e * p00 / stereo_conv_dist;
+}
+
+vec2 stereo_get_proj_offset(float_t fov_y, float_t aspect) {
+    return vec2(stereo_proj_shift(stereo_current_eye, fov_y, aspect), 0.0f);
+}
+
+void stereo_make_eye_cam(const cam_data& center, cam_data& eye, int32_t eye_sign) {
+    eye = center;
+
+    const float_t e = stereo_half_sep * (float_t)eye_sign;
+    const mat4& view = center.view_mat;
+    const vec3 right(view.row0.x, view.row1.x, view.row2.x);
+
+    eye.view_point = center.view_point + right * e;
+    eye.interest = center.interest + right * e;
+
+    // Moving the camera by +e along its own X axis shifts everything in view space by -e.
+    eye.view_mat.row3.x -= e;
+
+    // Rebuild projection without TAA jitter, with the asymmetric (off-axis) shift.
+    eye.calc_persp_proj_mat_offset(1.0f,
+        vec2(stereo_proj_shift(eye_sign, eye.fov, eye.aspect), 0.0f));
+    eye.calc_view_proj_mat();
+}
+
+static void stereo_buffer_check(int32_t width, int32_t height) {
+    if (!stereo_buffer)
+        stereo_buffer = new RenderTexture;
+
+    if (stereo_buffer_width == width && stereo_buffer_height == height && stereo_buffer->m_txhd_color)
+        return;
+
+    stereo_buffer->create_texture(width, height, 0, GL_RGBA8, 0);
+    stereo_buffer_width = width;
+    stereo_buffer_height = height;
+}
+
+void stereo_eye_begin(int32_t eye_sign) {
+    stereo_current_eye = eye_sign;
+
+    const cam_data& cam = rctx->render_manager_cam;
+
+    // HUD: user-set parallax (0 = on the screen plane).
+    sprite_stereo_offset[0] = (float_t)eye_sign * (float_t)sv_stereo_hud_parallax * 0.001f;
+
+    // Sprites drawn before the 3D (2D stage backgrounds, movie PV video) are placed at
+    // infinity, which is where they belong behind a 3D scene.
+    sprite_stereo_offset[2] = sv_stereo_bg_infinity
+        ? stereo_proj_shift(eye_sign, cam.fov, cam.aspect) : 0.0f;
+
+    sprite_stereo_offset[1] = 0.0f;
+    sprite_stereo_offset[3] = sprite_stereo_offset[0];
+}
+
+void stereo_eye_end(int32_t eye_sign) {
+    const int32_t width = rctx->screen_width;
+    const int32_t height = rctx->screen_height;
+    if (width <= 1 || height <= 0)
+        return;
+
+    stereo_buffer_check(width, height);
+
+    render_data_context rend_data_ctx(GL_REND_STATE_POST_2D);
+    rend_data_ctx.state.get();
+    rend_data_ctx.state.begin_event("stereo_eye_composite");
+
+    // First eye clears the target (letterbox bars in full SBS mode).
+    if (eye_sign < 0) {
+        stereo_buffer->begin_render(rend_data_ctx.state);
+        vec4 clear_color;
+        rend_data_ctx.state.get_clear_color(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
+        rend_data_ctx.state.set_color_mask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        rend_data_ctx.state.clear_color(0.0f, 0.0f, 0.0f, 1.0f);
+        rend_data_ctx.state.clear(GL_COLOR_BUFFER_BIT);
+        rend_data_ctx.state.clear_color(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
+        stereo_buffer->end_render(rend_data_ctx.state);
+    }
+
+    const bool left_half = (eye_sign < 0) != sv_stereo_swap_eyes;
+    const int32_t half_width = width / 2;
+    const int32_t dst_x = left_half ? 0 : width - half_width;
+
+    int32_t dst_y = 0;
+    int32_t dst_height = height;
+    if (sv_stereo_mode == STEREO_MODE_SBS_FULL) {
+        dst_height = height / 2;
+        dst_y = (height - dst_height) / 2;
+    }
+
+    fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), stereo_buffer->get_fb(),
+        0, 0, width, height,
+        dst_x, dst_y, half_width, dst_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+
+    rend_data_ctx.state.bind_framebuffer(0);
+    rend_data_ctx.state.end_event();
+    rend_data_ctx.state.finish();
+
+    stereo_current_eye = 0;
+}
+
+void stereo_present() {
+    for (float_t& i : sprite_stereo_offset)
+        i = 0.0f;
+    stereo_current_eye = 0;
+
+    const int32_t width = rctx->screen_width;
+    const int32_t height = rctx->screen_height;
+    if (!stereo_buffer || !stereo_buffer->m_txhd_color || stereo_buffer_width != width || stereo_buffer_height != height)
+        return;
+
+    render_data_context rend_data_ctx(GL_REND_STATE_POST_2D);
+    rend_data_ctx.state.get();
+    rend_data_ctx.state.begin_event("stereo_present");
+
+    // Copy back into screen_buffer so screenshots/captures get the SBS frame too.
+    fbo_blit(rend_data_ctx.state, stereo_buffer->get_fb(), rctx->screen_buffer.get_fb(),
+        0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    fbo_blit(rend_data_ctx.state, stereo_buffer->get_fb(), 0,
+        0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+    rend_data_ctx.state.bind_framebuffer(0);
+    rend_data_ctx.state.end_event();
+    rend_data_ctx.state.finish();
+}
+
+void stereo_free() {
+    if (stereo_buffer) {
+        delete stereo_buffer;
+        stereo_buffer = 0;
+    }
+    stereo_buffer_width = 0;
+    stereo_buffer_height = 0;
+}

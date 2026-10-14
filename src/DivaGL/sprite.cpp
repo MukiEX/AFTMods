@@ -8,6 +8,7 @@
 #include "gl_state.hpp"
 #include "render_context.hpp"
 #include "shader_ft.hpp"
+#include "stereo.hpp"
 #include <Helpers.h>
 
 struct sprite_vertex_data_uv0 {
@@ -405,6 +406,12 @@ namespace spr {
                 x_max = viewport_rect.width;
                 y_max = viewport_rect.height;
             }
+
+            // Stereo: horizontal parallax for this sprite list (clip.x += offset * clip.w).
+            // view_projection is stored transposed here, so row0 is clip x and row3 is clip w.
+            if (index >= 0 && index < 4 && sprite_stereo_offset[index] != 0.0f)
+                view_projection.row0 = view_projection.row0
+                    + view_projection.row3 * sprite_stereo_offset[index];
 
             float_t v23 = (float_t)x_max * 0.5f;
             float_t v24 = (float_t)x_min + v23;

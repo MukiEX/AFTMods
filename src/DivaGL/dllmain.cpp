@@ -70,6 +70,19 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
         sv_texture_skinning_buffer = GetPrivateProfileIntW(L"experimentals",
             L"texture_skinning_buffer", 0, CONFIG_FILE) > 0 ? true : false;
 
+        sv_stereo_mode = GetPrivateProfileIntW(L"stereo", L"stereo_mode", 0, CONFIG_FILE);
+        sv_stereo_mode = clamp_def(sv_stereo_mode, 0, 2);
+        sv_stereo_separation = clamp_def((int32_t)GetPrivateProfileIntW(L"stereo",
+            L"stereo_separation", 65, CONFIG_FILE), 0, 500);
+        sv_stereo_convergence = clamp_def((int32_t)GetPrivateProfileIntW(L"stereo",
+            L"stereo_convergence", 0, CONFIG_FILE), 0, 100000);
+        sv_stereo_swap_eyes = GetPrivateProfileIntW(L"stereo",
+            L"stereo_swap_eyes", 0, CONFIG_FILE) > 0 ? true : false;
+        sv_stereo_hud_parallax = clamp_def((int32_t)GetPrivateProfileIntW(L"stereo",
+            L"stereo_hud_parallax", 0, CONFIG_FILE), -50, 50);
+        sv_stereo_bg_infinity = GetPrivateProfileIntW(L"stereo",
+            L"stereo_bg_infinity", 1, CONFIG_FILE) > 0 ? true : false;
+
         dll_handle = (size_t)handle;
         printf_divagl("Current version - v0.11.0.0 (Build date: " __DATE__ ")");
         printf_divagl("Attach");
@@ -138,6 +151,36 @@ extern "C" __declspec(dllexport) BOOL SetOption(const char* str) {
         if (parse_bool(val, val_len, value))
             sv_texture_skinning_buffer = !!value;
     }
+    else if (!strncmp(name, "stereo_mode", name_len)) {
+        int32_t value = 0;
+        if (parse_int(val, value))
+            sv_stereo_mode = clamp_def(value, 0, 2);
+    }
+    else if (!strncmp(name, "stereo_separation", name_len)) {
+        int32_t value = 0;
+        if (parse_int(val, value))
+            sv_stereo_separation = clamp_def(value, 0, 500);
+    }
+    else if (!strncmp(name, "stereo_convergence", name_len)) {
+        int32_t value = 0;
+        if (parse_int(val, value))
+            sv_stereo_convergence = clamp_def(value, 0, 100000);
+    }
+    else if (!strncmp(name, "stereo_swap_eyes", name_len)) {
+        int32_t value = 0;
+        if (parse_bool(val, val_len, value))
+            sv_stereo_swap_eyes = !!value;
+    }
+    else if (!strncmp(name, "stereo_hud_parallax", name_len)) {
+        int32_t value = 0;
+        if (parse_int(val, value))
+            sv_stereo_hud_parallax = clamp_def(value, -50, 50);
+    }
+    else if (!strncmp(name, "stereo_bg_infinity", name_len)) {
+        int32_t value = 0;
+        if (parse_bool(val, val_len, value))
+            sv_stereo_bg_infinity = !!value;
+    }
     else
         return FALSE;
 
@@ -155,6 +198,18 @@ extern "C" __declspec(dllexport) BOOL SetOptionInt(const char* name, int value) 
         sv_task_movie_player_no_interop = !!value;
     else if (!strcmp(name, "texture_skinning_buffer"))
         sv_texture_skinning_buffer = !!value;
+    else if (!strcmp(name, "stereo_mode"))
+        sv_stereo_mode = clamp_def(value, 0, 2);
+    else if (!strcmp(name, "stereo_separation"))
+        sv_stereo_separation = clamp_def(value, 0, 500);
+    else if (!strcmp(name, "stereo_convergence"))
+        sv_stereo_convergence = clamp_def(value, 0, 100000);
+    else if (!strcmp(name, "stereo_swap_eyes"))
+        sv_stereo_swap_eyes = !!value;
+    else if (!strcmp(name, "stereo_hud_parallax"))
+        sv_stereo_hud_parallax = clamp_def(value, -50, 50);
+    else if (!strcmp(name, "stereo_bg_infinity"))
+        sv_stereo_bg_infinity = !!value;
     else
         return FALSE;
 
@@ -266,6 +321,84 @@ PluginConfig::PluginConfigOption config[] = {
             L"Texture Skinning Buffer",
             L"If Shared Storage/Uniform Buffer isn't working for you.\nTry this option if you experience frame drops with multiple characters on screen.",
             false,
+            false,
+        }
+    },
+    {
+        PluginConfig::CONFIG_DROPDOWN_INDEX,
+        new PluginConfig::PluginConfigDropdownIndexData {
+            L"stereo_mode",
+            L"stereo",
+            CONFIG_FILE,
+            L"Stereoscopic 3D",
+            L"Renders the game twice from two eye positions and outputs them side by side.\n"
+            L"Half SBS: each eye squeezed to half width (3D TVs/monitors, XR glasses).\n"
+            L"Full SBS: each eye keeps its aspect ratio, letterboxed (cross-eyed/parallel viewing, VR players).\n"
+            L"Roughly doubles GPU load. TAA is disabled while stereo is on.",
+            0,
+            { L"Off", L"Half Side-by-Side", L"Full Side-by-Side" },
+        }
+    },
+    {
+        PluginConfig::CONFIG_NUMERIC,
+        new PluginConfig::PluginConfigNumericData {
+            L"stereo_separation",
+            L"stereo",
+            CONFIG_FILE,
+            L"Eye Separation (mm)",
+            L"Distance between the two virtual eyes. 65 is a typical human IPD.\nHigher values give stronger depth.",
+            65,
+            0,
+            500,
+        }
+    },
+    {
+        PluginConfig::CONFIG_NUMERIC,
+        new PluginConfig::PluginConfigNumericData {
+            L"stereo_convergence",
+            L"stereo",
+            CONFIG_FILE,
+            L"Convergence Distance (cm)",
+            L"Distance that appears on the screen plane. Closer things pop out, farther things recede.\n0 = automatic (the point the PV camera is looking at, usually the singer).",
+            0,
+            0,
+            100000,
+        }
+    },
+    {
+        PluginConfig::CONFIG_BOOLEAN,
+        new PluginConfig::PluginConfigBooleanData {
+            L"stereo_swap_eyes",
+            L"stereo",
+            CONFIG_FILE,
+            L"Swap Eyes",
+            L"Puts the right eye on the left half. Use for cross-eyed viewing or if depth looks inverted.",
+            false,
+            false,
+        }
+    },
+    {
+        PluginConfig::CONFIG_NUMERIC,
+        new PluginConfig::PluginConfigNumericData {
+            L"stereo_hud_parallax",
+            L"stereo",
+            CONFIG_FILE,
+            L"HUD Depth",
+            L"Parallax of the HUD/notes in 0.1% of image width. 0 = on the screen plane,\npositive = behind the screen, negative = in front.",
+            0,
+            -50,
+            50,
+        }
+    },
+    {
+        PluginConfig::CONFIG_BOOLEAN,
+        new PluginConfig::PluginConfigBooleanData {
+            L"stereo_bg_infinity",
+            L"stereo",
+            CONFIG_FILE,
+            L"2D Backgrounds at Infinity",
+            L"Places sprites drawn behind the 3D scene (2D stage backgrounds, PV movies) at infinite depth\ninstead of on the screen plane.",
+            true,
             false,
         }
     },

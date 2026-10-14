@@ -13,6 +13,7 @@
 #include "reflect_full.hpp"
 #include "render_context.hpp"
 #include "shader_ft.hpp"
+#include "stereo.hpp"
 #include "texture.hpp"
 
 extern bool task_stage_is_modern;
@@ -203,9 +204,10 @@ namespace rndr {
         for (int32_t i = 0; i < 8; i++)
             rend_data_ctx.state.bind_sampler(i, 0);
 
-        fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), 0,
-            0, 0, rctx->screen_width, rctx->screen_height,
-            0, 0, rctx->screen_width, rctx->screen_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        if (!stereo_in_eye_pass())
+            fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), 0,
+                0, 0, rctx->screen_width, rctx->screen_height,
+                0, 0, rctx->screen_width, rctx->screen_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
         rend_data_ctx.state.bind_framebuffer(0);
     }

@@ -114,6 +114,8 @@ namespace rndr {
         void set_shadow_true();
 
         void render_all();
+        void render_all_passes();
+        void render_all_stereo();
 
         void render_single_pass(render_data_context& rend_data_ct, rndr::RenderPassID id);
 
