@@ -162,3 +162,17 @@ PD Loader and the included plugins are distributed under MIT License:
   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
+
+-------------------------------------------------------------------------------
+
+DivaVK third-party components (src/DivaVK/external), MIT licensed; full texts
+are in the listed files:
+
+- volk, Copyright (c) 2018-2026 Arseny Kapoulkine (external/volk/LICENSE.md)
+- Vulkan Memory Allocator, Copyright (c) 2017-2026 Advanced Micro Devices, Inc.
+  (external/vma/LICENSE.txt)
+- Khronos OpenGL/KHR headers, Copyright 2013-2026 The Khronos Group Inc.
+  (SPDX-License-Identifier: MIT, in each header)
+
+DivaVK also links glslang (https://github.com/KhronosGroup/glslang), which is
+not vendored; see its LICENSE.txt (BSD-3-Clause and compatible licenses).

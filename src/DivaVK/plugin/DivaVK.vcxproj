@@ -1,0 +1,274 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <ProjectGuid>{6782100C-F5F8-5FE4-8FB7-083CBC21FD4F}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.props" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros">
+    <DivaVKVulkanHeaders Condition="'$(DivaVKVulkanHeaders)'==''">$(SolutionDir)src\DivaVK\external\Vulkan-Headers</DivaVKVulkanHeaders>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <LinkIncremental>false</LinkIncremental>
+    <TargetName>DivaVK</TargetName>
+    <OutDir>$(SolutionDir)bin\</OutDir>
+    <IntDir>$(SolutionDir)obj\debug\DivaVK\</IntDir>
+    <TargetExt>.dva</TargetExt>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LinkIncremental>false</LinkIncremental>
+    <TargetName>DivaVK</TargetName>
+    <OutDir>$(SolutionDir)bin\</OutDir>
+    <IntDir>$(SolutionDir)obj\release\DivaVK\</IntDir>
+    <TargetExt>.dva</TargetExt>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>WIN32;DEBUG;DIVAVK;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(SolutionDir)extern\src;$(SolutionDir)src\DivaVK\core\include;$(SolutionDir)src\DivaVK\external\volk;$(DivaVKVulkanHeaders)\include</AdditionalIncludeDirectories>
+      <ConformanceMode>true</ConformanceMode>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <OmitFramePointers>false</OmitFramePointers>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <CallingConvention>FastCall</CallingConvention>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <ObjectFileName>$(IntDir)/%(RelativeDir)</ObjectFileName>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <DisableSpecificWarnings>26812</DisableSpecificWarnings>
+      <UseFullPaths>false</UseFullPaths>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <TargetMachine>MachineX64</TargetMachine>
+      <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
+      <SubSystem>Windows</SubSystem>
+      <AdditionalLibraryDirectories>$(SolutionDir)extern\lib;$(SolutionDir)lib\debug\;$(SolutionDir)lib\debugopt\;$(SolutionDir)src\DivaVK\lib\Release\</AdditionalLibraryDirectories>
+      <AdditionalDependencies>opengl32.lib;divavk_core.lib;glslang.lib;glslang-default-resource-limits.lib;detours.lib;syelog.lib;libdeflatestatic.lib;AFTModsShared.lib;KKdLib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4098 /ignore:4099 /ignore:4286 %(AdditionalOptions)</AdditionalOptions>
+      <RandomizedBaseAddress>false</RandomizedBaseAddress>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <PreprocessorDefinitions>WIN32;DIVAVK;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(SolutionDir)extern\src;$(SolutionDir)src\DivaVK\core\include;$(SolutionDir)src\DivaVK\external\volk;$(DivaVKVulkanHeaders)\include</AdditionalIncludeDirectories>
+      <ConformanceMode>true</ConformanceMode>
+      <OmitFramePointers>false</OmitFramePointers>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <CallingConvention>FastCall</CallingConvention>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <FunctionLevelLinking>
+      </FunctionLevelLinking>
+      <ObjectFileName>$(IntDir)/%(RelativeDir)</ObjectFileName>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <RuntimeTypeInfo>
+      </RuntimeTypeInfo>
+      <UseFullPaths>false</UseFullPaths>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <DisableSpecificWarnings>26812</DisableSpecificWarnings>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <TargetMachine>MachineX64</TargetMachine>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <SubSystem>Windows</SubSystem>
+      <AdditionalLibraryDirectories>$(SolutionDir)extern\lib;$(SolutionDir)lib\release\;$(SolutionDir)src\DivaVK\lib\Release\</AdditionalLibraryDirectories>
+      <AdditionalDependencies>opengl32.lib;divavk_core.lib;glslang.lib;glslang-default-resource-limits.lib;detours.lib;syelog.lib;libdeflatestatic.lib;AFTModsShared.lib;KKdLib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalOptions>/ignore:4098 /ignore:4099 /ignore:4286 %(AdditionalOptions)</AdditionalOptions>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <RandomizedBaseAddress>false</RandomizedBaseAddress>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="vk_bridge.cpp" />
+    <ClCompile Include="..\..\DivaGL\camera_render.cpp" />
+    <ClCompile Include="..\..\DivaGL\GL\array_buffer.cpp" />
+    <ClCompile Include="..\..\DivaGL\GL\element_array_buffer.cpp" />
+    <ClCompile Include="..\..\DivaGL\GL\shader_storage_buffer.cpp" />
+    <ClCompile Include="..\..\DivaGL\GL\uniform_buffer.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\animation.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\counter.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\curve.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\effect.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\effect_group.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\effect_inst.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\emitter.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\emitter_inst.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\file_reader.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\glitter.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\item_base.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\locus_history.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\node.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\particle.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\particle_inst.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\particle_manager.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\random.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\render_element.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\render_group.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\render_scene.cpp" />
+    <ClCompile Include="..\..\DivaGL\Glitter\scene.cpp" />
+    <ClCompile Include="..\..\DivaGL\data_test\rob_osage_test.cpp" />
+    <ClCompile Include="..\..\DivaGL\graphics\color_change_dw.cpp" />
+    <ClCompile Include="..\..\DivaGL\mdl\disp_manager.cpp" />
+    <ClCompile Include="..\..\DivaGL\mdl\draw_object.cpp" />
+    <ClCompile Include="..\..\DivaGL\movie_play_lib\movie_play_lib.cpp" />
+    <ClCompile Include="..\..\DivaGL\ogl_buffer_object.cpp" />
+    <ClCompile Include="..\..\DivaGL\pv_game\dsc.cpp" />
+    <ClCompile Include="..\..\DivaGL\pv_game\firstread.cpp" />
+    <ClCompile Include="..\..\DivaGL\pv_game\pvpp.cpp" />
+    <ClCompile Include="..\..\DivaGL\pv_game\pvsr.cpp" />
+    <ClCompile Include="..\..\DivaGL\pv_game\pv_game.cpp" />
+    <ClCompile Include="..\..\DivaGL\reflect_full.cpp" />
+    <ClCompile Include="..\..\DivaGL\renderer\dof.cpp" />
+    <ClCompile Include="..\..\DivaGL\renderer\fbo.cpp" />
+    <ClCompile Include="..\..\DivaGL\renderer\transparency.cpp" />
+    <ClCompile Include="..\..\DivaGL\rob\rob.cpp" />
+    <ClCompile Include="..\..\DivaGL\clear_color.cpp" />
+    <ClCompile Include="..\..\DivaGL\auth_3d.cpp" />
+    <ClCompile Include="..\..\DivaGL\camera.cpp" />
+    <ClCompile Include="..\..\DivaGL\dllmain.cpp" />
+    <ClCompile Include="..\..\DivaGL\effect.cpp" />
+    <ClCompile Include="..\..\DivaGL\gl_state.cpp" />
+    <ClCompile Include="..\..\DivaGL\gl_rend_state.cpp" />
+    <ClCompile Include="..\..\DivaGL\hook.cpp" />
+    <ClCompile Include="..\..\DivaGL\light_param.cpp" />
+    <ClCompile Include="..\..\DivaGL\object.cpp" />
+    <ClCompile Include="..\..\DivaGL\print.cpp" />
+    <ClCompile Include="..\..\DivaGL\render.cpp" />
+    <ClCompile Include="..\..\DivaGL\render_context.cpp" />
+    <ClCompile Include="..\..\DivaGL\render_manager.cpp" />
+    <ClCompile Include="..\..\DivaGL\render_texture.cpp" />
+    <ClCompile Include="..\..\DivaGL\screen_shot.cpp" />
+    <ClCompile Include="..\..\DivaGL\shader.cpp" />
+    <ClCompile Include="..\..\DivaGL\shader_ft.cpp" />
+    <ClCompile Include="..\..\DivaGL\shadow.cpp" />
+    <ClCompile Include="..\..\DivaGL\shared.cpp" />
+    <ClCompile Include="..\..\DivaGL\sprite.cpp" />
+    <ClCompile Include="..\..\DivaGL\sss.cpp" />
+    <ClCompile Include="..\..\DivaGL\stage.cpp" />
+    <ClCompile Include="..\..\DivaGL\stage_param.cpp" />
+    <ClCompile Include="..\..\DivaGL\static_var.cpp" />
+    <ClCompile Include="..\..\DivaGL\stereo.cpp" />
+    <ClCompile Include="..\..\DivaGL\task_movie.cpp" />
+    <ClCompile Include="..\..\DivaGL\texture.cpp" />
+    <ClCompile Include="..\..\DivaGL\wrap.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="..\..\DivaGL\DivaGL.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\DivaGL\camera_render.hpp" />
+    <ClInclude Include="..\..\DivaGL\config.hpp" />
+    <ClInclude Include="..\..\DivaGL\GL\array_buffer.hpp" />
+    <ClInclude Include="..\..\DivaGL\GL\buffer.hpp" />
+    <ClInclude Include="..\..\DivaGL\GL\element_array_buffer.hpp" />
+    <ClInclude Include="..\..\DivaGL\GL\shader_storage_buffer.hpp" />
+    <ClInclude Include="..\..\DivaGL\GL\uniform_buffer.hpp" />
+    <ClInclude Include="..\..\DivaGL\Glitter\glitter.hpp" />
+    <ClInclude Include="..\..\DivaGL\data_test\rob_osage_test.hpp" />
+    <ClInclude Include="..\..\DivaGL\graphics\color_change_dw.hpp" />
+    <ClInclude Include="..\..\DivaGL\mdl\disp_manager.hpp" />
+    <ClInclude Include="..\..\DivaGL\mdl\draw_object.hpp" />
+    <ClInclude Include="..\..\DivaGL\movie_play_lib\movie_play_lib.hpp" />
+    <ClInclude Include="..\..\DivaGL\ogl_buffer_object.hpp" />
+    <ClInclude Include="..\..\DivaGL\pv_game\dsc.hpp" />
+    <ClInclude Include="..\..\DivaGL\pv_game\firstread.hpp" />
+    <ClInclude Include="..\..\DivaGL\pv_game\pvpp.hpp" />
+    <ClInclude Include="..\..\DivaGL\pv_game\pvsr.hpp" />
+    <ClInclude Include="..\..\DivaGL\pv_game\pv_game.hpp" />
+    <ClInclude Include="..\..\DivaGL\reflect_full.hpp" />
+    <ClInclude Include="..\..\DivaGL\renderer\dof.hpp" />
+    <ClInclude Include="..\..\DivaGL\renderer\fbo.hpp" />
+    <ClInclude Include="..\..\DivaGL\renderer\transparency.hpp" />
+    <ClInclude Include="..\..\DivaGL\rob\rob.hpp" />
+    <ClInclude Include="..\..\DivaGL\clear_color.hpp" />
+    <ClInclude Include="..\..\DivaGL\auth_3d.hpp" />
+    <ClInclude Include="..\..\DivaGL\camera.hpp" />
+    <ClInclude Include="..\..\DivaGL\effect.hpp" />
+    <ClInclude Include="..\..\DivaGL\gl.hpp" />
+    <ClInclude Include="..\..\DivaGL\gl_rend_state.hpp" />
+    <ClInclude Include="..\..\DivaGL\gl_state.hpp" />
+    <ClInclude Include="..\..\DivaGL\hook.hpp" />
+    <ClInclude Include="..\..\DivaGL\light_param.hpp" />
+    <ClInclude Include="..\..\DivaGL\object.hpp" />
+    <ClInclude Include="..\..\DivaGL\print.hpp" />
+    <ClInclude Include="..\..\DivaGL\render.hpp" />
+    <ClInclude Include="..\..\DivaGL\render_context.hpp" />
+    <ClInclude Include="..\..\DivaGL\render_manager.hpp" />
+    <ClInclude Include="..\..\DivaGL\render_texture.hpp" />
+    <ClInclude Include="..\..\DivaGL\resource.h" />
+    <ClInclude Include="..\..\DivaGL\screen_shot.hpp" />
+    <ClInclude Include="..\..\DivaGL\shader.hpp" />
+    <ClInclude Include="..\..\DivaGL\shader_ft.hpp" />
+    <ClInclude Include="..\..\DivaGL\shadow.hpp" />
+    <ClInclude Include="..\..\DivaGL\shared.hpp" />
+    <ClInclude Include="..\..\DivaGL\sprite.hpp" />
+    <ClInclude Include="..\..\DivaGL\sss.hpp" />
+    <ClInclude Include="..\..\DivaGL\stage.hpp" />
+    <ClInclude Include="..\..\DivaGL\stage_param.hpp" />
+    <ClInclude Include="..\..\DivaGL\static_var.hpp" />
+    <ClInclude Include="..\..\DivaGL\stereo.hpp" />
+    <ClInclude Include="..\..\DivaGL\task_movie.hpp" />
+    <ClInclude Include="..\..\DivaGL\texture.hpp" />
+    <ClInclude Include="..\..\DivaGL\wrap.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\KKdLib\KKdLib.vcxproj">
+      <Project>{4c9636b9-e5b6-41e5-9afc-5b33cc9633de}</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\res\ft_shaders.farc" />
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="..\..\DivaGL\common.asm" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
+  </ImportGroup>
+</Project>

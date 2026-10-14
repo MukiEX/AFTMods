@@ -27,10 +27,24 @@ static bool parse_bool(const char* str, size_t length, int32_t& value);
 static bool parse_int(const char* str, int32_t& value);
 static void trim_space(const char*& str, size_t& length);
 
+#ifdef DIVAVK
+// DivaVK: same renderer, Vulkan backend (see src/DivaVK)
+extern "C" void divavk_bridge_install(HMODULE self);
+extern "C" void divavk_bridge_shutdown();
+#define DIVAGL_PLUGIN_NAME L"DivaVK"
+std::wstring CONFIG_FILE_STRING = GetDirPath() + L"\\plugins\\DivaVK.ini";
+#else
+#define DIVAGL_PLUGIN_NAME L"DivaGL"
 std::wstring CONFIG_FILE_STRING = GetDirPath() + L"\\plugins\\DivaGL.ini";
+#endif
 LPCWSTR CONFIG_FILE = CONFIG_FILE_STRING.c_str();
 
 void FASTCALL divagl_main() {
+#ifdef DIVAVK
+    // Must run before GLUT creates its context so every GL/WGL import lands in DivaVK.
+    divavk_bridge_install((HMODULE)dll_handle);
+#endif
+
     int32_t cpuid_data[4] = {};
     __cpuid(cpuid_data, 1);
     cpu_caps_aes_ni = (cpuid_data[2] & (1 << 25)) ? true : false;
@@ -83,21 +97,35 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
         sv_stereo_bg_infinity = GetPrivateProfileIntW(L"stereo",
             L"stereo_bg_infinity", 1, CONFIG_FILE) > 0 ? true : false;
 
+#ifdef DIVAVK
+        // No WGL_NV_DX_interop2 under Vulkan: always use the CPU upload path for videos.
+        sv_task_movie_player_no_interop = true;
+#endif
+
         dll_handle = (size_t)handle;
         printf_divagl("Current version - v0.11.0.0 (Build date: " __DATE__ ")");
         printf_divagl("Attach");
         divagl_main();
         break;
+#ifdef DIVAVK
+    case DLL_PROCESS_DETACH:
+        divavk_bridge_shutdown();
+        break;
+#endif
     }
     return true;
 }
 
 extern "C" __declspec(dllexport) LPCWSTR GetPluginName(void) {
-    return L"DivaGL";
+    return DIVAGL_PLUGIN_NAME;
 }
 
 extern "C" __declspec(dllexport) LPCWSTR GetPluginDescription(void) {
+#ifdef DIVAVK
+    return L"DivaVK: DivaGL by korenkonder running on Vulkan";
+#else
     return L"DivaGL Plugin by korenkonder";
+#endif
 }
 
 extern "C" __declspec(dllexport) LPCWSTR GetBuildDate(void) {
