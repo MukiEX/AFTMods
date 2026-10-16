@@ -12,14 +12,15 @@ if(WIN32)
     # The launcher plugin: build with MSVC (x64) or llvm-mingw / MinGW-w64 (x86_64).
     file(GLOB MINHOOK_SOURCES third_party/minhook/src/*.c third_party/minhook/src/hde/hde64.c)
     add_library(LauncherFS SHARED
-        src/platform_win32.cpp ${UI_SOURCES} ${IMGUI_SOURCES}
+        src/platform_win32.cpp src/sysdll.cpp ${UI_SOURCES} ${IMGUI_SOURCES}
         ${IMGUI}/backends/imgui_impl_win32.cpp ${IMGUI}/backends/imgui_impl_dx11.cpp
         ${MINHOOK_SOURCES}
         res/LauncherFS.rc)
     set_target_properties(LauncherFS PROPERTIES OUTPUT_NAME "Launcher" PREFIX "" SUFFIX ".dva")
     target_include_directories(LauncherFS PRIVATE src ${IMGUI} third_party/simpleini third_party/minhook/include)
     target_compile_definitions(LauncherFS PRIVATE UNICODE _UNICODE NOMINMAX IMGUI_IMPL_WIN32_DISABLE_GAMEPAD)
-    target_link_libraries(LauncherFS PRIVATE d3d11 d3dcompiler user32 gdi32 dwmapi imm32 shell32)
+    # d3d11 and d3dcompiler are loaded from System32 at run time (src/sysdll.cpp), not imported.
+    target_link_libraries(LauncherFS PRIVATE user32 gdi32 dwmapi imm32 shell32)
     if(MSVC)
         target_compile_options(LauncherFS PRIVATE /utf-8 /W3)
         set_property(TARGET LauncherFS PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
