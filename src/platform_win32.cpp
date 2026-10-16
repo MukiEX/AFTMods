@@ -27,6 +27,8 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <cstdarg>
+#include <cstdio>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -271,18 +273,49 @@ namespace {
 
     // ------------------------------------------------------------ XInput (pads 0-3)
 
+    // plugins\Launcher.log: what the launcher saw (renderer, XInput, pads), for troubleshooting.
+    FILE* g_log = nullptr;
+    void lf_log(const char* fmt, ...) {
+        if (!g_log) {
+            std::wstring path = make_paths().plugins_dir + L"\\Launcher.log";
+            g_log = _wfopen(path.c_str(), L"w");
+            if (!g_log)
+                return;
+        }
+        SYSTEMTIME t;
+        GetLocalTime(&t);
+        fprintf(g_log, "%02d:%02d:%02d.%03d ", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
+        va_list ap;
+        va_start(ap, fmt);
+        vfprintf(g_log, fmt, ap);
+        va_end(ap);
+        fputc('\n', g_log);
+        fflush(g_log);
+    }
+
     typedef DWORD(WINAPI* PFN_XInputGetState)(DWORD, XINPUT_STATE*);
     PFN_XInputGetState g_xinput_get_state = nullptr;
+    DWORD g_start_tick = GetTickCount();
     DWORD g_pad_retry[XUSER_MAX_COUNT] = {};
+    int g_pad_state[XUSER_MAX_COUNT] = { -1, -1, -1, -1 }; // -1 unknown, 0 missing, 1 connected
+    bool g_pad_pressed_logged[XUSER_MAX_COUNT] = {};
 
     void load_xinput() {
+        // Prefer a copy the process already has (TLAC and Steam's overlay load one).
         const wchar_t* dlls[] = { L"xinput1_4.dll", L"xinput1_3.dll", L"xinput9_1_0.dll", L"xinput1_2.dll", L"xinput1_1.dll" };
         for (const wchar_t* n : dlls)
-            if (HMODULE h = LoadLibraryW(n)) {
-                g_xinput_get_state = (PFN_XInputGetState)GetProcAddress(h, "XInputGetState");
-                if (g_xinput_get_state)
+            if (HMODULE h = GetModuleHandleW(n))
+                if ((g_xinput_get_state = (PFN_XInputGetState)GetProcAddress(h, "XInputGetState"))) {
+                    lf_log("XInput: using already-loaded %ls", n);
                     return;
-            }
+                }
+        for (const wchar_t* n : dlls)
+            if (HMODULE h = LoadLibraryW(n))
+                if ((g_xinput_get_state = (PFN_XInputGetState)GetProcAddress(h, "XInputGetState"))) {
+                    lf_log("XInput: loaded %ls", n);
+                    return;
+                }
+        lf_log("XInput: no XInput DLL could be loaded; only keyboard and mouse will work");
     }
 
     void poll_pads() {
@@ -299,9 +332,23 @@ namespace {
             if (g_pad_retry[i] && now < g_pad_retry[i])
                 continue;
             XINPUT_STATE st = {};
-            if (g_xinput_get_state(i, &st) != ERROR_SUCCESS) {
-                g_pad_retry[i] = now + 2000;
+            DWORD rc = g_xinput_get_state(i, &st);
+            if (rc != ERROR_SUCCESS) {
+                if (g_pad_state[i] != 0)
+                    lf_log("Pad %lu: not connected (%lu)", i + 1, rc);
+                g_pad_state[i] = 0;
+                // Re-check missing pads every 2 s (polling them is slow on real XInput), but
+                // keep checking every frame for the first few seconds while Wine/Proton and
+                // Steam Input are still bringing the virtual controller up.
+                g_pad_retry[i] = now - g_start_tick < 8000 ? 0 : now + 2000;
                 continue;
+            }
+            if (g_pad_state[i] != 1)
+                lf_log("Pad %lu: connected", i + 1);
+            g_pad_state[i] = 1;
+            if (st.Gamepad.wButtons && !g_pad_pressed_logged[i]) {
+                lf_log("Pad %lu: first buttons 0x%04X", i + 1, st.Gamepad.wButtons);
+                g_pad_pressed_logged[i] = true;
             }
             g_pad_retry[i] = 0;
             any = true;
@@ -574,6 +621,9 @@ namespace {
             if ((wp & 0xFFF0) == SC_KEYMENU) // don't open the (invisible) window menu on Alt
                 return 0;
             break;
+        case WM_ACTIVATEAPP:
+            lf_log("Window %s", wp ? "activated" : "deactivated");
+            break;
         case WM_CLOSE:
             if (g_app)
                 g_app->request_close();
@@ -667,6 +717,8 @@ namespace {
             if (create_gl(g_hwnd))
                 g_renderer = Renderer::OpenGL;
         }
+        lf_log("Renderer: %s%s", g_renderer == Renderer::D3D11 ? "Direct3D 11" : g_renderer == Renderer::OpenGL ? "OpenGL" : "none",
+            wine_version().empty() ? "" : (" (Wine " + wine_version() + ")").c_str());
         if (g_renderer == Renderer::None) {
             std::wstring text = L"The launcher couldn't create its window: neither Direct3D 11 nor OpenGL could be started.\n\n";
             if (!g_d3d_error.empty())

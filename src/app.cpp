@@ -574,10 +574,31 @@ namespace lfs {
             dl->AddCircleFilled(c, px(3.2f), color, 16);
         }
 
+        OptionPtr prompts_opt;   // [launcher] button_prompts: 0 = Xbox letters, 1 = PlayStation shapes
+        bool ps_prompts() const { return prompts_opt && prompts_opt->i == 1; }
+
+        // Xbox-style face button: a coloured disc with its letter.
+        void face_letter(ImDrawList* dl, ImVec2 c, float r, const char* letter, ImU32 color) const {
+            dl->AddCircleFilled(c, r, color, 24);
+            ImVec2 ts = measure(fonts.bold, 14, letter);
+            dl->AddText(fonts.bold, px(14), ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(0x14, 0x12, 0x2E, 0xFF), letter);
+        }
+
         float prompt(ImDrawList* dl, float x, float cy, Btn b, const std::string& label) const {
             float r = px(11.0f);
             ImVec2 c(x + r, cy);
             float th = px(2.4f);
+            const bool ps = ps_prompts();
+            if (!ps && (b == Btn::A || b == Btn::B || b == Btn::X || b == Btn::Y)) {
+                // Xbox / Steam Deck layout
+                switch (b) {
+                case Btn::A: face_letter(dl, c, r, "A", IM_COL32(0x6C, 0xC2, 0x4A, 0xFF)); break;
+                case Btn::B: face_letter(dl, c, r, "B", IM_COL32(0xE8, 0x55, 0x4A, 0xFF)); break;
+                case Btn::X: face_letter(dl, c, r, "X", IM_COL32(0x4A, 0x9B, 0xF0, 0xFF)); break;
+                default:     face_letter(dl, c, r, "Y", IM_COL32(0xF2, 0xC2, 0x3A, 0xFF)); break;
+                }
+                goto label;
+            }
             switch (b) {
             case Btn::A: {
                 dl->AddCircleFilled(c, r, alpha(col::n_crs, 0.18f), 24);
@@ -608,7 +629,9 @@ namespace lfs {
                 dl->AddRectFilled(ImVec2(c.x - a, c.y - l), ImVec2(c.x + a, c.y + l), alpha(cc, b == Btn::DPadV ? 0.9f : 0.35f), px(2));
             } break;
             default: {
-                const char* t = b == Btn::LB ? "LB" : b == Btn::RB ? "RB" : b == Btn::Start ? "Start" : "View";
+                const char* t = ps
+                    ? (b == Btn::LB ? "L1" : b == Btn::RB ? "R1" : b == Btn::Start ? "Options" : "Share")
+                    : (b == Btn::LB ? "LB" : b == Btn::RB ? "RB" : b == Btn::Start ? "Start" : "View");
                 ImVec2 ts = measure(fonts.bold, 13, t);
                 float w = ts.x + px(14);
                 dl->AddRect(ImVec2(x, cy - px(11)), ImVec2(x + w, cy + px(11)), col::muted, px(11), 0, px(1.6f));
@@ -616,6 +639,7 @@ namespace lfs {
                 r = w * 0.5f;
             } break;
             }
+        label:
             float tx = x + r * 2 + px(8);
             if (!label.empty()) {
                 ImVec2 ts = measure(fonts.regular, 17, label);
@@ -1245,6 +1269,7 @@ namespace lfs {
             v.empty_text = p.empty_text;
             m->base_views.push_back(v);
         }
+        m->prompts_opt = m->find_option(L"launcher", L"button_prompts");
     }
 
     App::~App() {
