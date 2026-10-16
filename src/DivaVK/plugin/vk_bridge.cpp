@@ -2,8 +2,10 @@
     DivaVK - PD Loader bridge (Windows / Wine).
 
     Turns DivaGL into DivaVK without touching DivaGL's renderer:
-    - Patches the opengl32.dll and gdi32.dll imports of diva.exe, glut32.dll and this plugin
-      so every GL/WGL call made by the game, by GLUT and by DivaGL lands in DivaVK.
+    - Patches the opengl32.dll and gdi32.dll imports of diva.exe, glut32.dll, this plugin and
+      every other non-system module (TLAC, Render and other PD Loader plugins), so every
+      GL/WGL call made in the process lands in DivaVK. Plugins that load after DivaVK are
+      picked up when the game fills its GL tables and when the context is created.
     - Emulates WGL: contexts are fake handles; the DivaVK (Vulkan) context is created on the
       first wglMakeCurrent, using the GLUT window for the swapchain surface.
     - SwapBuffers presents the frame through the Vulkan swapchain.
@@ -17,6 +19,8 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
+#include <psapi.h>
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <volk.h>
 #include <divavk/divavk.h>
@@ -69,9 +73,12 @@ static dvk_surface create_surface(dvk_instance instance, void*) {
     return (dvk_surface)surface;
 }
 
+static void patch_all_modules();
+
 static bool ensure_context(HDC hdc) {
     if (s_created)
         return true;
+    patch_all_modules(); // plugins loaded after DivaVK
     s_hdc = hdc;
     s_hwnd = WindowFromDC(hdc);
     RECT rc = {};
@@ -280,6 +287,55 @@ static int patch_imports(HMODULE module, const char* label) {
     return patched;
 }
 
+// Every loaded module outside the Windows directory that imports opengl32/gdi32: the game,
+// GLUT and PD Loader plugins (TLAC, Render, ...). Without this, a plugin that calls GL
+// directly reaches the real opengl32.dll, which has no context under DivaVK, gets zeros
+// back from queries like GL_VIEWPORT and can crash (TLAC divided by one).
+static std::vector<HMODULE> s_patched;
+
+static void patch_all_modules() {
+    wchar_t windir[MAX_PATH];
+    UINT wn = GetWindowsDirectoryW(windir, MAX_PATH);
+    HMODULE mods[1024];
+    DWORD needed = 0;
+    if (!K32EnumProcessModules(GetCurrentProcess(), mods, sizeof(mods), &needed))
+        return;
+    DWORD count = needed / sizeof(HMODULE);
+    if (count > 1024)
+        count = 1024;
+    for (DWORD i = 0; i < count; i++) {
+        HMODULE m = mods[i];
+        bool seen = false;
+        for (HMODULE p : s_patched)
+            if (p == m) { seen = true; break; }
+        if (seen)
+            continue;
+        s_patched.push_back(m);
+        wchar_t path[MAX_PATH * 2];
+        DWORD n = GetModuleFileNameW(m, path, (DWORD)(sizeof(path) / sizeof(path[0])));
+        if (!n)
+            continue;
+        if (wn && n > wn && !_wcsnicmp(path, windir, wn) && (path[wn] == L'\\' || path[wn] == L'/'))
+            continue; // system DLLs (including opengl32 itself)
+        const wchar_t* base = wcsrchr(path, L'\\');
+        base = base ? base + 1 : path;
+        char label[MAX_PATH];
+        WideCharToMultiByte(CP_UTF8, 0, base, -1, label, sizeof(label), nullptr, nullptr);
+        // patch_imports logs every module; keep the log readable by only logging hits
+        uint8_t* b = (uint8_t*)m;
+        IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(b + ((IMAGE_DOS_HEADER*)b)->e_lfanew);
+        if (!nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress)
+            continue;
+        bool imports_gl = false;
+        for (IMAGE_IMPORT_DESCRIPTOR* imp = (IMAGE_IMPORT_DESCRIPTOR*)(b + nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress); imp->Name; imp++) {
+            const char* dll = (const char*)(b + imp->Name);
+            if (!_stricmp(dll, "opengl32.dll") || !_stricmp(dll, "gdi32.dll")) { imports_gl = true; break; }
+        }
+        if (imports_gl)
+            patch_imports(m, label);
+    }
+}
+
 // ---------------------------------------------------------------- game tables
 
 struct Slot {
@@ -319,6 +375,7 @@ static int write_slots(const Slot* slots, size_t count, uintptr_t base) {
 // Writes DivaVK into every known GL slot of the game and GLUT (addresses from DivaGL's
 // wrap.cpp). Called at install time and again after the game fills its extension table.
 extern "C" void divavk_bridge_fill_tables() {
+    patch_all_modules();
     int game = write_slots(s_game_slots, sizeof(s_game_slots) / sizeof(s_game_slots[0]), 0);
     int glut = 0;
     if (HMODULE g = GetModuleHandleW(L"glut32.dll"))
@@ -331,6 +388,10 @@ extern "C" void divavk_bridge_install(HMODULE self) {
     patch_imports(GetModuleHandleW(nullptr), "diva.exe");
     patch_imports(GetModuleHandleW(L"glut32.dll"), "glut32.dll");
     patch_imports(self, "DivaVK");
+    s_patched.push_back(GetModuleHandleW(nullptr));
+    if (HMODULE g = GetModuleHandleW(L"glut32.dll"))
+        s_patched.push_back(g);
+    s_patched.push_back(self);
     divavk_bridge_fill_tables();
 }
 
