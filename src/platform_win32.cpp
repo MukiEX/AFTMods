@@ -15,6 +15,7 @@
 #include <imgui.h>
 #include <backends/imgui_impl_win32.h>
 #include <backends/imgui_impl_dx11.h>
+#include <backends/imgui_impl_opengl3.h>
 
 #include "app.hpp"
 #include "ini.hpp"
@@ -347,6 +348,7 @@ namespace {
     IDXGISwapChain* g_swap = nullptr;
     ID3D11RenderTargetView* g_rtv = nullptr;
     bool g_flip = false;
+    std::wstring g_d3d_error;   // HRESULTs of the failed D3D11 attempts, for the error box
     HWND g_hwnd = nullptr;
     bool g_windowed = false;
     App* g_app = nullptr;
@@ -383,6 +385,10 @@ namespace {
             HRESULT hr = D3D11CreateDeviceAndSwapChain(nullptr, type, nullptr, 0, levels, (UINT)std::size(levels),
                 D3D11_SDK_VERSION, &sd, &g_swap, &g_dev, &got, &g_ctx);
             if (FAILED(hr)) {
+                wchar_t buf[96];
+                swprintf(buf, 96, L"%s %s: 0x%08X\n", type == D3D_DRIVER_TYPE_WARP ? L"WARP" : L"hardware",
+                    flip ? L"flip" : L"blit", (unsigned)hr);
+                g_d3d_error += buf;
                 g_swap = nullptr;
                 g_dev = nullptr;
                 g_ctx = nullptr;
@@ -423,6 +429,97 @@ namespace {
         if (g_swap) { g_swap->Release(); g_swap = nullptr; }
         if (g_ctx) { g_ctx->Release(); g_ctx = nullptr; }
         if (g_dev) { g_dev->Release(); g_dev = nullptr; }
+    }
+
+    // ------------------------------------------------------------ OpenGL fallback
+    // Used when D3D11 can't be created (for example a Wine prefix without a working d3d11).
+    // Everything is resolved with GetProcAddress rather than imported: DivaVK redirects the
+    // opengl32/gdi32 imports of every plugin to itself, and the launcher needs the real ones.
+
+    enum class Renderer { None, D3D11, OpenGL };
+    Renderer g_renderer = Renderer::None;
+
+    struct GLApi {
+        HMODULE gl = nullptr;
+        HGLRC(WINAPI* CreateContext)(HDC) = nullptr;
+        BOOL(WINAPI* MakeCurrent)(HDC, HGLRC) = nullptr;
+        BOOL(WINAPI* DeleteContext)(HGLRC) = nullptr;
+        PROC(WINAPI* GetProcAddr)(LPCSTR) = nullptr;
+        int(WINAPI* ChoosePF)(HDC, const PIXELFORMATDESCRIPTOR*) = nullptr;
+        BOOL(WINAPI* SetPF)(HDC, int, const PIXELFORMATDESCRIPTOR*) = nullptr;
+        BOOL(WINAPI* Swap)(HDC) = nullptr;
+        void(WINAPI* Viewport)(int, int, int, int) = nullptr;
+        void(WINAPI* ClearColor)(float, float, float, float) = nullptr;
+        void(WINAPI* Clear)(unsigned) = nullptr;
+        const unsigned char*(WINAPI* GetString)(unsigned) = nullptr;
+        BOOL(WINAPI* SwapInterval)(int) = nullptr;
+    } g_gl;
+    HDC g_hdc = nullptr;
+    HGLRC g_glrc = nullptr;
+    std::wstring g_gl_error;
+
+    template <typename T> void gl_sym(T& out, HMODULE m, const char* name) { out = (T)GetProcAddress(m, name); }
+
+    bool create_gl(HWND hwnd) {
+        wchar_t path[MAX_PATH];
+        UINT n = GetSystemDirectoryW(path, MAX_PATH);
+        wcscpy_s(path + n, MAX_PATH - n, L"\\opengl32.dll");
+        g_gl.gl = LoadLibraryW(path);
+        HMODULE gdi = GetModuleHandleW(L"gdi32.dll");
+        if (!g_gl.gl || !gdi) { g_gl_error = L"opengl32.dll not found"; return false; }
+        gl_sym(g_gl.CreateContext, g_gl.gl, "wglCreateContext");
+        gl_sym(g_gl.MakeCurrent, g_gl.gl, "wglMakeCurrent");
+        gl_sym(g_gl.DeleteContext, g_gl.gl, "wglDeleteContext");
+        gl_sym(g_gl.GetProcAddr, g_gl.gl, "wglGetProcAddress");
+        gl_sym(g_gl.Viewport, g_gl.gl, "glViewport");
+        gl_sym(g_gl.ClearColor, g_gl.gl, "glClearColor");
+        gl_sym(g_gl.Clear, g_gl.gl, "glClear");
+        gl_sym(g_gl.GetString, g_gl.gl, "glGetString");
+        gl_sym(g_gl.ChoosePF, gdi, "ChoosePixelFormat");
+        gl_sym(g_gl.SetPF, gdi, "SetPixelFormat");
+        gl_sym(g_gl.Swap, gdi, "SwapBuffers");
+        if (!g_gl.CreateContext || !g_gl.MakeCurrent || !g_gl.ChoosePF || !g_gl.SetPF || !g_gl.Swap || !g_gl.Clear) {
+            g_gl_error = L"OpenGL entry points missing";
+            return false;
+        }
+        g_hdc = GetDC(hwnd);
+        PIXELFORMATDESCRIPTOR pfd = { sizeof(pfd), 1 };
+        pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+        pfd.iPixelType = PFD_TYPE_RGBA;
+        pfd.cColorBits = 32;
+        pfd.cAlphaBits = 8;
+        int pf = g_gl.ChoosePF(g_hdc, &pfd);
+        if (!pf || !g_gl.SetPF(g_hdc, pf, &pfd)) { g_gl_error = L"no usable pixel format"; return false; }
+        g_glrc = g_gl.CreateContext(g_hdc);
+        if (!g_glrc || !g_gl.MakeCurrent(g_hdc, g_glrc)) {
+            wchar_t buf[64];
+            swprintf(buf, 64, L"wglCreateContext failed (error %lu)", GetLastError());
+            g_gl_error = buf;
+            return false;
+        }
+        if (g_gl.GetProcAddr)
+            g_gl.SwapInterval = (BOOL(WINAPI*)(int))g_gl.GetProcAddr("wglSwapIntervalEXT");
+        if (g_gl.SwapInterval)
+            g_gl.SwapInterval(1);
+        return true;
+    }
+
+    void destroy_gl() {
+        if (g_glrc) {
+            g_gl.MakeCurrent(nullptr, nullptr);
+            g_gl.DeleteContext(g_glrc);
+            g_glrc = nullptr;
+        }
+        if (g_hdc && g_hwnd) {
+            ReleaseDC(g_hwnd, g_hdc);
+            g_hdc = nullptr;
+        }
+    }
+
+    std::string gl_renderer_name() {
+        const unsigned GL_RENDERER_ = 0x1F01;
+        const unsigned char* r = g_gl.GetString ? g_gl.GetString(GL_RENDERER_) : nullptr;
+        return r ? std::string((const char*)r) + " (OpenGL)" : "OpenGL";
     }
 
     RECT monitor_rect(HWND hwnd) {
@@ -552,7 +649,7 @@ namespace {
 
         HINSTANCE inst = GetModuleHandleW(nullptr);
         WNDCLASSEXW wc = { sizeof(wc) };
-        wc.style = CS_CLASSDC;
+        wc.style = CS_OWNDC; // a private DC keeps the OpenGL fallback's pixel format
         wc.lpfnWndProc = wnd_proc;
         wc.hInstance = inst;
         wc.hCursor = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
@@ -563,9 +660,22 @@ namespace {
         RECT m = monitor_rect(nullptr);
         g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"PD Loader", WS_POPUP,
             m.left, m.top, m.right - m.left, m.bottom - m.top, nullptr, nullptr, inst, nullptr);
-        if (!g_hwnd || !create_device(g_hwnd)) {
-            MessageBoxW(nullptr, L"The launcher couldn't create its window (Direct3D 11 is unavailable).\n\nTo start the game without the launcher, set skip=1 in the [launcher] section of plugins\\config.ini.",
-                L"PD Loader", MB_ICONERROR);
+        if (g_hwnd && create_device(g_hwnd))
+            g_renderer = Renderer::D3D11;
+        else if (g_hwnd) {
+            destroy_device();
+            if (create_gl(g_hwnd))
+                g_renderer = Renderer::OpenGL;
+        }
+        if (g_renderer == Renderer::None) {
+            std::wstring text = L"The launcher couldn't create its window: neither Direct3D 11 nor OpenGL could be started.\n\n";
+            if (!g_d3d_error.empty())
+                text += L"Direct3D 11:\n" + g_d3d_error + L"\n";
+            if (!g_gl_error.empty())
+                text += L"OpenGL: " + g_gl_error + L"\n\n";
+            text += L"To start the game without the launcher, set skip=1 in the [launcher] section of plugins\\config.ini.";
+            MessageBoxW(nullptr, text.c_str(), L"PD Loader", MB_ICONERROR);
+            destroy_gl();
             destroy_device();
             if (g_hwnd) DestroyWindow(g_hwnd);
             UnregisterClassW(wc.lpszClassName, inst);
@@ -581,7 +691,10 @@ namespace {
         io.IniFilename = nullptr;
         io.LogFilename = nullptr;
         ImGui_ImplWin32_Init(g_hwnd);
-        ImGui_ImplDX11_Init(g_dev, g_ctx);
+        if (g_renderer == Renderer::D3D11)
+            ImGui_ImplDX11_Init(g_dev, g_ctx);
+        else
+            ImGui_ImplOpenGL3_Init(nullptr);
         Fonts fonts = load_fonts();
 
         std::vector<Page> pages;
@@ -607,7 +720,7 @@ namespace {
             }
 
         Host host;
-        host.gpu = adapter_name();
+        host.gpu = g_renderer == Renderer::D3D11 ? adapter_name() : gl_renderer_name();
         host.wine = wine_version();
         host.launch = [paths]() { launch_game(paths); };
         host.quit = []() { g_quit = true; };
@@ -631,6 +744,8 @@ namespace {
             }
             if (g_quit)
                 break;
+            if (g_pending_w && g_pending_h && g_renderer == Renderer::OpenGL)
+                g_pending_w = g_pending_h = 0; // the GL backbuffer follows the window
             if (g_pending_w && g_pending_h) {
                 release_rtv();
                 g_swap->ResizeBuffers(0, g_pending_w, g_pending_h, DXGI_FORMAT_UNKNOWN, 0);
@@ -650,7 +765,10 @@ namespace {
                 last_cursor = cur;
             }
 
-            ImGui_ImplDX11_NewFrame();
+            if (g_renderer == Renderer::D3D11)
+                ImGui_ImplDX11_NewFrame();
+            else
+                ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplWin32_NewFrame();
             ImGui::NewFrame();
             for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadR1; k++)
@@ -662,18 +780,31 @@ namespace {
             ImGui::Render();
 
             const float clear[4] = { 0.07f, 0.063f, 0.17f, 1.0f };
-            g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
-            g_ctx->ClearRenderTargetView(g_rtv, clear);
-            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-            HRESULT hr = g_swap->Present(1, 0);
-            if (hr == DXGI_STATUS_OCCLUDED)
-                Sleep(16);
+            if (g_renderer == Renderer::D3D11) {
+                g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
+                g_ctx->ClearRenderTargetView(g_rtv, clear);
+                ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+                HRESULT hr = g_swap->Present(1, 0);
+                if (hr == DXGI_STATUS_OCCLUDED)
+                    Sleep(16);
+            }
+            else {
+                g_gl.Viewport(0, 0, (int)io.DisplaySize.x, (int)io.DisplaySize.y);
+                g_gl.ClearColor(clear[0], clear[1], clear[2], clear[3]);
+                g_gl.Clear(0x00004000); // GL_COLOR_BUFFER_BIT
+                ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+                g_gl.Swap(g_hdc);
+            }
         }
 
         g_app = nullptr;
-        ImGui_ImplDX11_Shutdown();
+        if (g_renderer == Renderer::D3D11)
+            ImGui_ImplDX11_Shutdown();
+        else
+            ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext();
+        destroy_gl();
         destroy_device();
         DestroyWindow(g_hwnd);
         UnregisterClassW(wc.lpszClassName, inst);

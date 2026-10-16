@@ -13,7 +13,7 @@ if(WIN32)
     file(GLOB MINHOOK_SOURCES third_party/minhook/src/*.c third_party/minhook/src/hde/hde64.c)
     add_library(LauncherFS SHARED
         src/platform_win32.cpp src/sysdll.cpp ${UI_SOURCES} ${IMGUI_SOURCES}
-        ${IMGUI}/backends/imgui_impl_win32.cpp ${IMGUI}/backends/imgui_impl_dx11.cpp
+        ${IMGUI}/backends/imgui_impl_win32.cpp ${IMGUI}/backends/imgui_impl_dx11.cpp ${IMGUI}/backends/imgui_impl_opengl3.cpp
         ${MINHOOK_SOURCES}
         res/LauncherFS.rc)
     set_target_properties(LauncherFS PROPERTIES OUTPUT_NAME "Launcher" PREFIX "" SUFFIX ".dva")
