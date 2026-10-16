@@ -28,9 +28,14 @@ cmake --build "$DEPS/divavk-build"   # stages libs into src/DivaVK/lib/Release
 # The .vcxproj files ask for VS2019's v142 toolset; use whatever msvc-wine installed.
 TOOLSET=$(ls /opt/msvc/MSBuild/Microsoft/VC/*/Platforms/x64/PlatformToolsets | grep -E '^v[0-9]+$' | sort -V | tail -1)
 echo "== Building AFTMods.sln ($CONFIG, toolset $TOOLSET)"
-msbuild AFTMods.sln /m /v:minimal /nologo \
+if ! msbuild AFTMods.sln /m /v:minimal /nologo \
     /p:Configuration=$CONFIG /p:Platform=x64 /p:PlatformToolset=$TOOLSET \
-    /t:DivaGL /t:DivaVK
+    /t:DivaGL /t:DivaVK; then
+    echo "== MSBuild failed." >&2
+    echo "   If there's no output above, MSBuild.exe itself didn't start. Rerun with Wine's errors shown:" >&2
+    echo "   docker run --rm -e WINEDEBUG=err+all -v \"\$PWD:/src\" aftmods-msvc" >&2
+    exit 1
+fi
 
 mkdir -p out
 cp -v bin/DivaGL.dva bin/DivaVK.dva out/
