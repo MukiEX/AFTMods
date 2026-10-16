@@ -12,10 +12,14 @@ ARG MSVC_WINE_COMMIT=514f8ea34842cd6d831804d0e9658d3a32870ae1
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        wine64 python3 msitools ca-certificates winbind git cmake ninja-build procps && \
+        wine wine64 python3 msitools ca-certificates winbind git cmake ninja-build procps && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN $(command -v wine64 || command -v wine) wineboot --init && \
+# /usr/bin/wine comes from the "wine" package (only a Recommends of wine64), so it's listed
+# explicitly above. Fail early with a clear message if it's still missing.
+ENV WINEDEBUG=-all
+RUN WINE=$(command -v wine64 || command -v wine) || { echo "wine not found on PATH"; exit 1; } && \
+    "$WINE" wineboot --init && \
     while pgrep wineserver > /dev/null; do sleep 1; done
 
 RUN git clone https://github.com/mstorsjo/msvc-wine.git /tmp/msvc-wine && \
