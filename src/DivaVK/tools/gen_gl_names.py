@@ -8,12 +8,12 @@ import re, sys, pathlib
 root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else '.')  # src/ directory of AFTMods
 names = set()
 wrap = (root / 'DivaGL' / 'wrap.cpp').read_text(errors='ignore')
-names.update(re.findall(r'// ((?:gl|wgl)[A-Za-z0-9]+)', wrap))
-names.update(re.findall(r'wglGetProcAddressDLL\("((?:gl|wgl)[A-Za-z0-9]+)"', wrap))
+names.update(re.findall(r'// ((?:gl|wgl)[A-Za-z0-9_]+)', wrap))
+names.update(re.findall(r'wglGetProcAddressDLL\("((?:gl|wgl)[A-Za-z0-9_]+)"', wrap))
 for path in list((root / 'DivaGL').rglob('*.cpp')) + list((root / 'AFTModsShared').rglob('*.cpp')):
     if path.name in ('wrap.cpp',):
         continue
-    for n in re.findall(r'\b((?:gl|wgl)[A-Z][A-Za-z0-9]*?)(?:DLL|GLUT)?\s*\(', path.read_text(errors='ignore')):
+    for n in re.findall(r'\b((?:gl|wgl)[A-Z][A-Za-z0-9_]*?)(?:DLL|GLUT)?\s*\(', path.read_text(errors='ignore')):
         names.add(n)
 names = sorted(n for n in names if not n.startswith('glGet') or n[5:6].isupper() or n == 'glGetError')
 out = pathlib.Path(__file__).resolve().parent.parent / 'core' / 'src' / 'gl_names.inc'

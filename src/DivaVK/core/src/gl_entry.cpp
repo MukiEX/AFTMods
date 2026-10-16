@@ -167,6 +167,80 @@ static void DVK_APIENTRY dvk_glGetBooleanv(GLenum pname, GLboolean* data) {
         data[i] = v[i] != 0.0 ? GL_TRUE : GL_FALSE;
 }
 
+// Indexed state (glGetIntegeri_v / glGetInteger64i_v / glGetBooleani_v). DivaGL's
+// gl_rend_state_rect saves and restores per-unit texture, sampler, UBO and SSBO bindings with
+// these; leaving them unimplemented left those values uninitialised, and restoring them bound
+// garbage buffer ranges (a crash at the first song).
+static bool get_state_indexed(GLenum pname, GLuint index, int64_t* out) {
+    CTX;
+    switch (pname) {
+    case GL_UNIFORM_BUFFER_BINDING:
+    case GL_UNIFORM_BUFFER_START:
+    case GL_UNIFORM_BUFFER_SIZE: {
+        if (index >= MAX_UBO_BINDINGS) { *out = 0; return true; }
+        const BufferBinding& b = c.ubo[index];
+        *out = pname == GL_UNIFORM_BUFFER_BINDING ? (int64_t)b.buffer
+             : pname == GL_UNIFORM_BUFFER_START ? (int64_t)b.offset : (int64_t)b.size;
+        return true;
+    }
+    case GL_SHADER_STORAGE_BUFFER_BINDING:
+    case GL_SHADER_STORAGE_BUFFER_START:
+    case GL_SHADER_STORAGE_BUFFER_SIZE: {
+        if (index >= MAX_SSBO_BINDINGS) { *out = 0; return true; }
+        const BufferBinding& b = c.ssbo[index];
+        *out = pname == GL_SHADER_STORAGE_BUFFER_BINDING ? (int64_t)b.buffer
+             : pname == GL_SHADER_STORAGE_BUFFER_START ? (int64_t)b.offset : (int64_t)b.size;
+        return true;
+    }
+    case GL_TEXTURE_BINDING_2D:
+        *out = index < MAX_TEXTURE_UNITS ? c.tex_2d[index] : 0;
+        return true;
+    case GL_TEXTURE_BINDING_CUBE_MAP:
+        *out = index < MAX_TEXTURE_UNITS ? c.tex_cube[index] : 0;
+        return true;
+    case GL_SAMPLER_BINDING:
+        *out = index < MAX_TEXTURE_UNITS ? c.sampler_units[index] : 0;
+        return true;
+    case GL_COLOR_WRITEMASK:
+        // Per-draw-buffer masks aren't tracked separately; report the global one.
+        *out = 0;
+        return false;
+    default:
+        log_once(("getparami" + std::to_string(pname)).c_str(), "glGet*i_v: unknown pname 0x%04X", pname);
+        *out = 0;
+        return true;
+    }
+}
+
+static void DVK_APIENTRY dvk_glGetIntegeri_v(GLenum pname, GLuint index, GLint* data) {
+    if (!data) return;
+    if (pname == GL_COLOR_WRITEMASK) { dvk_glGetIntegerv(pname, data); return; }
+    int64_t v = 0;
+    get_state_indexed(pname, index, &v);
+    data[0] = (GLint)v;
+}
+
+static void DVK_APIENTRY dvk_glGetInteger64i_v(GLenum pname, GLuint index, GLint64* data) {
+    if (!data) return;
+    if (pname == GL_COLOR_WRITEMASK) {
+        GLint m[4] = {};
+        dvk_glGetIntegerv(pname, m);
+        for (int i = 0; i < 4; i++) data[i] = m[i];
+        return;
+    }
+    int64_t v = 0;
+    get_state_indexed(pname, index, &v);
+    data[0] = (GLint64)v;
+}
+
+static void DVK_APIENTRY dvk_glGetBooleani_v(GLenum pname, GLuint index, GLboolean* data) {
+    if (!data) return;
+    if (pname == GL_COLOR_WRITEMASK) { dvk_glGetBooleanv(pname, data); return; }
+    int64_t v = 0;
+    get_state_indexed(pname, index, &v);
+    data[0] = v ? GL_TRUE : GL_FALSE;
+}
+
 static void DVK_APIENTRY dvk_glFinish() {
     CTX;
     if (c.recording) {
@@ -1280,6 +1354,7 @@ struct ProcEntry {
 #define A(n, impl) { #n, (void*)&dvk_##impl }
 static const ProcEntry s_procs[] = {
     E(glGetError), E(glGetString), E(glGetStringi), E(glGetIntegerv), E(glGetFloatv), E(glGetBooleanv),
+    E(glGetIntegeri_v), E(glGetInteger64i_v), E(glGetBooleani_v),
     E(glFinish), E(glFlush), E(glEnable), E(glDisable), E(glIsEnabled),
     E(glBlendFunc), E(glBlendFuncSeparate), A(glBlendFuncSeparateEXT, glBlendFuncSeparate),
     E(glBlendEquation), A(glBlendEquationEXT, glBlendEquation), E(glBlendEquationSeparate),
