@@ -17,25 +17,14 @@ mkdir -p "$DEPS"
 [ -d src/DivaVK/external/Vulkan-Headers ] || \
     git clone -q --depth 1 -b $SDK_TAG https://github.com/KhronosGroup/Vulkan-Headers.git src/DivaVK/external/Vulkan-Headers
 
-echo "== Building divavk_core + glslang (cl.exe via CMake/Ninja)"
-CC=cl CXX=cl cmake -S src/DivaVK -B "$DEPS/divavk-build" -G Ninja \
-    -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_BUILD_TYPE=Release \
-    -DDIVAVK_BUILD_TESTS=OFF \
+echo "== Building KKdLib, AFTModsShared, DivaGL and DivaVK (cl.exe via CMake/Ninja, no MSBuild)"
+# MSBuild 18 can't run under Wine Mono (it loads Visual Studio telemetry assemblies that
+# Build Tools doesn't ship), so CMakeLists.txt mirrors the solution's Release|x64 settings.
+CC=cl CXX=cl cmake -S . -B "$DEPS/build-$CONFIG" -G Ninja \
+    -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_BUILD_TYPE=$CONFIG \
     -DDIVAVK_VULKAN_HEADERS_DIR=/src/src/DivaVK/external/Vulkan-Headers \
     -DDIVAVK_GLSLANG_DIR="$DEPS/glslang"
-cmake --build "$DEPS/divavk-build"   # stages libs into src/DivaVK/lib/Release
-
-# The .vcxproj files ask for VS2019's v142 toolset; use whatever msvc-wine installed.
-TOOLSET=$(ls /opt/msvc/MSBuild/Microsoft/VC/*/Platforms/x64/PlatformToolsets | grep -E '^v[0-9]+$' | sort -V | tail -1)
-echo "== Building AFTMods.sln ($CONFIG, toolset $TOOLSET)"
-if ! msbuild AFTMods.sln /m /v:minimal /nologo \
-    /p:Configuration=$CONFIG /p:Platform=x64 /p:PlatformToolset=$TOOLSET \
-    /t:DivaGL /t:DivaVK; then
-    echo "== MSBuild failed." >&2
-    echo "   If there's no output above, MSBuild.exe itself didn't start. Rerun with Wine's errors shown:" >&2
-    echo "   docker run --rm -e WINEDEBUG=err+all -v \"\$PWD:/src\" aftmods-msvc" >&2
-    exit 1
-fi
+cmake --build "$DEPS/build-$CONFIG" --target DivaGL DivaVK
 
 mkdir -p out
 cp -v bin/DivaGL.dva bin/DivaVK.dva out/
