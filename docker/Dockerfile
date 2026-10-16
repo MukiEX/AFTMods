@@ -15,21 +15,23 @@ RUN apt-get update && \
         wine wine64 python3 msitools ca-certificates winbind git cmake ninja-build procps curl xz-utils && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# MSBuild.exe is a .NET program; under Wine it needs Wine Mono, which Ubuntu doesn't package.
-# Wine 9.0 (Ubuntu 24.04) looks for exactly 8.1.0 in /usr/share/wine/mono and installs it
-# into the prefix during wineboot below.
+# /usr/bin/wine and wineserver come from the "wine" package (only a Recommends of wine64),
+# so it's listed explicitly above.
+#
+# MSBuild.exe is a .NET program, so it needs Wine Mono, which Ubuntu doesn't package.
+# Install the exact version Wine 9.0 (Ubuntu 24.04) expects with msiexec, straight into the
+# prefix. mscoree/mshtml are disabled during wineboot so it doesn't try to fetch add-ons itself.
+# The "syswow64 ... c0000135" lines wineboot prints are expected: this image is 64-bit only
+# (no wine32), and everything here (cl, link, MSBuild amd64) is 64-bit.
 ARG WINE_MONO_VERSION=8.1.0
-RUN mkdir -p /usr/share/wine/mono && \
-    curl -fsSL https://github.com/wine-mono/wine-mono/releases/download/wine-mono-${WINE_MONO_VERSION}/wine-mono-${WINE_MONO_VERSION}-x86.tar.xz \
-      | tar -xJ -C /usr/share/wine/mono
-
-# /usr/bin/wine comes from the "wine" package (only a Recommends of wine64), so it's listed
-# explicitly above. Fail early with a clear message if it's still missing.
 ENV WINEDEBUG=-all
-RUN WINE=$(command -v wine64 || command -v wine) || { echo "wine not found on PATH"; exit 1; } && \
-    "$WINE" wineboot --init && \
-    while pgrep wineserver > /dev/null; do sleep 1; done && \
-    { [ -d "$HOME/.wine/drive_c/windows/mono" ] || { echo "Wine Mono didn't install; check WINE_MONO_VERSION matches '$(wine --version)'"; exit 1; }; }
+RUN curl -fsSL -o /tmp/wine-mono.msi \
+      https://github.com/wine-mono/wine-mono/releases/download/wine-mono-${WINE_MONO_VERSION}/wine-mono-${WINE_MONO_VERSION}-x86.msi && \
+    WINEDLLOVERRIDES="mscoree,mshtml=" wine wineboot --init && wineserver -w && \
+    { wine msiexec /i 'Z:\tmp\wine-mono.msi' /qn || echo "msiexec returned $? (checking the result below)"; } && wineserver -w && \
+    rm /tmp/wine-mono.msi && \
+    if [ -d "$HOME/.wine/drive_c/windows/mono" ]; then echo "Wine Mono ${WINE_MONO_VERSION} installed"; \
+    else echo "Wine Mono didn't install into the prefix ($(wine --version))"; exit 1; fi
 
 RUN git clone https://github.com/mstorsjo/msvc-wine.git /tmp/msvc-wine && \
     git -C /tmp/msvc-wine checkout ${MSVC_WINE_COMMIT} && \
@@ -40,7 +42,7 @@ RUN git clone https://github.com/mstorsjo/msvc-wine.git /tmp/msvc-wine && \
 
 ENV PATH=/opt/msvc/bin/x64:$PATH
 # Fail the image build now, not the first project build, if MSBuild can't start.
-RUN msbuild -version -nologo && while pgrep wineserver > /dev/null; do sleep 1; done
+RUN msbuild -version -nologo && wineserver -w
 COPY build.sh /usr/local/bin/build-aftmods
 RUN chmod +x /usr/local/bin/build-aftmods
 WORKDIR /src
