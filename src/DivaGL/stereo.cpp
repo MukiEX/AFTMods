@@ -166,18 +166,43 @@ void stereo_eye_end(int32_t eye_sign) {
 
     const bool left_half = (eye_sign < 0) != sv_stereo_swap_eyes;
     const int32_t half_width = width / 2;
-    const int32_t dst_x = left_half ? 0 : width - half_width;
+    const int32_t half_x = left_half ? 0 : width - half_width;
 
-    int32_t dst_y = 0;
-    int32_t dst_height = height;
+    // The game's picture is 16:9 and sits centred in the screen buffer, with black bars on
+    // screens of any other shape (an ultrawide, say). Take only that picture, so the bars
+    // aren't copied into each eye as well.
+    int32_t src_x = 0, src_y = 0, src_w = width, src_h = height;
+    if (sv_stereo_content_aspect > 0) {
+        const double aspect = (double)sv_stereo_content_aspect / 1000.0;
+        if ((double)width / height > aspect + 0.01) {
+            src_w = (int32_t)(height * aspect + 0.5);
+            src_x = (width - src_w) / 2;
+        }
+        else if ((double)width / height < aspect - 0.01) {
+            src_h = (int32_t)(width / aspect + 0.5);
+            src_y = (height - src_h) / 2;
+        }
+    }
+
+    // Half SBS: the picture is squeezed into its half (the display stretches it back).
+    // Full SBS: the picture keeps its shape and is fitted into its half, with bars only
+    // where the half's shape differs from the picture's.
+    int32_t dst_x = half_x, dst_y = 0, dst_w = half_width, dst_h = height;
     if (sv_stereo_mode == STEREO_MODE_SBS_FULL) {
-        dst_height = height / 2;
-        dst_y = (height - dst_height) / 2;
+        const double src_aspect = (double)src_w / src_h;
+        if ((double)half_width / height > src_aspect) {
+            dst_w = (int32_t)(height * src_aspect + 0.5);
+            dst_x = half_x + (half_width - dst_w) / 2;
+        }
+        else {
+            dst_h = (int32_t)(half_width / src_aspect + 0.5);
+            dst_y = (height - dst_h) / 2;
+        }
     }
 
     fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), stereo_buffer->get_fb(),
-        0, 0, width, height,
-        dst_x, dst_y, half_width, dst_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        src_x, src_y, src_w, src_h,
+        dst_x, dst_y, dst_w, dst_h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
     rend_data_ctx.state.bind_framebuffer(0);
     rend_data_ctx.state.end_event();
