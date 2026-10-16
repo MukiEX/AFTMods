@@ -7,6 +7,16 @@ SDK_TAG=vulkan-sdk-1.4.363.0
 DEPS=/src/.deps
 cd /src
 
+# Every cl.exe shares one wineserver, which holds all of their open files. Newer Docker
+# (containerd 2.x) starts containers with a 1024 open-file soft limit, and a parallel build
+# exhausts it: compiles then fail with "Cannot open include file" for headers that exist,
+# or C1001 in p0io.cpp. Raise the limit before wineserver starts so it inherits it.
+ulimit -n "$(ulimit -Hn)" 2>/dev/null || ulimit -n 65536 2>/dev/null || true
+echo "== Open file limit: $(ulimit -n)"
+if [ "$(ulimit -n)" -lt 8192 ]; then
+    echo "   That's low for a parallel build; run with: docker run --ulimit nofile=65536:65536 ..." >&2
+fi
+
 # A persistent wineserver makes the many cl.exe/link.exe invocations much faster.
 wineserver -p 2>/dev/null || true
 $(command -v wine64 || command -v wine) wineboot >/dev/null 2>&1 || true
@@ -24,10 +34,10 @@ CC=cl CXX=cl cmake -S . -B "$DEPS/build-$CONFIG" -G Ninja \
     -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_BUILD_TYPE=$CONFIG \
     -DDIVAVK_VULKAN_HEADERS_DIR=/src/src/DivaVK/external/Vulkan-Headers \
     -DDIVAVK_GLSLANG_DIR="$DEPS/glslang"
-# cl.exe under Wine occasionally fails to read a header when many compilers run at once
-# (C1001 "internal compiler error" in p0io.cpp). It's transient, and Ninja resumes where it
-# stopped, so retry a few times. Set JOBS to use fewer parallel compiles if it keeps happening.
-JOBS=${JOBS:-$(nproc)}
+# If a compile still fails to read a header under Wine, it's transient and Ninja resumes
+# where it stopped, so retry a few times with fewer parallel compiles. JOBS overrides the
+# starting parallelism (default: up to 8).
+JOBS=${JOBS:-$(( $(nproc) < 8 ? $(nproc) : 8 ))}
 for attempt in 1 2 3 4; do
     if cmake --build "$DEPS/build-$CONFIG" --target DivaGL DivaVK -- -j "$JOBS"; then
         break
