@@ -56,6 +56,8 @@ void dvk_destroy(void);
 /* Returns the DivaVK implementation of a GL function, or a logging stub for
    functions that aren't implemented yet. Never returns NULL for "gl*" names. */
 void* dvk_get_proc_address(const char* name);
+// Like dvk_get_proc_address, but nullptr for anything DivaVK doesn't implement.
+void* dvk_get_implemented_proc(const char* name);
 
 /* Ends the frame: submits work and presents the default framebuffer if a surface exists. */
 void dvk_swap_buffers(void);

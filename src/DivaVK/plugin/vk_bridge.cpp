@@ -287,9 +287,13 @@ static HMODULE s_self = nullptr;
 
 static FARPROC WINAPI bridge_GetProcAddress(HMODULE module, LPCSTR name) {
     // s_real_GetProcAddress is captured before any import is patched (see install).
-    if (module && HIWORD((ULONG_PTR)name) && module == GetModuleHandleW(L"opengl32.dll"))
-        if (void* fn = resolve_gl(name))
+    if (module && HIWORD((ULONG_PTR)name) && module == GetModuleHandleW(L"opengl32.dll")) {
+        // Callers use this to probe for features (DivaMovie checks for WGL_NV_DX_interop), so
+        // never hand out a logging stub: only what DivaVK implements, or nullptr.
+        if (void* fn = lookup(s_wgl, sizeof(s_wgl) / sizeof(s_wgl[0]), name))
             return (FARPROC)fn;
+        return (FARPROC)dvk_get_implemented_proc(name);
+    }
     return s_real_GetProcAddress(module, name);
 }
 

@@ -1441,6 +1441,19 @@ static void fill_stubs(void** out, std::index_sequence<I...>) {
 
 static void* s_stub_table[STUB_SLOTS + EXTRA_STUBS];
 
+// Only functions DivaVK really implements (no logging stubs): for callers that test whether
+// an entry point exists, such as GetProcAddress(opengl32.dll, ...) probing for extensions.
+extern "C" void* dvk_get_implemented_proc(const char* name) {
+    if (!name)
+        return nullptr;
+    static std::unordered_map<std::string, void*> table;
+    if (table.empty())
+        for (const ProcEntry& e : s_procs)
+            table[e.name] = e.fn;
+    auto it = table.find(name);
+    return it != table.end() ? it->second : nullptr;
+}
+
 extern "C" void* dvk_get_proc_address(const char* name) {
     if (!name)
         return nullptr;
