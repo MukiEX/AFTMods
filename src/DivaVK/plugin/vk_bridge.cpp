@@ -283,9 +283,10 @@ static PROC WINAPI bridge_wglGetProcAddress(LPCSTR name) {
 typedef FARPROC(WINAPI* PFN_GetProcAddress)(HMODULE, LPCSTR);
 static PFN_GetProcAddress s_real_GetProcAddress = nullptr;
 
+static HMODULE s_self = nullptr;
+
 static FARPROC WINAPI bridge_GetProcAddress(HMODULE module, LPCSTR name) {
-    if (!s_real_GetProcAddress)
-        s_real_GetProcAddress = (PFN_GetProcAddress)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetProcAddress");
+    // s_real_GetProcAddress is captured before any import is patched (see install).
     if (module && HIWORD((ULONG_PTR)name) && module == GetModuleHandleW(L"opengl32.dll"))
         if (void* fn = resolve_gl(name))
             return (FARPROC)fn;
@@ -319,9 +320,11 @@ static int patch_imports(HMODULE module, const char* label) {
             if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal))
                 continue;
             const char* name = (const char*)((IMAGE_IMPORT_BY_NAME*)(base + names->u1.AddressOfData))->Name;
+            // Never redirect our own GetProcAddress: bridge_GetProcAddress (and volk) call it.
             void* fn = gl ? resolve_gl(name)
                 : gdi ? lookup(s_gdi, sizeof(s_gdi) / sizeof(s_gdi[0]), name)
-                : (!strcmp(name, "GetProcAddress") ? (void*)&bridge_GetProcAddress : nullptr);
+                : (module != s_self && s_real_GetProcAddress && !strcmp(name, "GetProcAddress")
+                    ? (void*)&bridge_GetProcAddress : nullptr);
             if (!fn) {
                 if (gl)
                     unresolved++;
@@ -441,6 +444,9 @@ extern "C" void divavk_bridge_fill_tables() {
 
 // Called from DivaGL's DllMain before anything creates a GL context.
 extern "C" void divavk_bridge_install(HMODULE self) {
+    s_self = self;
+    // The real kernel32 export, fetched before any import table is touched.
+    s_real_GetProcAddress = (PFN_GetProcAddress)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetProcAddress");
     patch_imports(GetModuleHandleW(nullptr), "diva.exe");
     patch_imports(GetModuleHandleW(L"glut32.dll"), "glut32.dll");
     patch_imports(self, "DivaVK");
