@@ -278,6 +278,20 @@ static PROC WINAPI bridge_wglGetProcAddress(LPCSTR name) {
 
 // ---------------------------------------------------------------- import patching
 
+// GetProcAddress(opengl32.dll, "glSomething") would hand out the real opengl32 function,
+// which has no context under DivaVK and silently does nothing. Answer from DivaVK instead.
+typedef FARPROC(WINAPI* PFN_GetProcAddress)(HMODULE, LPCSTR);
+static PFN_GetProcAddress s_real_GetProcAddress = nullptr;
+
+static FARPROC WINAPI bridge_GetProcAddress(HMODULE module, LPCSTR name) {
+    if (!s_real_GetProcAddress)
+        s_real_GetProcAddress = (PFN_GetProcAddress)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetProcAddress");
+    if (module && HIWORD((ULONG_PTR)name) && module == GetModuleHandleW(L"opengl32.dll"))
+        if (void* fn = resolve_gl(name))
+            return (FARPROC)fn;
+    return s_real_GetProcAddress(module, name);
+}
+
 static int patch_imports(HMODULE module, const char* label) {
     if (!module)
         return 0;
@@ -293,7 +307,8 @@ static int patch_imports(HMODULE module, const char* label) {
         const char* dll = (const char*)(base + imp->Name);
         bool gl = !_stricmp(dll, "opengl32.dll");
         bool gdi = !_stricmp(dll, "gdi32.dll");
-        if (!gl && !gdi)
+        bool k32 = !_stricmp(dll, "kernel32.dll");
+        if (!gl && !gdi && !k32)
             continue;
         if (!imp->OriginalFirstThunk)
             continue; // bound imports without names; nothing we can match
@@ -304,7 +319,9 @@ static int patch_imports(HMODULE module, const char* label) {
             if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal))
                 continue;
             const char* name = (const char*)((IMAGE_IMPORT_BY_NAME*)(base + names->u1.AddressOfData))->Name;
-            void* fn = gl ? resolve_gl(name) : lookup(s_gdi, sizeof(s_gdi) / sizeof(s_gdi[0]), name);
+            void* fn = gl ? resolve_gl(name)
+                : gdi ? lookup(s_gdi, sizeof(s_gdi) / sizeof(s_gdi[0]), name)
+                : (!strcmp(name, "GetProcAddress") ? (void*)&bridge_GetProcAddress : nullptr);
             if (!fn) {
                 if (gl)
                     unresolved++;
@@ -353,6 +370,9 @@ static void patch_all_modules() {
             continue; // system DLLs (including opengl32 itself)
         const wchar_t* base = wcsrchr(path, L'\\');
         base = base ? base + 1 : path;
+        // The launcher draws its own window with the real OpenGL before the game starts.
+        if (!_wcsicmp(base, L"Launcher.dva"))
+            continue;
         char label[MAX_PATH];
         WideCharToMultiByte(CP_UTF8, 0, base, -1, label, sizeof(label), nullptr, nullptr);
         // patch_imports logs every module; keep the log readable by only logging hits
@@ -364,6 +384,8 @@ static void patch_all_modules() {
         for (IMAGE_IMPORT_DESCRIPTOR* imp = (IMAGE_IMPORT_DESCRIPTOR*)(b + nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress); imp->Name; imp++) {
             const char* dll = (const char*)(b + imp->Name);
             if (!_stricmp(dll, "opengl32.dll") || !_stricmp(dll, "gdi32.dll")) { imports_gl = true; break; }
+            // A plugin that fetches GL functions with GetProcAddress needs patching too
+            if (!_stricmp(dll, "opengl32.dll") || !_stricmp(dll, "kernel32.dll")) imports_gl = true;
         }
         if (imports_gl)
             patch_imports(m, label);

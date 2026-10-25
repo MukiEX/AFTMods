@@ -2592,10 +2592,19 @@ HOOK(void, FASTCALL, wglGetProcAddresses, 0x0000000140461B50) {
     REPLACE_FUNC(glTexImage1DDLL);
     REPLACE_FUNC(glTexImage2DDLL);
 
+#ifdef DIVAVK
+    // opengl32.dll's own exports have no context under DivaVK (they'd silently do nothing:
+    // the tone-map LUT lost its swizzle and stencil state was dropped). Ask DivaVK instead.
+    glTexParameteriv = (PFNGLTEXPARAMETERIVPROC)wglGetProcAddressDLL("glTexParameteriv");
+    glStencilMask = (PFNGLSTENCILMASKPROC)wglGetProcAddressDLL("glStencilMask");
+    glStencilFunc = (PFNGLSTENCILFUNCPROC)wglGetProcAddressDLL("glStencilFunc");
+    glStencilOp = (PFNGLSTENCILOPPROC)wglGetProcAddressDLL("glStencilOp");
+#else
     glTexParameteriv = (PFNGLTEXPARAMETERIVPROC)GetProcAddress((HMODULE)opengl32_handle, "glTexParameteriv");
     glStencilMask = (PFNGLSTENCILMASKPROC)GetProcAddress((HMODULE)opengl32_handle, "glStencilMask");
     glStencilFunc = (PFNGLSTENCILFUNCPROC)GetProcAddress((HMODULE)opengl32_handle, "glStencilFunc");
     glStencilOp = (PFNGLSTENCILOPPROC)GetProcAddress((HMODULE)opengl32_handle, "glStencilOp");
+#endif
 
     // 3.1
     glDrawArraysInstanced = (PFNGLDRAWARRAYSINSTANCEDPROC)wglGetProcAddressDLL("glDrawArraysInstanced");
