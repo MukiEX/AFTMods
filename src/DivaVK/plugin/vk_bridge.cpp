@@ -272,8 +272,18 @@ static void* resolve_gl(const char* name) {
     return dvk_get_proc_address(name);
 }
 
+// wglGetProcAddress is how GL code tests for extensions, so it must say "missing" for anything
+// DivaVK doesn't implement (DivaMovie probes WGL_NV_DX_interop and falls back to CPU uploads).
+// The game's own GL tables are still filled with logging stubs by divavk_bridge_fill_tables.
 static PROC WINAPI bridge_wglGetProcAddress(LPCSTR name) {
-    return name ? (PROC)resolve_gl(name) : nullptr;
+    if (!name)
+        return nullptr;
+    if (void* fn = lookup(s_wgl, sizeof(s_wgl) / sizeof(s_wgl[0]), name))
+        return (PROC)fn;
+    if (void* fn = dvk_get_implemented_proc(name))
+        return (PROC)fn;
+    bridge_logf("wglGetProcAddress(\"%s\"): not implemented, reported as missing", name);
+    return nullptr;
 }
 
 // ---------------------------------------------------------------- import patching
