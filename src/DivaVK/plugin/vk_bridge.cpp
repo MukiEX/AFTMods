@@ -151,20 +151,39 @@ static BOOL WINAPI bridge_SwapBuffers(HDC) {
         if (GetClientRect(s_hwnd, &rc) && rc.right > rc.left && rc.bottom > rc.top)
             dvk_resize(rc.right - rc.left, rc.bottom - rc.top);
     }
-    // F10: dump every render target of the next frame to <game>\DivaVK_dump_<time>\ (debugging).
-    if (GetAsyncKeyState(VK_F10) & 1) {
-        char exe[MAX_PATH];
-        DWORD n = GetModuleFileNameA(nullptr, exe, MAX_PATH);
-        while (n && exe[n - 1] != '\\' && exe[n - 1] != '/')
+    // Frame dump (debugging): Scroll Lock or Pause, or a file named DivaVK_dump_request in the
+    // game folder (handy without a keyboard), writes every render target of the next frame to
+    // <game>\\DivaVK_dump_<time>\\. Key presses are detected from the key-down state: TLAC
+    // polls GetAsyncKeyState for every key each frame, which clears the "pressed since last
+    // call" bit before we could see it.
+    {
+        static bool s_key_was_down = false;
+        static unsigned s_frame = 0;
+        bool down = (GetAsyncKeyState(VK_SCROLL) | GetAsyncKeyState(VK_PAUSE)) & 0x8000;
+        bool trigger = down && !s_key_was_down;
+        s_key_was_down = down;
+
+        char game[MAX_PATH];
+        DWORD n = GetModuleFileNameA(nullptr, game, MAX_PATH);
+        while (n && game[n - 1] != '\\' && game[n - 1] != '/')
             n--;
-        exe[n] = 0;
-        SYSTEMTIME t;
-        GetLocalTime(&t);
-        char dir[MAX_PATH + 64];
-        snprintf(dir, sizeof(dir), "%sDivaVK_dump_%02d%02d%02d", exe, t.wHour, t.wMinute, t.wSecond);
-        CreateDirectoryA(dir, nullptr);
-        bridge_logf("F10: dumping the next frame to %s", dir);
-        dvk_request_frame_dump(dir);
+        game[n] = 0;
+        if ((++s_frame % 30) == 0) {
+            std::string req = std::string(game) + "DivaVK_dump_request";
+            if (GetFileAttributesA(req.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                DeleteFileA(req.c_str());
+                trigger = true;
+            }
+        }
+        if (trigger) {
+            SYSTEMTIME t;
+            GetLocalTime(&t);
+            char dir[MAX_PATH + 64];
+            snprintf(dir, sizeof(dir), "%sDivaVK_dump_%02d%02d%02d", game, t.wHour, t.wMinute, t.wSecond);
+            CreateDirectoryA(dir, nullptr);
+            bridge_logf("Frame dump requested: %s", dir);
+            dvk_request_frame_dump(dir);
+        }
     }
     dvk_swap_buffers();
     return TRUE;
