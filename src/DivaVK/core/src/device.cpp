@@ -665,7 +665,9 @@ namespace dvk {
     }
 
     void Context::present() {
+        dump_frame_end();
         submit_frame(true);
+        dump_frame_begin();
         // Persist new pipelines now and then; the game may never shut down cleanly.
         if ((serial % 1800) == 0 && stats.pipelines_created != pipelines_at_last_save)
             save_pipeline_cache();

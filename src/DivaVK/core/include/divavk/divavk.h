@@ -67,6 +67,9 @@ void dvk_set_vsync(bool vsync);
 
 /* Writes the pipeline cache to info->pipeline_cache_path (also done periodically). */
 void dvk_save_pipeline_cache(void);
+
+// Debugging: writes every render target of the next frame to dir (PNG + index.txt).
+void dvk_request_frame_dump(const char* dir);
 void dvk_get_stats(dvk_stats* out);
 
 /* Name of the Vulkan device in use (for logs/overlays). */

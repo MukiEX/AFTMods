@@ -302,6 +302,10 @@ namespace dvk {
         pass_depth_ro = false;
         pass_fbo = ~0u;
         bound_pipeline = VK_NULL_HANDLE;
+        if (dump_active) {
+            PassTarget done = pass_target;
+            dump_pass_targets(done, "pass");
+        }
     }
 
     void Context::flush_pending_clear() {
@@ -638,6 +642,8 @@ namespace dvk {
             else
                 blit_one(src.depth, src.depth_level, 0, dst.depth, dst.depth_level, 0, aspect, VK_FILTER_NEAREST);
         }
+        if (dump_active && draw_fbo != 0) // the default framebuffer is dumped once, at present
+            dump_pass_targets(dst, "blit");
     }
 
     void Context::copy_tex_sub_image(TextureObj* t, GLenum target, GLint level, GLint xoff, GLint yoff,
@@ -686,6 +692,8 @@ namespace dvk {
         end_transfer(*this, cb, s, t, sl, dl);
         s->last_used_serial = t->last_used_serial = serial;
         t->defined_levels |= 1u << level;
+        if (dump_active)
+            dump_texture(t, (uint32_t)level, layer, "copytex");
     }
 
     void Context::copy_image_sub_data(TextureObj* src, GLint src_level, GLint sx, GLint sy, GLint sz,

@@ -67,7 +67,8 @@
     X(PFNGLMAPBUFFERRANGEPROC, glMapBufferRange) X(PFNGLUNMAPBUFFERPROC, glUnmapBuffer) \
     X(PFNGLCLEARBUFFERFVPROC, glClearBufferfv) X(PFNGLPIXELSTOREIPROC, glPixelStorei) \
     X(PFNGLGENSAMPLERSPROC, glGenSamplers) X(PFNGLBINDSAMPLERPROC, glBindSampler) \
-    X(PFNGLSAMPLERPARAMETERIPROC, glSamplerParameteri) X(PFNGLFINISHPROC, glFinish)
+    X(PFNGLSAMPLERPARAMETERIPROC, glSamplerParameteri) X(PFNGLFINISHPROC, glFinish) \
+    X(PFNGLTEXPARAMETERIVPROC, glTexParameteriv) X(PFNGLTEXTURESUBIMAGE2DPROC, glTextureSubImage2D)
 
 GL_FUNCS(GLFN)
 
@@ -380,6 +381,34 @@ static void test_divagl_copy_shader() {
     CHECK_PIXEL(5, 5, 128, 0, 0, 128);
 }
 
+// DivaGL's tone-map LUT: RG16F, filled with GL_RG/GL_FLOAT data (via the 4.5 DSA call),
+// sampled through a RRRG swizzle.
+static void test_tone_map_lut() {
+    printf("Tone map LUT (RG16F, float upload, RRRG swizzle)\n");
+    reset_state();
+    const int N = 64;
+    float data[N * 2];
+    for (int i = 0; i < N; i++) {
+        data[i * 2 + 0] = (float)i / (N - 1);
+        data[i * 2 + 1] = 0.25f;
+    }
+    GLuint t;
+    glGenTextures(1, &t);
+    glBindTexture(GL_TEXTURE_2D, t);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, N, 1, 0, GL_RG, GL_HALF_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    const GLint swizzle[] = { GL_RED, GL_RED, GL_RED, GL_GREEN };
+    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+    glTextureSubImage2D(t, 0, 0, 0, N, 1, GL_RG, GL_FLOAT, data);
+    draw_copy(t);
+    for (int x : { 1, W / 4, W / 2, 3 * W / 4, W - 2 }) {
+        int i = (int)((x + 0.5f) / W * N);
+        int v = (int)((float)i / (N - 1) * 255.0f + 0.5f);
+        CHECK_PIXEL(x, H / 2, v, v, v, 64);
+    }
+}
+
 static void test_fbo_and_blit() {
     printf("FBO render-to-texture, MSAA resolve, blit, copy\n");
     reset_state();
@@ -688,6 +717,56 @@ static void test_mid_frame_updates() {
     CHECK_PIXEL(W - 10, H / 2, 0, 0, 255, 255);
 }
 
+// DivaGL's IBL cube maps: RGBA16F half-float faces uploaded one mip level at a time
+// (all six faces of level 0, then level 1, ...), sampled with textureLod.
+static uint16_t to_half(float f) {
+    uint32_t x;
+    memcpy(&x, &f, 4);
+    uint32_t sign = (x >> 16) & 0x8000, e = (x >> 23) & 0xFF, m = x & 0x7FFFFF;
+    if (e == 0) return (uint16_t)sign;
+    int ne = (int)e - 127 + 15;
+    if (ne <= 0) return (uint16_t)sign;
+    if (ne >= 31) return (uint16_t)(sign | 0x7C00);
+    return (uint16_t)(sign | (ne << 10) | (m >> 13));
+}
+
+static void test_ibl_cube_mips() {
+    printf("IBL-style cube map: RGBA16F, per-level face uploads, textureLod\n");
+    reset_state();
+    GLuint cube;
+    glGenTextures(1, &cube);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cube);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    const float level_color[3][4] = { { 0.5f, 0, 0, 1 }, { 0, 0.5f, 0, 1 }, { 0, 0, 0.5f, 1 } };
+    for (int level = 0; level < 3; level++) {
+        int size = 4 >> level;
+        std::vector<uint16_t> px((size_t)size * size * 4);
+        for (size_t i = 0; i < px.size(); i++)
+            px[i] = to_half(level_color[level][i % 4]);
+        for (int f = 0; f < 6; f++)
+            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + f, level, GL_RGBA16F, size, size, 0, GL_RGBA, GL_HALF_FLOAT, px.data());
+    }
+    GLuint p = program(R"(#version 430 core
+void main() { vec2 p = vec2((gl_VertexID & 1) * 4.0 - 1.0, (gl_VertexID >> 1) * 4.0 - 1.0); gl_Position = vec4(p, 0, 1); })",
+        R"(#version 430 core
+layout(binding = 3) uniform samplerCube u_cube;
+layout(location = 0) out vec4 o;
+void main() {
+    float lod = gl_FragCoord.x < 42.0 ? 0.0 : gl_FragCoord.x < 84.0 ? 1.0 : 2.0;
+    o = textureLod(u_cube, vec3(0.3, 1.0, 0.2), lod);
+})");
+    CHECK(p != 0, "ibl cube program");
+    glUseProgram(p);
+    glBindVertexArray(g_empty_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    CHECK_PIXEL(10, 10, 128, 0, 0, 255);
+    CHECK_PIXEL(60, 10, 0, 128, 0, 255);
+    CHECK_PIXEL(110, 10, 0, 0, 128, 255);
+    glActiveTexture(GL_TEXTURE0);
+}
+
 static void test_cube_and_sampler_objects() {
     printf("cube map sampling + sampler objects\n");
     reset_state();
@@ -796,6 +875,33 @@ static void test_present_loop() {
         dvk_swap_buffers();
     }
     CHECK_PIXEL(2, 2, 0, 255, 0, 255);
+
+    // One-frame render target dump: an FBO pass plus the final image
+    const char* dir = "/tmp/divavk_dump_test";
+    std::string cmd = std::string("rm -rf ") + dir + " && mkdir -p " + dir;
+    CHECK(system(cmd.c_str()) == 0, "mkdir");
+    dvk_request_frame_dump(dir);
+    dvk_swap_buffers(); // dump starts with the next frame
+    GLuint tex, fbo;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, 32, 32, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    glViewport(0, 0, 32, 32);
+    glClearColor(2.0f, 0.5f, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    const float tri[] = { -1, -1, 1, -1, -1, 1 };
+    set_params(0, 0, 1, 1);
+    draw_tris(tri, 3);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, W, H);
+    draw_copy(tex);
+    dvk_swap_buffers();
+    std::string idx = read_file(std::string(dir) + "/index.txt");
+    printf("%s", idx.c_str());
+    CHECK(idx.find("RGBA16F") != std::string::npos && idx.find("final") != std::string::npos, "dump index incomplete");
 }
 
 int main(int argc, char** argv) {
@@ -835,12 +941,14 @@ int main(int argc, char** argv) {
     test_ubo_ordering();
     test_blend();
     test_divagl_copy_shader();
+    test_tone_map_lut();
     test_fbo_and_blit();
     test_formats();
     test_mrt_and_clearbuffer();
     test_query_and_binary();
     test_mid_frame_updates();
     test_cube_and_sampler_objects();
+    test_ibl_cube_mips();
     test_depth_feedback();
     test_present_loop();
     test_all_divagl_shaders();

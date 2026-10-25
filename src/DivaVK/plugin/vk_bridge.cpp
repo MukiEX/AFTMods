@@ -151,6 +151,21 @@ static BOOL WINAPI bridge_SwapBuffers(HDC) {
         if (GetClientRect(s_hwnd, &rc) && rc.right > rc.left && rc.bottom > rc.top)
             dvk_resize(rc.right - rc.left, rc.bottom - rc.top);
     }
+    // F10: dump every render target of the next frame to <game>\DivaVK_dump_<time>\ (debugging).
+    if (GetAsyncKeyState(VK_F10) & 1) {
+        char exe[MAX_PATH];
+        DWORD n = GetModuleFileNameA(nullptr, exe, MAX_PATH);
+        while (n && exe[n - 1] != '\\' && exe[n - 1] != '/')
+            n--;
+        exe[n] = 0;
+        SYSTEMTIME t;
+        GetLocalTime(&t);
+        char dir[MAX_PATH + 64];
+        snprintf(dir, sizeof(dir), "%sDivaVK_dump_%02d%02d%02d", exe, t.wHour, t.wMinute, t.wSecond);
+        CreateDirectoryA(dir, nullptr);
+        bridge_logf("F10: dumping the next frame to %s", dir);
+        dvk_request_frame_dump(dir);
+    }
     dvk_swap_buffers();
     return TRUE;
 }

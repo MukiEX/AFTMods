@@ -34,6 +34,7 @@ add_library(divavk_core STATIC
     core/src/buffer.cpp
     core/src/device.cpp
     core/src/divavk.cpp
+    core/src/dump.cpp
     core/src/draw.cpp
     core/src/formats.cpp
     core/src/framebuffer.cpp

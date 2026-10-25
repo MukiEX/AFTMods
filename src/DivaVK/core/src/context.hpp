@@ -549,6 +549,17 @@ namespace dvk {
         void copy_image_sub_data(TextureObj* src, GLint src_level, GLint sx, GLint sy, GLint sz,
             TextureObj* dst, GLint dst_level, GLint dx, GLint dy, GLint dz, GLsizei w, GLsizei h, GLsizei d);
         void read_pixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type, void* out);
+
+        // ------------------------------------------------ dump.cpp (one-frame render target dump)
+        std::string dump_dir;
+        bool dump_pending = false, dump_active = false;
+        int dump_index = 0;
+        FILE* dump_file = nullptr;
+        void request_frame_dump(const std::string& dir);
+        void dump_frame_begin();
+        void dump_frame_end();
+        void dump_pass_targets(const PassTarget& tgt, const char* what);
+        void dump_texture(TextureObj* t, uint32_t level, uint32_t layer, const char* what);
         void flush_pending_clear();
         void on_texture_destroyed(TextureObj* t);
 
