@@ -7,6 +7,14 @@ SDK_TAG=vulkan-sdk-1.4.363.0
 DEPS=/src/.deps
 cd /src
 
+# The container runs as root (Wine's prefix lives in /root), so hand everything the build
+# creates back to whoever owns the source folder when we exit, success or failure.
+OWNER=$(stat -c %u:%g /src)
+give_back() {
+    chown -R "$OWNER" .deps bin out obj lib src/DivaVK/external/Vulkan-Headers src/DivaVK/lib 2>/dev/null || true
+}
+trap give_back EXIT
+
 # Every cl.exe shares one wineserver, which holds all of their open files. Newer Docker
 # (containerd 2.x) starts containers with a 1024 open-file soft limit, and a parallel build
 # exhausts it: compiles then fail with "Cannot open include file" for headers that exist,
