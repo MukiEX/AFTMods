@@ -1,4 +1,4 @@
-# Builds DivaGL.dva and DivaVK.dva with Microsoft's own MSVC (cl.exe) running under Wine
+# Builds DivaGL.dva and DivaLinux.dva with Microsoft's own MSVC (cl.exe) running under Wine
 # (https://github.com/mstorsjo/msvc-wine). Real cl.exe matters here: the plugins share
 # std:: containers with the game, so they must use MSVC's STL layout (MinGW can't).
 #

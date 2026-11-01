@@ -28,11 +28,39 @@ static bool parse_int(const char* str, int32_t& value);
 static void trim_space(const char*& str, size_t& length);
 
 #ifdef DIVAVK
-// DivaVK: same renderer, Vulkan backend (see src/DivaVK)
+// DivaLinux: same renderer on a Vulkan backend (src/DivaVK), plus the FFmpeg movie player
+// (src/DivaLinux/movie). Built only as DivaLinux.dva, for Wine/Proton.
 extern "C" void divavk_bridge_install(HMODULE self);
 extern "C" void divavk_bridge_shutdown();
-#define DIVAGL_PLUGIN_NAME L"DivaVK"
-std::wstring CONFIG_FILE_STRING = GetDirPath() + L"\\plugins\\DivaVK.ini";
+extern "C" void divavk_log_text(const char* text);
+extern "C" void divalinux_movie_install(const wchar_t* config_file);
+#define DIVAGL_PLUGIN_NAME L"DivaLinux"
+std::wstring CONFIG_FILE_STRING = GetDirPath() + L"\\plugins\\DivaLinux.ini";
+
+// First run after switching from the separate plugins: start from their settings.
+// DivaVK.ini (or DivaGL.ini) has the renderer and stereo options; DivaMovie.ini's [general]
+// ffmpeg_player and movie_audio move to [movie]. Only done while DivaLinux.ini doesn't exist.
+static void divalinux_migrate_config() {
+    if (GetFileAttributesW(CONFIG_FILE_STRING.c_str()) != INVALID_FILE_ATTRIBUTES)
+        return;
+    std::wstring dir = GetDirPath() + L"\\plugins\\";
+    for (const wchar_t* old : { L"DivaVK.ini", L"DivaGL.ini" })
+        if (CopyFileW((dir + old).c_str(), CONFIG_FILE_STRING.c_str(), TRUE)) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "Created DivaLinux.ini from %ls", old);
+            divavk_log_text(msg);
+            break;
+        }
+    std::wstring movie_ini = dir + L"DivaMovie.ini";
+    if (GetFileAttributesW(movie_ini.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        for (const wchar_t* key : { L"ffmpeg_player", L"movie_audio" }) {
+            wchar_t value[16] = {};
+            if (GetPrivateProfileStringW(L"general", key, L"", value, 16, movie_ini.c_str()))
+                WritePrivateProfileStringW(L"movie", key, value, CONFIG_FILE_STRING.c_str());
+        }
+        divavk_log_text("Copied movie settings from DivaMovie.ini");
+    }
+}
 #else
 #define DIVAGL_PLUGIN_NAME L"DivaGL"
 std::wstring CONFIG_FILE_STRING = GetDirPath() + L"\\plugins\\DivaGL.ini";
@@ -71,6 +99,9 @@ void FASTCALL divagl_main() {
 bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserved) {
     switch (ul_reason_for_call) {
     case DLL_PROCESS_ATTACH:
+#ifdef DIVAVK
+        divalinux_migrate_config();
+#endif
         sv_reflect_full = GetPrivateProfileIntW(L"general", L"reflect_full", 0, CONFIG_FILE) > 0 ? true : false;
         sv_reflect_res_scale = GetPrivateProfileIntW(L"general", L"reflect_res_scale", 100, CONFIG_FILE);
         sv_reflect_res_scale = sv_reflect_res_scale > 0 ? clamp_def(sv_reflect_res_scale, 25, 100) : 100;
@@ -102,6 +133,7 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
 #ifdef DIVAVK
         // No WGL_NV_DX_interop2 under Vulkan: always use the CPU upload path for videos.
         sv_task_movie_player_no_interop = true;
+        divalinux_movie_install(CONFIG_FILE);
 #endif
 
         dll_handle = (size_t)handle;
@@ -124,7 +156,7 @@ extern "C" __declspec(dllexport) LPCWSTR GetPluginName(void) {
 
 extern "C" __declspec(dllexport) LPCWSTR GetPluginDescription(void) {
 #ifdef DIVAVK
-    return L"DivaVK: DivaGL by korenkonder running on Vulkan";
+    return L"DivaLinux: DivaGL by korenkonder on Vulkan, with an FFmpeg movie player (from DivaMovie).\nFor Wine/Proton; on Windows use DivaGL.";
 #else
     return L"DivaGL Plugin by korenkonder";
 #endif
@@ -452,6 +484,30 @@ PluginConfig::PluginConfigOption config[] = {
             10000,
         }
     },
+#ifdef DIVAVK
+    {
+        PluginConfig::CONFIG_BOOLEAN,
+        new PluginConfig::PluginConfigBooleanData {
+            L"ffmpeg_player",
+            L"movie",
+            CONFIG_FILE,
+            L"FFmpeg Movie Player",
+            L"Play movies with FFmpeg (needs the FFmpeg DLLs in the plugins folder: avutil-61, swresample-7,\nswscale-10, avcodec-63, avformat-63). Off, or without them, the game's own player is used.",
+            true,
+        }
+    },
+    {
+        PluginConfig::CONFIG_BOOLEAN,
+        new PluginConfig::PluginConfigBooleanData {
+            L"movie_audio",
+            L"movie",
+            CONFIG_FILE,
+            L"Movie Audio",
+            L"Play the audio tracks of movies (FFmpeg player only).\nNever plays during songs, where the video follows the song.",
+            false,
+        }
+    },
+#endif
 };
 
 extern "C" __declspec(dllexport) PluginConfig::PluginConfigArray GetPluginOptions(void) {

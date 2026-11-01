@@ -1,7 +1,7 @@
 /*
-    DivaVK - PD Loader bridge (Windows / Wine).
+    DivaLinux - PD Loader bridge (Wine / Proton), the DivaVK part of DivaLinux.dva.
 
-    Turns DivaGL into DivaVK without touching DivaGL's renderer:
+    Turns DivaGL into DivaVK (DivaGL's renderer on Vulkan) without touching the renderer:
     - Patches the opengl32.dll and gdi32.dll imports of diva.exe, glut32.dll, this plugin and
       every other non-system module (TLAC, Render and other PD Loader plugins), so every
       GL/WGL call made in the process lands in DivaVK. Plugins that load after DivaVK are
@@ -37,16 +37,21 @@ static void bridge_log(const char* msg, void*) {
         GetModuleFileNameW(nullptr, path, MAX_PATH);
         wchar_t* slash = wcsrchr(path, L'\\');
         if (slash)
-            wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"plugins\\DivaVK.log");
+            wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"plugins\\DivaLinux.log");
         _wfopen_s(&s_log, path, L"w");
     }
     if (s_log) {
         fprintf(s_log, "%s\n", msg);
         fflush(s_log);
     }
-    OutputDebugStringA("[DivaVK] ");
+    OutputDebugStringA("[DivaLinux] ");
     OutputDebugStringA(msg);
     OutputDebugStringA("\n");
+}
+
+// For the rest of DivaLinux (the movie player): one log file for the whole plugin.
+extern "C" void divavk_log_text(const char* text) {
+    bridge_log(text, nullptr);
 }
 
 static void bridge_logf(const char* fmt, ...) {
@@ -75,6 +80,28 @@ static dvk_surface create_surface(dvk_instance instance, void*) {
 
 static void patch_all_modules();
 
+// DivaLinux.dva replaces DivaGL.dva, DivaVK.dva and DivaMovie.dva. With any of them loaded as
+// well, two plugins patch the same renderer or movie player and the game breaks in odd ways,
+// so say so once, by the time every plugin is loaded (the first context creation).
+static void warn_about_replaced_plugins() {
+    static const wchar_t* names[] = { L"DivaGL.dva", L"DivaVK.dva", L"DivaMovie.dva" };
+    std::wstring found;
+    for (const wchar_t* n : names)
+        if (GetModuleHandleW(n)) {
+            found += found.empty() ? L"" : L", ";
+            found += n;
+        }
+    if (found.empty())
+        return;
+    char narrow[256] = {};
+    WideCharToMultiByte(CP_UTF8, 0, found.c_str(), -1, narrow, sizeof(narrow), nullptr, nullptr);
+    bridge_logf("Also loaded: %s. DivaLinux.dva replaces these; disable or remove them.", narrow);
+    std::wstring text = L"These plugins are loaded alongside DivaLinux:\n\n    " + found +
+        L"\n\nDivaLinux.dva already contains DivaGL, DivaVK and DivaMovie, and running them together "
+        L"breaks rendering or movies. Disable or remove them from the plugins folder.";
+    MessageBoxW(nullptr, text.c_str(), L"DivaLinux", MB_OK | MB_ICONWARNING);
+}
+
 static bool ensure_context(HDC hdc) {
     if (s_created)
         return true;
@@ -91,10 +118,10 @@ static bool ensure_context(HDC hdc) {
     static char cache_path[MAX_PATH] = {};
     GetModuleFileNameA(nullptr, cache_path, MAX_PATH);
     if (char* slash = strrchr(cache_path, '\\'))
-        strcpy_s(slash + 1, MAX_PATH - (slash + 1 - cache_path), "plugins\\DivaVK.pipeline_cache");
+        strcpy_s(slash + 1, MAX_PATH - (slash + 1 - cache_path), "plugins\\DivaLinux.pipeline_cache");
 
     dvk_create_info ci = {};
-    ci.app_name = "PD Loader (DivaVK)";
+    ci.app_name = "PD Loader (DivaLinux)";
     ci.width = w;
     ci.height = h;
     ci.enable_validation = GetEnvironmentVariableA("DIVAVK_VALIDATION", nullptr, 0) > 0;
@@ -106,9 +133,10 @@ static bool ensure_context(HDC hdc) {
     ci.pipeline_cache_path = cache_path;
     s_created = dvk_create(&ci);
     if (!s_created)
-        MessageBoxA(nullptr, "DivaVK could not initialise Vulkan.\nSee plugins\\DivaVK.log for details.", "DivaVK", MB_OK | MB_ICONERROR);
+        MessageBoxA(nullptr, "DivaLinux could not initialise Vulkan.\nSee plugins\\DivaLinux.log for details.", "DivaLinux", MB_OK | MB_ICONERROR);
     else
         bridge_logf("Context created %dx%d on %s", w, h, dvk_device_name());
+    warn_about_replaced_plugins();
     return s_created;
 }
 
@@ -151,9 +179,9 @@ static BOOL WINAPI bridge_SwapBuffers(HDC) {
         if (GetClientRect(s_hwnd, &rc) && rc.right > rc.left && rc.bottom > rc.top)
             dvk_resize(rc.right - rc.left, rc.bottom - rc.top);
     }
-    // Frame dump (debugging): Scroll Lock or Pause, or a file named DivaVK_dump_request in the
+    // Frame dump (debugging): Scroll Lock or Pause, or a file named DivaLinux_dump_request in the
     // game folder (handy without a keyboard), writes every render target of the next frame to
-    // <game>\\DivaVK_dump_<time>\\. Key presses are detected from the key-down state: TLAC
+    // <game>\\DivaLinux_dump_<time>\\. Key presses are detected from the key-down state: TLAC
     // polls GetAsyncKeyState for every key each frame, which clears the "pressed since last
     // call" bit before we could see it.
     {
@@ -169,7 +197,7 @@ static BOOL WINAPI bridge_SwapBuffers(HDC) {
             n--;
         game[n] = 0;
         if ((++s_frame % 30) == 0) {
-            std::string req = std::string(game) + "DivaVK_dump_request";
+            std::string req = std::string(game) + "DivaLinux_dump_request";
             if (GetFileAttributesA(req.c_str()) != INVALID_FILE_ATTRIBUTES) {
                 DeleteFileA(req.c_str());
                 trigger = true;
@@ -179,7 +207,7 @@ static BOOL WINAPI bridge_SwapBuffers(HDC) {
             SYSTEMTIME t;
             GetLocalTime(&t);
             char dir[MAX_PATH + 64];
-            snprintf(dir, sizeof(dir), "%sDivaVK_dump_%02d%02d%02d", game, t.wHour, t.wMinute, t.wSecond);
+            snprintf(dir, sizeof(dir), "%sDivaLinux_dump_%02d%02d%02d", game, t.wHour, t.wMinute, t.wSecond);
             CreateDirectoryA(dir, nullptr);
             bridge_logf("Frame dump requested: %s", dir);
             dvk_request_frame_dump(dir);
@@ -463,7 +491,7 @@ extern "C" void divavk_bridge_install(HMODULE self) {
     s_real_GetProcAddress = (PFN_GetProcAddress)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetProcAddress");
     patch_imports(GetModuleHandleW(nullptr), "diva.exe");
     patch_imports(GetModuleHandleW(L"glut32.dll"), "glut32.dll");
-    patch_imports(self, "DivaVK");
+    patch_imports(self, "DivaLinux");
     s_patched.push_back(GetModuleHandleW(nullptr));
     if (HMODULE g = GetModuleHandleW(L"glut32.dll"))
         s_patched.push_back(g);

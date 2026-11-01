@@ -1,12 +1,15 @@
-# CMake build for DivaGL.dva and DivaVK.dva, equivalent to the Release|x64 configuration of
+# CMake build for DivaGL.dva and DivaLinux.dva, equivalent to the Release|x64 configuration of
 # AFTMods.sln. It exists for building with MSVC's cl.exe without MSBuild (for example under
 # Wine with msvc-wine, see docker/). On Windows, AFTMods.sln remains the normal way to build.
 #
 # Must be built with MSVC (cl.exe): the plugins share STL containers with the game.
 #
 #   cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-#         -DDIVAVK_VULKAN_HEADERS_DIR=... -DDIVAVK_GLSLANG_DIR=...
-#   cmake --build build            -> bin/DivaGL.dva, bin/DivaVK.dva
+#         -DDIVAVK_VULKAN_HEADERS_DIR=... -DDIVAVK_GLSLANG_DIR=... -DDIVALINUX_FFMPEG_INCLUDE_DIR=...
+#   cmake --build build            -> bin/DivaGL.dva, bin/DivaLinux.dva
+#
+# DivaGL.dva is for Windows. DivaLinux.dva is for Wine/Proton: DivaGL's renderer on Vulkan
+# (DivaVK) plus DivaMovie's FFmpeg movie player, in one plugin.
 
 cmake_minimum_required(VERSION 3.20)
 cmake_policy(SET CMP0091 NEW)
@@ -16,7 +19,7 @@ if(NOT MSVC OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     message(FATAL_ERROR "AFTMods plugins must be built with MSVC's cl.exe (they share MSVC STL containers with the game).")
 endif()
 
-option(AFTMODS_BUILD_DIVAVK "Build DivaVK.dva (needs DIVAVK_VULKAN_HEADERS_DIR and DIVAVK_GLSLANG_DIR)" ON)
+option(AFTMODS_BUILD_DIVALINUX "Build DivaLinux.dva (needs DIVAVK_VULKAN_HEADERS_DIR, DIVAVK_GLSLANG_DIR and DIVALINUX_FFMPEG_INCLUDE_DIR)" ON)
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")                  # /MT, as in the .vcxproj files
 set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "ProgramDatabase")
@@ -102,17 +105,27 @@ list(TRANSFORM DIVAGL_SOURCES PREPEND ${GL}/)
 add_library(DivaGL SHARED ${DIVAGL_SOURCES})
 aft_plugin(DivaGL)
 
-# ---------------------------------------------------------------- DivaVK
-if(AFTMODS_BUILD_DIVAVK)
+# ---------------------------------------------------------------- DivaLinux
+# DivaGL compiled with DIVAVK (Vulkan backend + WGL bridge) and the FFmpeg movie player.
+if(AFTMODS_BUILD_DIVALINUX)
+    if(NOT EXISTS "${DIVALINUX_FFMPEG_INCLUDE_DIR}/libavcodec/avcodec.h")
+        message(FATAL_ERROR "DIVALINUX_FFMPEG_INCLUDE_DIR must point at FFmpeg's headers (see docker/build.sh for the version).")
+    endif()
     set(DIVAVK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     add_subdirectory(src/DivaVK)   # divavk_core + glslang
 
-    add_library(DivaVK SHARED ${AFT_ROOT}/src/DivaVK/plugin/vk_bridge.cpp ${DIVAGL_SOURCES})
-    aft_plugin(DivaVK)
-    target_compile_definitions(DivaVK PRIVATE DIVAVK)
-    target_include_directories(DivaVK PRIVATE
+    add_library(DivaLinux SHARED
+        ${AFT_ROOT}/src/DivaVK/plugin/vk_bridge.cpp
+        ${AFT_ROOT}/src/DivaLinux/movie/movie.cpp
+        ${DIVAGL_SOURCES})
+    aft_plugin(DivaLinux)
+    target_compile_definitions(DivaLinux PRIVATE DIVAVK DIVALINUX)
+    target_include_directories(DivaLinux PRIVATE
         ${AFT_ROOT}/src/DivaVK/core/include
         ${AFT_ROOT}/src/DivaVK/external/volk
         ${DIVAVK_VULKAN_HEADERS_DIR}/include)
-    target_link_libraries(DivaVK PRIVATE divavk_core glslang glslang-default-resource-limits)
+    # FFmpeg's headers only for the movie player (it loads the DLLs at run time, no import libs).
+    set_source_files_properties(${AFT_ROOT}/src/DivaLinux/movie/movie.cpp PROPERTIES
+        INCLUDE_DIRECTORIES "${DIVALINUX_FFMPEG_INCLUDE_DIR}")
+    target_link_libraries(DivaLinux PRIVATE divavk_core glslang glslang-default-resource-limits winmm)
 endif()
