@@ -33,12 +33,12 @@ namespace GLDXEmu
 	typedef GLenum (APIENTRY* PFN_glGetError)(void);
 	typedef void (APIENTRY* PFN_glBindBuffer)(GLenum, GLuint);
 
-	inline PFN_glBindTexture pglBindTexture;
-	inline PFN_glTexSubImage2D pglTexSubImage2D;
-	inline PFN_glGetIntegerv pglGetIntegerv;
-	inline PFN_glPixelStorei pglPixelStorei;
-	inline PFN_glGetError pglGetError;
-	inline PFN_glBindBuffer pglBindBuffer;
+	static PFN_glBindTexture pglBindTexture;
+	static PFN_glTexSubImage2D pglTexSubImage2D;
+	static PFN_glGetIntegerv pglGetIntegerv;
+	static PFN_glPixelStorei pglPixelStorei;
+	static PFN_glGetError pglGetError;
+	static PFN_glBindBuffer pglBindBuffer;
 
 	inline bool LoadGL()
 	{
