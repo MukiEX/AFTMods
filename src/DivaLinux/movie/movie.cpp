@@ -56,6 +56,12 @@ HOOK(HRESULT, __fastcall, CreatePlayer, FFPlayer::ADDR_CREATE_PLAYER, void** pla
     return originalCreatePlayer(player);
 }
 
+// For DivaGL's movie task: true for our players, which hand the game a GL texture and must
+// never be switched to DivaGL's Direct3D 11 copy path (see task_movie.cpp).
+extern "C" bool divalinux_is_ffmpeg_player(const void* player) {
+    return player && *(const void* const*)player == (const void*)&FFPlayer::Player::vtable;
+}
+
 extern "C" void divalinux_movie_install(const wchar_t* config_file) {
     s_ffmpeg_player = GetPrivateProfileIntW(L"movie", L"ffmpeg_player", 1, config_file) > 0;
     FFPlayer::movieAudio = GetPrivateProfileIntW(L"movie", L"movie_audio", 0, config_file) > 0;

@@ -465,6 +465,7 @@ namespace FFPlayer
 		bool loggedFirstUpload = false;
 		// DivaLinux diagnostics: how far the game got with this player (logged on release)
 		volatile LONG nGetState = 0, nPlay = 0, nGetTexture = 0, nNoFrame = 0;
+		bool textureFailed = false;
 		bool audioStarted = false;
 
 		static const PlayerVtbl vtable;
@@ -775,9 +776,27 @@ namespace FFPlayer
 			const MovieDecoder::Frame* frame = d->FrameFor(self->Now(), &changed);
 			if (!frame)
 				InterlockedIncrement(&self->nNoFrame);
-			if (frame && !self->texture)
+			// DivaLinux: create the texture as soon as the size is known, not only once a frame is
+			// ready. DivaGL's movie task treats "no texture" from the first call as a player that
+			// can't share GL textures and switches to its Direct3D 11 copy path for good.
+			if (!self->texture && !self->textureFailed && d->width > 0 && d->height > 0)
 			{
+				// DivaGL fails the creation if glGetError reports anything, including an error some
+				// earlier, unrelated call left behind; clear those first.
+				if (GLDXEmu::pglGetError || GLDXEmu::LoadGL())
+					for (int i = 0; i < 8; i++)
+					{
+						GLenum e = GLDXEmu::pglGetError();
+						if (e == GL_NO_ERROR)
+							break;
+						PRINT("[Movie] cleared a pending GL error 0x%04X before creating the movie texture\n", e);
+					}
 				self->texture = TextureObject::Create(d->width, d->height);
+				if (!self->texture)
+				{
+					self->textureFailed = true;
+					PRINT("[Movie] couldn't create the %dx%d movie texture\n", d->width, d->height);
+				}
 				changed = true;
 			}
 			if (frame && self->texture && changed)
