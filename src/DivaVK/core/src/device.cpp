@@ -6,6 +6,7 @@
 #define VMA_STATIC_VULKAN_FUNCTIONS 0
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
 #include "context.hpp"
+#include "xr.hpp"
 #include <set>
 #include <mutex>
 
@@ -28,6 +29,11 @@ namespace dvk {
             s_log_func(buf, s_log_user);
         else
             fprintf(stderr, "[DivaVK] %s\n", buf);
+    }
+
+    void set_log_target(dvk_log_func fn, void* user) {
+        s_log_func = fn;
+        s_log_user = user;
     }
 
     void log_once(const char* key, const char* fmt, ...) {
@@ -155,7 +161,7 @@ namespace dvk {
         ici.ppEnabledExtensionNames = exts.data();
         ici.enabledLayerCount = (uint32_t)layers.size();
         ici.ppEnabledLayerNames = layers.data();
-        if (vkCreateInstance(&ici, nullptr, &instance) != VK_SUCCESS) {
+        if (xr_enabled() ? !xr_create_vk_instance(ici, instance) : vkCreateInstance(&ici, nullptr, &instance) != VK_SUCCESS) {
             log("vkCreateInstance failed");
             return false;
         }
@@ -176,6 +182,12 @@ namespace dvk {
         vkEnumeratePhysicalDevices(instance, &count, nullptr);
         std::vector<VkPhysicalDevice> devices(count);
         vkEnumeratePhysicalDevices(instance, &count, devices.data());
+        if (xr_enabled()) {
+            // The headset's runtime decides which GPU renders.
+            devices.assign(1, xr_physical_device(instance));
+            if (!devices[0])
+                return false;
+        }
         int best_score = -1;
         for (VkPhysicalDevice pd : devices) {
             VkPhysicalDeviceProperties p;
@@ -187,7 +199,7 @@ namespace dvk {
             for (uint32_t q = 0; q < qcount; q++) {
                 if (!(qprops[q].queueFlags & VK_QUEUE_GRAPHICS_BIT))
                     continue;
-                if (surface) {
+                if (surface && !xr_enabled()) {
                     VkBool32 present = VK_FALSE;
                     vkGetPhysicalDeviceSurfaceSupportKHR(pd, q, surface, &present);
                     if (!present)
@@ -225,6 +237,16 @@ namespace dvk {
         vkEnumerateDeviceExtensionProperties(phys, nullptr, &count, nullptr);
         std::vector<VkExtensionProperties> dev_exts(count);
         vkEnumerateDeviceExtensionProperties(phys, nullptr, &count, dev_exts.data());
+        if (surface && xr_enabled()) {
+            // With a headset the window is only a mirror; drop it if this queue can't present.
+            VkBool32 present = VK_FALSE;
+            vkGetPhysicalDeviceSurfaceSupportKHR(phys, queue_family, surface, &present);
+            if (!present) {
+                log("The headset's GPU can't present to the game window; showing the game in the headset only");
+                vkDestroySurfaceKHR(instance, surface, nullptr);
+                surface = VK_NULL_HANDLE;
+            }
+        }
         std::vector<const char*> dexts;
         if (surface)
             dexts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
@@ -241,7 +263,7 @@ namespace dvk {
         dci.enabledExtensionCount = (uint32_t)dexts.size();
         dci.ppEnabledExtensionNames = dexts.data();
         dci.pEnabledFeatures = &features;
-        if (vkCreateDevice(phys, &dci, nullptr, &device) != VK_SUCCESS) {
+        if (xr_enabled() ? !xr_create_vk_device(phys, dci, device) : vkCreateDevice(phys, &dci, nullptr, &device) != VK_SUCCESS) {
             log("vkCreateDevice failed");
             return false;
         }
@@ -361,6 +383,7 @@ namespace dvk {
 
         if (surface && !create_swapchain())
             log("Swapchain creation failed; rendering offscreen");
+        xr_start(*this);
         return true;
     }
 
@@ -379,11 +402,14 @@ namespace dvk {
     }
 
     void Context::shutdown() {
-        if (!device)
+        if (!device) {
+            xr_shutdown(*this);
             return;
+        }
         if (recording)
             submit_frame(false);
         wait_idle_all();
+        xr_shutdown(*this);
 
         save_pipeline_cache();
 
@@ -467,7 +493,10 @@ namespace dvk {
     void Context::wait_idle_all() {
         for (uint32_t i = 1; i <= FRAMES_IN_FLIGHT; i++)
             wait_frame(frames[(frame_index + i) % FRAMES_IN_FLIGHT]);
-        vkDeviceWaitIdle(device);
+        {
+            std::lock_guard<std::mutex> q(queue_mutex);
+            vkDeviceWaitIdle(device);
+        }
         s_completed_serial = serial;
         run_garbage();
     }
@@ -609,6 +638,9 @@ namespace dvk {
             texture_transition(f.cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, src->rest_layout);
         }
 
+        if (do_present)
+            xr_record_frame(*this, f.cmd);
+
         // Hoisted uploads must be visible to everything recorded in the main buffer.
         if (f.upload_used) {
             VkMemoryBarrier mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
@@ -637,6 +669,7 @@ namespace dvk {
             si.signalSemaphoreCount = 1;
             si.pSignalSemaphores = &present_sem[image_index];
         }
+        std::unique_lock<std::mutex> queue_lock(queue_mutex);
         VkResult r = vkQueueSubmit(queue, 1, &si, f.fence);
         if (r != VK_SUCCESS)
             log("vkQueueSubmit failed: %d", (int)r);
@@ -654,6 +687,9 @@ namespace dvk {
             if (pr == VK_ERROR_OUT_OF_DATE_KHR || pr == VK_SUBOPTIMAL_KHR)
                 swapchain_dirty = true;
         }
+        queue_lock.unlock();
+        if (do_present)
+            xr_frame_submitted();
 
         frame_index = (frame_index + 1) % FRAMES_IN_FLIGHT;
         serial++;

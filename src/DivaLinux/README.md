@@ -37,6 +37,38 @@ On the first run, if `DivaLinux.ini` doesn't exist yet, it is created from `Diva
 DivaMovie's other options (software/hybrid decoding, interop emulation, debug) are gone: they
 controlled Media Foundation and D3D9 paths that DivaLinux doesn't use.
 
+## VR headsets (OpenXR)
+
+With `[vr] enabled=1`, DivaLinux also shows the game on a virtual screen in a headset, through
+whatever OpenXR runtime the Wine prefix has: Proton's `wineopenxr` (which hands over to
+SteamVR, Monado or WiVRn on the Linux side) or, on a Quest, WinlatorXR's `openxr_wxr.dll`.
+The monitor/window keeps showing the game too.
+
+| `[vr]` key | Default | What it does |
+| --- | --- | --- |
+| `enabled` | 0 | Turn VR output on. |
+| `screen_width_cm` | 300 | Width of the virtual screen. |
+| `screen_distance_cm` | 250 | How far in front of you it floats. |
+| `screen_height_cm` | 0 | Raise (or lower, negative) the screen from eye level. |
+| `runtime_json` | (empty) | A runtime manifest to use instead of the prefix's active runtime. |
+
+3D comes from DivaGL's SBS stereo: set `[stereo] stereo_mode` to 2 (full SBS) and the left half
+of each frame goes to your left eye, the right half to your right eye. Full SBS on a 32:9
+resolution (e.g. 3840x1080) gives each eye a full 16:9 1920x1080 picture; with
+`stereo_content_aspect` set, the letterbox bars are left out. Half SBS (mode 1) works too, at
+half the horizontal resolution per eye. `stereo_mode` 0 gives a flat screen.
+
+The screen is placed straight ahead of where you look when the game starts. Press **Home** to
+bring it back in front of you; recentring from the headset's own menu does the same.
+
+Frames go to the headset from their own thread at the headset's refresh rate, so the screen
+stays steady in the room even though the game renders at 60 fps.
+
+The log shows each step (`OpenXR: runtime ...`, `headset ...`, `session focused`,
+`first frame shown in the headset`). "no runtime is installed or active" means the prefix has
+no OpenXR runtime registered: set `runtime_json`, or start the game through Proton with your
+OpenXR runtime running.
+
 ## Log and debugging
 
 Everything goes to `plugins/DivaLinux.log`: Vulkan device, unimplemented GL calls, and movie
@@ -57,6 +89,7 @@ Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation la
 | `movie/FFLoader.h`, `FFMovie.h`, `FFPlayer.h` | DivaMovie's FFmpeg player, nearly unchanged |
 | `movie/movie_gl.h` | The player's GL upload functions, taken from DivaVK instead of opengl32 |
 | `movie/movie.cpp` | Installs the player on the game's `CreatePlayer` factory |
+| `src/DivaVK/core/src/xr.cpp` | OpenXR output (virtual screen), tested against `src/DivaVK/tests/mock_xr_runtime.cpp` |
 
 ## Building
 
@@ -71,5 +104,7 @@ the DivaVK options. In Visual Studio, the `DivaLinux` project reads the same fol
 
 ## Next steps
 
+- Head-tracked VR: render each eye from the headset's pose (a projection layer) instead of
+  showing the SBS frame on a virtual screen.
 - Upload movie frames as YUV planes and convert them in a shader, instead of converting to BGRA
   on the CPU and swizzling again in DivaVK's upload.

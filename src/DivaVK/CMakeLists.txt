@@ -43,11 +43,12 @@ add_library(divavk_core STATIC
     core/src/query.cpp
     core/src/spirv_reflect.cpp
     core/src/texture.cpp
+    core/src/xr.cpp
     external/volk/volk.c
 )
 target_include_directories(divavk_core
     PUBLIC core/include
-    PRIVATE core/src external external/volk external/vma ${DIVAVK_VULKAN_HEADERS_DIR}/include
+    PRIVATE core/src external external/volk external/vma external/openxr/include ${DIVAVK_VULKAN_HEADERS_DIR}/include
             ${DIVAVK_GLSLANG_DIR})
 target_compile_definitions(divavk_core PRIVATE VK_NO_PROTOTYPES)
 if(WIN32)
@@ -55,7 +56,8 @@ if(WIN32)
 elseif(ANDROID)
     target_compile_definitions(divavk_core PRIVATE VK_USE_PLATFORM_ANDROID_KHR)
 endif()
-target_link_libraries(divavk_core PRIVATE glslang glslang-default-resource-limits ${CMAKE_DL_LIBS})
+find_package(Threads REQUIRED)
+target_link_libraries(divavk_core PRIVATE glslang glslang-default-resource-limits ${CMAKE_DL_LIBS} Threads::Threads)
 if(MSVC)
     target_compile_options(divavk_core PRIVATE /W3 /bigobj)
 else()
@@ -77,4 +79,15 @@ if(DIVAVK_BUILD_TESTS AND NOT WIN32)
     target_link_libraries(divavk_tests PRIVATE divavk_core)
     target_compile_definitions(divavk_tests PRIVATE
         DIVAVK_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../res/ft_shaders")
+
+    # OpenXR output, against a mock runtime (no headset or real runtime needed).
+    add_library(divavk_mock_xr SHARED tests/mock_xr_runtime.cpp)
+    target_include_directories(divavk_mock_xr PRIVATE external/openxr/include ${DIVAVK_VULKAN_HEADERS_DIR}/include)
+    target_compile_definitions(divavk_mock_xr PRIVATE VK_NO_PROTOTYPES)
+    add_executable(divavk_xr_tests tests/test_xr.cpp)
+    target_include_directories(divavk_xr_tests PRIVATE core/include external external/openxr/include ${DIVAVK_VULKAN_HEADERS_DIR}/include)
+    target_link_libraries(divavk_xr_tests PRIVATE divavk_core ${CMAKE_DL_LIBS})
+    target_compile_definitions(divavk_xr_tests PRIVATE
+        DIVAVK_MOCK_XR="$<TARGET_FILE:divavk_mock_xr>")
+    add_dependencies(divavk_xr_tests divavk_mock_xr)
 endif()

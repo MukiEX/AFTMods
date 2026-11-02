@@ -34,12 +34,39 @@ extern "C" void divavk_bridge_install(HMODULE self);
 extern "C" void divavk_bridge_shutdown();
 extern "C" void divavk_log_text(const char* text);
 extern "C" void divalinux_movie_install(const wchar_t* config_file);
+#include <divavk/divavk.h>
 #define DIVAGL_PLUGIN_NAME L"DivaLinux"
 std::wstring CONFIG_FILE_STRING = GetDirPath() + L"\\plugins\\DivaLinux.ini";
 
 // First run after switching from the separate plugins: start from their settings.
 // DivaVK.ini (or DivaGL.ini) has the renderer and stereo options; DivaMovie.ini's [general]
 // ffmpeg_player and movie_audio move to [movie]. Only done while DivaLinux.ini doesn't exist.
+// [vr]: show the game in a headset through OpenXR (src/DivaVK/core/src/xr.cpp), as a virtual
+// screen. With SBS stereo on, each eye gets its own half, so the screen is in 3D.
+// Called by the bridge just before it creates the Vulkan context.
+extern "C" bool divalinux_get_xr_info(dvk_xr_info* out) {
+    const wchar_t* ini = CONFIG_FILE_STRING.c_str();
+    if (GetPrivateProfileIntW(L"vr", L"enabled", 0, ini) <= 0)
+        return false;
+    static char runtime_json[MAX_PATH * 3] = {};
+    wchar_t wjson[MAX_PATH] = {};
+    GetPrivateProfileStringW(L"vr", L"runtime_json", L"", wjson, MAX_PATH, ini);
+    WideCharToMultiByte(CP_UTF8, 0, wjson, -1, runtime_json, sizeof(runtime_json), nullptr, nullptr);
+
+    *out = {};
+    out->runtime_json = runtime_json[0] ? runtime_json : nullptr;
+    out->app_name = "PD Loader (DivaLinux)";
+    out->layout = sv_stereo_mode == 1 ? DVK_XR_LAYOUT_SBS_HALF
+        : sv_stereo_mode == 2 ? DVK_XR_LAYOUT_SBS_FULL : DVK_XR_LAYOUT_MONO;
+    out->swap_eyes = sv_stereo_swap_eyes;
+    out->content_aspect = out->layout != DVK_XR_LAYOUT_MONO && sv_stereo_content_aspect > 0
+        ? sv_stereo_content_aspect / 1000.0f : 0.0f;
+    out->screen_width = clamp_def((int32_t)GetPrivateProfileIntW(L"vr", L"screen_width_cm", 300, ini), 20, 5000) / 100.0f;
+    out->screen_distance = clamp_def((int32_t)GetPrivateProfileIntW(L"vr", L"screen_distance_cm", 250, ini), 20, 5000) / 100.0f;
+    out->screen_height = clamp_def((int32_t)GetPrivateProfileIntW(L"vr", L"screen_height_cm", 0, ini), -500, 500) / 100.0f;
+    return true;
+}
+
 static void divalinux_migrate_config() {
     if (GetFileAttributesW(CONFIG_FILE_STRING.c_str()) != INVALID_FILE_ATTRIBUTES)
         return;
@@ -505,6 +532,43 @@ PluginConfig::PluginConfigOption config[] = {
             L"Movie Audio",
             L"Play the audio tracks of movies (FFmpeg player only).\nNever plays during songs, where the video follows the song.",
             false,
+        }
+    },
+    {
+        PluginConfig::CONFIG_BOOLEAN,
+        new PluginConfig::PluginConfigBooleanData {
+            L"enabled",
+            L"vr",
+            CONFIG_FILE,
+            L"VR Headset (OpenXR)",
+            L"Show the game on a virtual screen in a headset, through the OpenXR runtime (SteamVR, Monado,\nWinlatorXR...). With Stereo 3D set to Full or Half SBS, the screen is in 3D.\nPress Home to put the screen back in front of you.",
+            false,
+        }
+    },
+    {
+        PluginConfig::CONFIG_NUMERIC,
+        new PluginConfig::PluginConfigNumericData {
+            L"screen_width_cm",
+            L"vr",
+            CONFIG_FILE,
+            L"VR Screen Width (cm)",
+            L"Width of the virtual screen in centimetres.",
+            300,
+            20,
+            5000,
+        }
+    },
+    {
+        PluginConfig::CONFIG_NUMERIC,
+        new PluginConfig::PluginConfigNumericData {
+            L"screen_distance_cm",
+            L"vr",
+            CONFIG_FILE,
+            L"VR Screen Distance (cm)",
+            L"How far in front of you the virtual screen floats, in centimetres.",
+            250,
+            20,
+            5000,
         }
     },
 #endif

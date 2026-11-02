@@ -79,6 +79,7 @@ static dvk_surface create_surface(dvk_instance instance, void*) {
 }
 
 static void patch_all_modules();
+extern "C" bool divalinux_get_xr_info(dvk_xr_info* out);   // dllmain.cpp ([vr] settings)
 
 // DivaLinux.dva replaces DivaGL.dva, DivaVK.dva and DivaMovie.dva. With any of them loaded as
 // well, two plugins patch the same renderer or movie player and the game breaks in odd ways,
@@ -119,6 +120,14 @@ static bool ensure_context(HDC hdc) {
     GetModuleFileNameA(nullptr, cache_path, MAX_PATH);
     if (char* slash = strrchr(cache_path, '\\'))
         strcpy_s(slash + 1, MAX_PATH - (slash + 1 - cache_path), "plugins\\DivaLinux.pipeline_cache");
+
+    // VR: the headset's runtime has to pick the GPU, so it comes before the context.
+    dvk_xr_info xi = {};
+    if (divalinux_get_xr_info(&xi)) {
+        xi.log = bridge_log;
+        if (!dvk_xr_setup(&xi))
+            bridge_logf("VR is on ([vr] enabled=1) but OpenXR isn't available; showing the game on the monitor only");
+    }
 
     dvk_create_info ci = {};
     ci.app_name = "PD Loader (DivaLinux)";
@@ -178,6 +187,14 @@ static BOOL WINAPI bridge_SwapBuffers(HDC) {
         RECT rc;
         if (GetClientRect(s_hwnd, &rc) && rc.right > rc.left && rc.bottom > rc.top)
             dvk_resize(rc.right - rc.left, rc.bottom - rc.top);
+    }
+    // VR: Home puts the virtual screen back in front of where the player is looking.
+    {
+        static bool s_home_was_down = false;
+        bool down = (GetAsyncKeyState(VK_HOME) & 0x8000) != 0;
+        if (down && !s_home_was_down && dvk_xr_active())
+            dvk_xr_recenter();
+        s_home_was_down = down;
     }
     // Frame dump (debugging): Scroll Lock or Pause, or a file named DivaLinux_dump_request in the
     // game folder (handy without a keyboard), writes every render target of the next frame to

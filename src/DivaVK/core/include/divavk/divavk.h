@@ -77,6 +77,47 @@ void dvk_get_stats(dvk_stats* out);
 /* Name of the Vulkan device in use (for logs/overlays). */
 const char* dvk_device_name(void);
 
+/* ---------------------------------------------------------------- OpenXR output (xr.cpp)
+
+   Shows the default framebuffer in a headset as a virtual screen floating in front of the
+   player, one quad layer per eye. With a side-by-side frame, the left half goes to the left
+   eye and the right half to the right eye, so DivaGL's SBS stereo becomes real 3D.
+
+   Call dvk_xr_setup before dvk_create: the OpenXR runtime has to choose the Vulkan device.
+   Frames go to the headset from a thread of their own, paced by the runtime, so the game
+   keeps its own frame rate and the headset keeps the screen steady between game frames. */
+
+enum {
+    DVK_XR_LAYOUT_MONO = 0,      /* the whole frame to both eyes */
+    DVK_XR_LAYOUT_SBS_HALF = 1,  /* each half squeezed: shown stretched to content_aspect */
+    DVK_XR_LAYOUT_SBS_FULL = 2,  /* each half holds the picture at content_aspect, letterboxed */
+};
+
+typedef struct dvk_xr_info {
+    /* The runtime's xrGetInstanceProcAddr, or NULL to load the active runtime: runtime_json,
+       else XR_RUNTIME_JSON, else the system's active runtime (registry on Windows, XDG
+       config on Linux). */
+    void* get_instance_proc_addr;
+    const char* runtime_json;
+    const char* app_name;
+    int32_t layout;              /* DVK_XR_LAYOUT_* */
+    bool swap_eyes;              /* the frame's left half is the right eye */
+    float content_aspect;        /* width / height of the picture; 0 = take it from the frame */
+    float screen_width;          /* metres */
+    float screen_distance;       /* metres in front of the player */
+    float screen_height;         /* metres above (or below, negative) eye level */
+    dvk_log_func log;            /* for messages before dvk_create; dvk_create's log after */
+    void* user;
+} dvk_xr_info;
+
+/* Loads the runtime and finds a headset. False (with the reason logged through
+   dvk_create_info.log, or stderr before dvk_create) means no XR: carry on without it. */
+bool dvk_xr_setup(const dvk_xr_info* info);
+/* True while frames are going to the headset. */
+bool dvk_xr_active(void);
+/* Puts the screen straight ahead of where the player is looking now. */
+void dvk_xr_recenter(void);
+
 #ifdef __cplusplus
 }
 #endif

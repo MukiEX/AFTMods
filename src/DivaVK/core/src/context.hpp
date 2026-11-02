@@ -18,6 +18,7 @@
 #pragma once
 
 #include "common.hpp"
+#include <mutex>
 #include "formats.hpp"
 #include "spirv_reflect.hpp"
 #include "../include/divavk/divavk.h"
@@ -382,6 +383,7 @@ namespace dvk {
         VkDevice device = VK_NULL_HANDLE;
         VkQueue queue = VK_NULL_HANDLE;
         uint32_t queue_family = 0;
+        std::mutex queue_mutex;   // the OpenXR frame thread (xr.cpp) submits to the same queue
         VmaAllocator vma = VK_NULL_HANDLE;
         VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
         VkPhysicalDeviceProperties props = {};
