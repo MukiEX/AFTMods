@@ -463,6 +463,8 @@ namespace FFPlayer
 		bool clockRunning = false;
 		float volume = 1.0f;
 		bool loggedFirstUpload = false;
+		// DivaLinux diagnostics: how far the game got with this player (logged on release)
+		volatile LONG nGetState = 0, nPlay = 0, nGetTexture = 0, nNoFrame = 0;
 		bool audioStarted = false;
 
 		static const PlayerVtbl vtable;
@@ -601,7 +603,9 @@ namespace FFPlayer
 					self->texture->vtbl->Release(self->texture);
 				if (self->clock)
 					self->clock->Release();
-				PRINT("[Movie] released %s\n", self->path.c_str());
+				PRINT("[Movie] released %s (state %ld; game asked: state %ld, play %ld, texture %ld (%ld without a frame); movie gate 0x1411A1840=%u)\n",
+					self->path.c_str(), (long)self->state, (long)self->nGetState, (long)self->nPlay, (long)self->nGetTexture,
+					(long)self->nNoFrame, *(volatile UINT32*)0x1411A1840);
 				delete self;
 			}
 			return n;
@@ -644,6 +648,7 @@ namespace FFPlayer
 
 		static LONG GetStateImpl(Player* self)
 		{
+			InterlockedIncrement(&self->nGetState);
 			LONG s = self->state;
 			if (s == STATE_PLAYING)
 			{
@@ -665,6 +670,7 @@ namespace FFPlayer
 
 		static HRESULT PlayImpl(Player* self)
 		{
+			InterlockedIncrement(&self->nPlay);
 			LONG s = self->state;
 			if (s != STATE_OPENED && s != STATE_PAUSED && s != STATE_STOPPED)
 				return s == STATE_PLAYING ? S_OK : MF_E_INVALIDREQUEST;
@@ -755,6 +761,7 @@ namespace FFPlayer
 			if (!out)
 				return E_POINTER;
 			*out = nullptr;
+			InterlockedIncrement(&self->nGetTexture);
 
 			AcquireSRWLockShared(&self->lock);
 			MovieDecoder* d = self->decoder;
@@ -766,6 +773,8 @@ namespace FFPlayer
 
 			bool changed = false;
 			const MovieDecoder::Frame* frame = d->FrameFor(self->Now(), &changed);
+			if (!frame)
+				InterlockedIncrement(&self->nNoFrame);
 			if (frame && !self->texture)
 			{
 				self->texture = TextureObject::Create(d->width, d->height);
