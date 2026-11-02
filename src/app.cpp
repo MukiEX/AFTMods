@@ -131,6 +131,13 @@ namespace lfs {
         ImVec2 last_size = { 0, 0 };
         float S = 1.0f;
 
+        // Button prompts double as buttons: each frame records where it drew them, and a
+        // click (or tap on a touch screen) on one next frame acts like pressing that button.
+        struct PromptHit { ImRect rect; Btn btn; };
+        mutable std::vector<PromptHit> prompt_hits_next;
+        std::vector<PromptHit> prompt_hits;
+        ImVec2 mouse_pos = { -1e9f, -1e9f };
+
         Overlay overlay = Overlay::None;
         // picker
         OptionPtr pick_opt;
@@ -585,6 +592,20 @@ namespace lfs {
         }
 
         float prompt(ImDrawList* dl, float x, float cy, Btn b, const std::string& label) const {
+            float end = prompt_draw(dl, x, cy, b, label, false);
+            if (b == Btn::DPadH || b == Btn::DPadV)
+                return end;   // directions aren't a single action
+            ImRect hit(ImVec2(x - px(8), cy - px(17)), ImVec2(end - px(26) + px(8), cy + px(17)));
+            prompt_hits_next.push_back({ hit, b });
+            if (hit.Contains(mouse_pos)) {
+                // Hover: a soft pill behind the prompt, drawn on top with the prompt redrawn over it
+                dl->AddRectFilled(hit.Min, hit.Max, alpha(col::line, 0.55f), px(17));
+                prompt_draw(dl, x, cy, b, label, true);
+            }
+            return end;
+        }
+
+        float prompt_draw(ImDrawList* dl, float x, float cy, Btn b, const std::string& label, bool) const {
             float r = px(11.0f);
             ImVec2 c(x + r, cy);
             float th = px(2.4f);
@@ -911,6 +932,8 @@ namespace lfs {
                     if (focused)
                         prompt(dl, tx - px(30), cy, Btn::Y, "");
                     text(dl, fonts.regular, 16, ImVec2(tx, cy - ts.y * 0.5f), focused ? col::ink : col::faint, t);
+                    if (focused)   // the word "Options" is clickable too
+                        prompt_hits_next.push_back({ ImRect(ImVec2(tx - px(4), cy - px(17)), ImVec2(tx + ts.x + px(8), cy + px(17))), Btn::Y });
                 }
                 if (!o->version.empty() && o->kind == Kind::Plugin && focused && o->children.empty()) {
                     // nothing extra
@@ -1202,6 +1225,30 @@ namespace lfs {
             toast_time -= dt;
 
         Input in = read_input(overlay == Overlay::Keys);
+
+        // Clicks on last frame's button prompts press that button (and aren't seen as a click).
+        prompt_hits.swap(prompt_hits_next);
+        prompt_hits_next.clear();
+        mouse_pos = in.mouse;
+        if (in.click) {
+            for (auto it = prompt_hits.rbegin(); it != prompt_hits.rend(); ++it) {
+                if (!it->rect.Contains(in.mouse))
+                    continue;
+                switch (it->btn) {
+                case Btn::A: in.accept = true; break;
+                case Btn::B: in.back = true; if (overlay == Overlay::Keys) in.key_escape = true; break;
+                case Btn::X: in.x = true; break;
+                case Btn::Y: in.y = true; break;
+                case Btn::LB: in.prev_tab = true; break;
+                case Btn::RB: in.next_tab = true; break;
+                case Btn::Start: in.start = true; break;
+                case Btn::View: in.view = true; break;
+                default: break;
+                }
+                in.click = false;
+                break;
+            }
+        }
 
         // Input
         switch (overlay) {

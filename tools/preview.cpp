@@ -271,8 +271,24 @@ int main(int argc, char** argv) {
     press(ImGuiKey_GamepadR1);          // Components
     press(ImGuiKey_GamepadR1);          // Plugins
     shot("07_plugins");
-    press(ImGuiKey_GamepadFaceUp);      // DivaGL options
-    shot("08_plugin_options");
+    // Mouse / touch: the button prompts work as buttons
+    auto click = [&](float x, float y) {
+        io.AddMousePosEvent(x, y);
+        frame(2);
+        io.AddMouseButtonEvent(0, true);
+        frame();
+        io.AddMouseButtonEvent(0, false);
+        frame();
+    };
+    io.AddMousePosEvent(200, 770);      // hover "Y Plugin options" in the bottom bar
+    shot("07b_prompt_hover");
+    click(200, 770);
+    shot("08_plugin_options");          // opened by the click
+    click(170, 770);                    // "B Back"
+    shot("08b_back_by_click");
+    click(1110, 120);                   // the word "Options" on the focused plugin row
+    shot("08c_row_options_click");
+    io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
     press(ImGuiKey_GamepadFaceRight);
     press(ImGuiKey_GamepadR1);          // Patches
     shot("09_patches");
