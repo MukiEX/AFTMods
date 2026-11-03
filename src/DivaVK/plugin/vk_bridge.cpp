@@ -242,7 +242,8 @@ static BOOL WINAPI bridge_SwapBuffers(HDC) {
             dvk_xr_recenter();
         s_home_was_down = down;
     }
-    // Frame dump (debugging): Scroll Lock or Pause, or a file named DivaLinux_dump_request in the
+    // Frame dump (debugging): Scroll Lock or Pause, LB+RB+View on a controller,
+    // DIVALINUX_DUMP_AFTER=<seconds>, or a file named DivaLinux_dump_request in the
     // game folder (handy without a keyboard), writes every render target of the next frame to
     // <game>\\DivaLinux_dump_<time>\\. Key presses are detected from the key-down state: TLAC
     // polls GetAsyncKeyState for every key each frame, which clears the "pressed since last
@@ -251,6 +252,23 @@ static BOOL WINAPI bridge_SwapBuffers(HDC) {
         static bool s_key_was_down = false;
         static unsigned s_frame = 0;
         bool down = (GetAsyncKeyState(VK_SCROLL) | GetAsyncKeyState(VK_PAUSE)) & 0x8000;
+        // Controller (for headsets): hold LB + RB and press View/Back on the first pad.
+        {
+            typedef DWORD(WINAPI* PFN_XInputGetState)(DWORD, void*);
+            static PFN_XInputGetState s_xinput = []() -> PFN_XInputGetState {
+                for (const wchar_t* dll : { L"xinput1_4.dll", L"xinput1_3.dll", L"xinput9_1_0.dll" })
+                    if (HMODULE h = LoadLibraryW(dll))
+                        if (FARPROC f = GetProcAddress(h, "XInputGetState"))
+                            return (PFN_XInputGetState)f;
+                return nullptr;
+            }();
+            struct { DWORD packet; WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; } st = {};
+            if (s_xinput && s_xinput(0, &st) == 0) {
+                const WORD combo = 0x0100 | 0x0200 | 0x0020;   // LB, RB, BACK
+                if ((st.buttons & combo) == combo)
+                    down = true;
+            }
+        }
         bool trigger = down && !s_key_was_down;
         s_key_was_down = down;
 
@@ -259,6 +277,15 @@ static BOOL WINAPI bridge_SwapBuffers(HDC) {
         while (n && game[n - 1] != '\\' && game[n - 1] != '/')
             n--;
         game[n] = 0;
+        // DIVALINUX_DUMP_AFTER=<seconds>: one dump that long after the first frame (no input needed).
+        static DWORD s_dump_after_ms = []() -> DWORD {
+            char v[32] = {};
+            return GetEnvironmentVariableA("DIVALINUX_DUMP_AFTER", v, sizeof(v)) ? (DWORD)(atof(v) * 1000.0) : 0;
+        }();
+        if (s_dump_after_ms && s_frames_shown > 0 && GetTickCount() - s_context_tick >= s_dump_after_ms) {
+            s_dump_after_ms = 0;
+            trigger = true;
+        }
         if ((++s_frame % 30) == 0) {
             std::string req = std::string(game) + "DivaLinux_dump_request";
             if (GetFileAttributesA(req.c_str()) != INVALID_FILE_ATTRIBUTES) {
