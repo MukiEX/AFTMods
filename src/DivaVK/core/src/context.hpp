@@ -486,6 +486,11 @@ namespace dvk {
         std::vector<VkSemaphore> present_sem; // one per swapchain image
         bool swapchain_dirty = false;
         bool vsync = true;
+        // FIFO (vsync) presentation that stopped handing back images (WinlatorXR's X server):
+        // after a few acquire timeouts, presentation switches to mailbox/immediate for good.
+        bool fifo_stalled = false;
+        int acquire_timeouts = 0;
+        VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
 
         // ------------------------------------------------ device.cpp
         bool init(const dvk_create_info& ci);

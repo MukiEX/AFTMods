@@ -593,22 +593,36 @@ namespace dvk {
         if (do_present && swapchain) {
             acquire = acquire_sem[frame_index];
             DVK_STAGE("getting a window image (vkAcquireNextImageKHR)");
-            VkResult r = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, acquire, VK_NULL_HANDLE, &image_index);
+            // Bounded wait: a window system that stops returning images must not freeze the game.
+            VkResult r = vkAcquireNextImageKHR(device, swapchain, 250000000ull, acquire, VK_NULL_HANDLE, &image_index);
             DVK_STAGE("ending the frame");
-            if (r == VK_ERROR_OUT_OF_DATE_KHR) {
+            if (r == VK_TIMEOUT || r == VK_NOT_READY) {
+                image_index = ~0u;
+                acquire = VK_NULL_HANDLE;
+                if (++acquire_timeouts == 3 && present_mode == VK_PRESENT_MODE_FIFO_KHR && !fifo_stalled) {
+                    log("The window stopped returning images with vsync (FIFO) presentation; switching to "
+                        "mailbox/immediate presentation");
+                    fifo_stalled = true;
+                    swapchain_dirty = true;
+                }
+                else if (acquire_timeouts == 3 || acquire_timeouts % 600 == 0)
+                    log("The window isn't returning images (%d timeouts); frames are being skipped", acquire_timeouts);
+            }
+            else if (r == VK_ERROR_OUT_OF_DATE_KHR) {
                 swapchain_dirty = true;
                 image_index = ~0u;
                 acquire = VK_NULL_HANDLE;
             }
             // VK_SUBOPTIMAL_KHR still presents fine; recreating on it makes some window systems
             // rebuild the swapchain every frame. Only OUT_OF_DATE (or a resize) recreates.
-            else if (r != VK_SUCCESS) {
+            else if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
                 image_index = ~0u;
                 acquire = VK_NULL_HANDLE;
             }
         }
 
         if (image_index != ~0u) {
+            acquire_timeouts = 0;
             VkImage dst = swapchain_images[image_index];
             TextureObj* src = default_color.get();
             texture_transition(f.cmd, src, src->rest_layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -762,13 +776,25 @@ namespace dvk {
         std::vector<VkPresentModeKHR> modes(count);
         vkGetPhysicalDeviceSurfacePresentModesKHR(phys, surface, &count, modes.data());
         VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
-        if (!vsync)
+        if (!vsync || fifo_stalled)
             for (VkPresentModeKHR m : modes)
                 if (m == VK_PRESENT_MODE_MAILBOX_KHR || m == VK_PRESENT_MODE_IMMEDIATE_KHR) {
                     mode = m;
                     if (m == VK_PRESENT_MODE_MAILBOX_KHR)
                         break;
                 }
+        // DIVAVK_PRESENT_MODE=fifo|mailbox|immediate forces a mode when the surface offers it.
+        if (const char* forced = getenv("DIVAVK_PRESENT_MODE")) {
+            VkPresentModeKHR want = !strcmp(forced, "immediate") ? VK_PRESENT_MODE_IMMEDIATE_KHR
+                : !strcmp(forced, "mailbox") ? VK_PRESENT_MODE_MAILBOX_KHR : VK_PRESENT_MODE_FIFO_KHR;
+            for (VkPresentModeKHR m : modes)
+                if (m == want)
+                    mode = want;
+        }
+        std::string mode_list;
+        for (VkPresentModeKHR m : modes)
+            mode_list += m == VK_PRESENT_MODE_FIFO_KHR ? " fifo" : m == VK_PRESENT_MODE_MAILBOX_KHR ? " mailbox"
+                : m == VK_PRESENT_MODE_IMMEDIATE_KHR ? " immediate" : m == VK_PRESENT_MODE_FIFO_RELAXED_KHR ? " fifo-relaxed" : " other";
 
         VkExtent2D extent = caps.currentExtent;
         if (extent.width == 0xFFFFFFFF) {
@@ -824,8 +850,9 @@ namespace dvk {
 
         vkGetSwapchainImagesKHR(device, swapchain, &count, nullptr);
         static const char* mode_names[] = { "immediate", "mailbox", "fifo", "fifo relaxed" };
-        log("Swapchain %s: %ux%u, %u images, %s", recreated ? "recreated" : "created", extent.width, extent.height,
-            count, (unsigned)mode < 4 ? mode_names[mode] : "other");
+        log("Swapchain %s: %ux%u, %u images, %s (offered:%s)", recreated ? "recreated" : "created", extent.width,
+            extent.height, count, (unsigned)mode < 4 ? mode_names[mode] : "other", mode_list.c_str());
+        present_mode = mode;
         swapchain_images.resize(count);
         vkGetSwapchainImagesKHR(device, swapchain, &count, swapchain_images.data());
 
