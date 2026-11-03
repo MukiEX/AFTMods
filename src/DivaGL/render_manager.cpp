@@ -349,6 +349,16 @@ namespace rndr {
                 rend->lens_flare_query_index = lens_flare_query_index;
             }
 
+            // The pre-3D state cache is only synced with GL once per frame (rndpass_pre_proc).
+            // By the second eye the 3D/2D passes have rebound the uniform buffers, textures and
+            // so on, and a stale cache skips "redundant" binds: the shadow and SSS passes then
+            // read the other contexts' buffers (red hair from the main pass's sss_param, wrong
+            // skin lighting, missing objects in the main pass). Resync it for every later eye.
+            if (i) {
+                render_data_context rend_data_ctx(GL_REND_STATE_PRE_3D);
+                rend_data_ctx.state.get();
+            }
+
             stereo_make_eye_cam(center_cam, rctx->render_manager_cam, eye_sign);
             stereo_eye_begin(eye_sign);
             render_all_passes();
