@@ -6,11 +6,13 @@
 
 #include "../src/app.hpp"
 #include "../src/ini.hpp"
+#include "../src/soft_render.hpp"
 #include <imgui.h>
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -242,10 +244,34 @@ int main(int argc, char** argv) {
         ImGui::NewFrame();
         app.frame((float)W, (float)H);
         ImGui::Render();
-        Canvas cv(W, H);
-        render(cv, ImGui::GetDrawData());
         char buf[64];
         snprintf(buf, sizeof(buf), "_%dx%d.png", W, H);
+        if (getenv("PREVIEW_SOFT")) {
+            // The launcher's own CPU renderer (src/soft_render.cpp), as used on the Quest
+            SoftCanvas sc;
+            sc.resize(W, H);
+            sc.clear(0xFF12102Bu);
+            soft_update_textures(ImGui::GetDrawData());
+            auto t0 = std::chrono::steady_clock::now();
+            for (int rep = 0; rep < 10; rep++) {
+                sc.clear(0xFF12102Bu);
+                soft_render(sc, ImGui::GetDrawData());
+            }
+            double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 10;
+            printf("  software frame: %.1f ms\n", ms);
+            std::vector<unsigned char> rgb((size_t)W * H * 3);
+            for (size_t i = 0; i < sc.px.size(); i++) {
+                rgb[i * 3] = (sc.px[i] >> 16) & 0xFF;
+                rgb[i * 3 + 1] = (sc.px[i] >> 8) & 0xFF;
+                rgb[i * 3 + 2] = sc.px[i] & 0xFF;
+            }
+            std::string path = out + "/" + name + buf;
+            stbi_write_png(path.c_str(), W, H, 3, rgb.data(), W * 3);
+            printf("wrote %s (software renderer)\n", path.c_str());
+            return;
+        }
+        Canvas cv(W, H);
+        render(cv, ImGui::GetDrawData());
         save_png(cv, out + "/" + name + buf);
     };
 

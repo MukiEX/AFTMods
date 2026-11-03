@@ -493,6 +493,8 @@ namespace lfs {
                 make_section("Launcher"),
                 make_choice(L"button_prompts", LAUNCHER, CONFIG, L"Button prompts:", L"Which controller's buttons the launcher shows. Steam Deck and Xbox pads use A B X Y.", 0,
                     { L"Xbox (A B X Y)", L"PlayStation (\x00D7 \x25CB \x25A1 \x25B3)" }),
+                make_choice(L"renderer", LAUNCHER, CONFIG, L"Launcher drawing:", L"How the launcher itself is drawn (takes effect the next time it opens).\nAutomatic uses the CPU under WinlatorXR, where the GPU paths make the game crash after the launcher,\nand the GPU everywhere else.", 0,
+                    { L"Automatic", L"Direct3D 11", L"OpenGL", L"CPU (software)" }),
                 make_bool(L"no_gpu_dialog", LAUNCHER, CONFIG, L"Disable GPU Warning", L"Disables the warning dialog for unsupported GPUs.", false, false),
                 make_string(L"command_line", LAUNCHER, CONFIG, L"Command Line:", L"Allows setting command line parameters for the game when using the launcher.\nDisabling the launcher will bypass this.", L"", false),
                 make_bool(L"use_divahook_bat", LAUNCHER, CONFIG, L"Use divahook.bat/start.bat", L"Launches divahook.bat/start.bat intead of diva.exe.", false, false),

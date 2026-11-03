@@ -18,6 +18,7 @@
 #include <backends/imgui_impl_opengl3.h>
 
 #include "app.hpp"
+#include "soft_render.hpp"
 #include "ini.hpp"
 #include "plugin_abi.hpp"
 #include <MinHook.h>
@@ -483,8 +484,9 @@ namespace {
     // Everything is resolved with GetProcAddress rather than imported: DivaVK redirects the
     // opengl32/gdi32 imports of every plugin to itself, and the launcher needs the real ones.
 
-    enum class Renderer { None, D3D11, OpenGL };
+    enum class Renderer { None, D3D11, OpenGL, Software };
     Renderer g_renderer = Renderer::None;
+    bool g_soft_dirty = true;      // software renderer: redraw even if nothing changed (resize, WM_PAINT)
 
     struct GLApi {
         HMODULE gl = nullptr;
@@ -605,6 +607,15 @@ namespace {
                 g_pending_h = HIWORD(lp);
             }
             return 0;
+        case WM_PAINT:
+            if (g_renderer == Renderer::Software) {
+                PAINTSTRUCT ps;
+                BeginPaint(hwnd, &ps);
+                EndPaint(hwnd, &ps);
+                g_soft_dirty = true;   // redrawn and shown on the next frame
+                return 0;
+            }
+            break;
         case WM_SYSKEYDOWN:
             if (wp == VK_RETURN && (lp & (1 << 29))) { // Alt+Enter
                 set_windowed(!g_windowed);
@@ -690,6 +701,85 @@ namespace {
         return f;
     }
 
+    // ------------------------------------------------------------ software renderer
+    // CPU drawing shown with GDI. Picked automatically under WinlatorXR: there the GPU paths
+    // (DXVK, Zink) leave images in its X server that the game's Vulkan window then collides
+    // with (X error BadIDChoice), so the game crashes right after the launcher. Also the last
+    // resort when neither Direct3D 11 nor OpenGL starts.
+
+    SoftCanvas g_soft;
+    HDC g_soft_dc = nullptr;
+    uint64_t g_soft_hash = 0;      // of the last drawn frame's draw data; same again = nothing to redo
+
+    void soft_blit() {
+        if (!g_soft_dc || g_soft.w <= 0 || g_soft.h <= 0)
+            return;
+        BITMAPINFO bi = {};
+        bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+        bi.bmiHeader.biWidth = g_soft.w;
+        bi.bmiHeader.biHeight = -g_soft.h;   // top-down
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        SetDIBitsToDevice(g_soft_dc, 0, 0, g_soft.w, g_soft.h, 0, 0, 0, g_soft.h, g_soft.px.data(), &bi, DIB_RGB_COLORS);
+    }
+
+    uint64_t draw_data_hash(ImDrawData* dd) {
+        uint64_t h = 0xCBF29CE484222325ull;
+        auto mix = [&h](const void* p, size_t n) {
+            const unsigned char* b = (const unsigned char*)p;
+            for (size_t i = 0; i < n; i++) {
+                h ^= b[i];
+                h *= 0x100000001B3ull;
+            }
+        };
+        mix(&dd->DisplaySize, sizeof(dd->DisplaySize));
+        for (ImDrawList* dl : dd->CmdLists) {
+            mix(dl->VtxBuffer.Data, (size_t)dl->VtxBuffer.Size * sizeof(ImDrawVert));
+            mix(dl->IdxBuffer.Data, (size_t)dl->IdxBuffer.Size * sizeof(ImDrawIdx));
+            for (const ImDrawCmd& c : dl->CmdBuffer)
+                mix(&c.ClipRect, sizeof(c.ClipRect));
+        }
+        return h;
+    }
+
+    void soft_frame(ImDrawData* dd) {
+        soft_update_textures(dd);
+        g_soft.resize((int)dd->DisplaySize.x, (int)dd->DisplaySize.y);
+        uint64_t h = draw_data_hash(dd);
+        if (!g_soft_dirty && h == g_soft_hash) {
+            Sleep(8);   // nothing changed: no redraw, and leave the CPU alone
+            return;
+        }
+        g_soft_hash = h;
+        g_soft_dirty = false;
+        g_soft.clear(0xFF12102Bu);
+        soft_render(g_soft, dd);
+        soft_blit();
+    }
+
+    void soft_shutdown() {
+        for (ImTextureData* t : ImGui::GetPlatformIO().Textures) {
+            t->SetTexID(ImTextureID_Invalid);
+            t->SetStatus(ImTextureStatus_Destroyed);
+        }
+        ImGui::GetIO().BackendFlags &= ~(ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures);
+        ImGui::GetIO().BackendRendererName = nullptr;
+        if (g_soft_dc)
+            ReleaseDC(g_hwnd, g_soft_dc);
+        g_soft_dc = nullptr;
+    }
+
+    // WinlatorXR (and Winlator) run Wine with a prefix inside their Android app data.
+    bool running_in_winlator() {
+        wchar_t prefix[1024] = {};
+        if (!GetEnvironmentVariableW(L"WINEPREFIX", prefix, 1024))
+            return false;
+        std::wstring p(prefix);
+        std::transform(p.begin(), p.end(), p.begin(), ::towlower);
+        return p.find(L"winlator") != std::wstring::npos;
+    }
+
     // ------------------------------------------------------------ UI loop
 
     int run_ui() {
@@ -710,15 +800,29 @@ namespace {
         RECT m = monitor_rect(nullptr);
         g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"PD Loader", WS_POPUP,
             m.left, m.top, m.right - m.left, m.bottom - m.top, nullptr, nullptr, inst, nullptr);
-        if (g_hwnd && create_device(g_hwnd))
+        // [launcher] renderer: 0 = automatic, 1 = Direct3D 11, 2 = OpenGL, 3 = software (CPU)
+        int choice = (int)GetPrivateProfileIntW(L"launcher", L"renderer", 0, paths.config.c_str());
+        const bool winlator = running_in_winlator();
+        if (choice == 0 && winlator)
+            choice = 3;
+        if (g_hwnd && choice != 2 && choice != 3 && create_device(g_hwnd))
             g_renderer = Renderer::D3D11;
-        else if (g_hwnd) {
+        else if (g_hwnd && choice != 3) {
             destroy_device();
             if (create_gl(g_hwnd))
                 g_renderer = Renderer::OpenGL;
         }
-        lf_log("Renderer: %s%s", g_renderer == Renderer::D3D11 ? "Direct3D 11" : g_renderer == Renderer::OpenGL ? "OpenGL" : "none",
-            wine_version().empty() ? "" : (" (Wine " + wine_version() + ")").c_str());
+        if (g_hwnd && g_renderer == Renderer::None) {
+            destroy_device();
+            destroy_gl();
+            g_soft_dc = GetDC(g_hwnd);
+            if (g_soft_dc)
+                g_renderer = Renderer::Software;
+        }
+        lf_log("Renderer: %s%s%s", g_renderer == Renderer::D3D11 ? "Direct3D 11" : g_renderer == Renderer::OpenGL ? "OpenGL"
+            : g_renderer == Renderer::Software ? "software (CPU)" : "none",
+            wine_version().empty() ? "" : (" (Wine " + wine_version() + ")").c_str(),
+            winlator ? ", WinlatorXR/Winlator detected" : "");
         if (g_renderer == Renderer::None) {
             std::wstring text = L"The launcher couldn't create its window: neither Direct3D 11 nor OpenGL could be started.\n\n";
             if (!g_d3d_error.empty())
@@ -745,8 +849,12 @@ namespace {
         ImGui_ImplWin32_Init(g_hwnd);
         if (g_renderer == Renderer::D3D11)
             ImGui_ImplDX11_Init(g_dev, g_ctx);
-        else
+        else if (g_renderer == Renderer::OpenGL)
             ImGui_ImplOpenGL3_Init(nullptr);
+        else {
+            io.BackendRendererName = "lfs_software";
+            io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures;
+        }
         Fonts fonts = load_fonts();
 
         std::vector<Page> pages;
@@ -772,7 +880,8 @@ namespace {
             }
 
         Host host;
-        host.gpu = g_renderer == Renderer::D3D11 ? adapter_name() : gl_renderer_name();
+        host.gpu = g_renderer == Renderer::D3D11 ? adapter_name()
+            : g_renderer == Renderer::OpenGL ? gl_renderer_name() : std::string("Software (CPU)");
         host.wine = wine_version();
         host.launch = [paths]() { launch_game(paths); };
         host.quit = []() { g_quit = true; };
@@ -796,8 +905,10 @@ namespace {
             }
             if (g_quit)
                 break;
-            if (g_pending_w && g_pending_h && g_renderer == Renderer::OpenGL)
-                g_pending_w = g_pending_h = 0; // the GL backbuffer follows the window
+            if (g_pending_w && g_pending_h && g_renderer != Renderer::D3D11) {
+                g_pending_w = g_pending_h = 0; // the GL backbuffer and the CPU canvas follow the window
+                g_soft_dirty = true;
+            }
             if (g_pending_w && g_pending_h) {
                 release_rtv();
                 g_swap->ResizeBuffers(0, g_pending_w, g_pending_h, DXGI_FORMAT_UNKNOWN, 0);
@@ -819,7 +930,7 @@ namespace {
 
             if (g_renderer == Renderer::D3D11)
                 ImGui_ImplDX11_NewFrame();
-            else
+            else if (g_renderer == Renderer::OpenGL)
                 ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplWin32_NewFrame();
             ImGui::NewFrame();
@@ -840,6 +951,8 @@ namespace {
                 if (hr == DXGI_STATUS_OCCLUDED)
                     Sleep(16);
             }
+            else if (g_renderer == Renderer::Software)
+                soft_frame(ImGui::GetDrawData());
             else {
                 g_gl.Viewport(0, 0, (int)io.DisplaySize.x, (int)io.DisplaySize.y);
                 g_gl.ClearColor(clear[0], clear[1], clear[2], clear[3]);
@@ -852,8 +965,10 @@ namespace {
         g_app = nullptr;
         if (g_renderer == Renderer::D3D11)
             ImGui_ImplDX11_Shutdown();
-        else
+        else if (g_renderer == Renderer::OpenGL)
             ImGui_ImplOpenGL3_Shutdown();
+        else
+            soft_shutdown();
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext();
         destroy_gl();

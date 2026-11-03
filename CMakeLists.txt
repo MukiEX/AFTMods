@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(IMGUI third_party/imgui)
 set(IMGUI_SOURCES ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_widgets.cpp ${IMGUI}/imgui_tables.cpp)
-set(UI_SOURCES src/app.cpp src/model.cpp src/ini.cpp)
+set(UI_SOURCES src/app.cpp src/model.cpp src/ini.cpp src/soft_render.cpp)
 
 if(WIN32)
     # The launcher plugin: build with MSVC (x64) or llvm-mingw / MinGW-w64 (x86_64).
