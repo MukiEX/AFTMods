@@ -537,6 +537,30 @@ PluginConfig::PluginConfigOption config[] = {
     {
         PluginConfig::CONFIG_BOOLEAN,
         new PluginConfig::PluginConfigBooleanData {
+            L"fast_decode",
+            L"movie",
+            CONFIG_FILE,
+            L"Fast Movie Decoding",
+            L"Decode movies faster at a small cost in picture quality (no deblocking filter), for slow CPUs\nsuch as a Quest or phone running the game through FEX. The player already does this by itself\nwhen it falls behind; this turns it on from the start.",
+            false,
+        }
+    },
+    {
+        PluginConfig::CONFIG_NUMERIC,
+        new PluginConfig::PluginConfigNumericData {
+            L"decode_threads",
+            L"movie",
+            CONFIG_FILE,
+            L"Movie Decoding Threads",
+            L"Threads FFmpeg uses to decode movies. 0 = one per CPU.",
+            0,
+            0,
+            16,
+        }
+    },
+    {
+        PluginConfig::CONFIG_BOOLEAN,
+        new PluginConfig::PluginConfigBooleanData {
             L"enabled",
             L"vr",
             CONFIG_FILE,

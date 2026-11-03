@@ -239,6 +239,26 @@ namespace dvk {
         vkEnumerateDeviceExtensionProperties(phys, nullptr, &count, nullptr);
         std::vector<VkExtensionProperties> dev_exts(count);
         vkEnumerateDeviceExtensionProperties(phys, nullptr, &count, dev_exts.data());
+        {
+            // Hardware video decoding (Vulkan Video), for the movie player: report what the
+            // driver offers, so a log shows whether FFmpeg's Vulkan decoder could be used.
+            std::string video;
+            for (const VkExtensionProperties& e : dev_exts) {
+                const char* n = e.extensionName;
+                if (strncmp(n, "VK_KHR_video_decode", 19) == 0 || strcmp(n, "VK_KHR_video_queue") == 0)
+                    video += std::string(video.empty() ? "" : ", ") + (n + 3);
+            }
+            uint32_t qn = 0;
+            vkGetPhysicalDeviceQueueFamilyProperties(phys, &qn, nullptr);
+            std::vector<VkQueueFamilyProperties> qf(qn);
+            vkGetPhysicalDeviceQueueFamilyProperties(phys, &qn, qf.data());
+            int decode_queues = 0;
+            for (const VkQueueFamilyProperties& q : qf)
+                if (q.queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR)
+                    decode_queues++;
+            log("Video decode: %s; %d decode queue famil%s", video.empty() ? "no Vulkan Video extensions" : video.c_str(),
+                decode_queues, decode_queues == 1 ? "y" : "ies");
+        }
         if (surface && xr_enabled()) {
             // With a headset the window is only a mirror; drop it if this queue can't present.
             VkBool32 present = VK_FALSE;

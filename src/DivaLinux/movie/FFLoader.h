@@ -9,6 +9,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
 #include <libavutil/opt.h>
+#include <libavutil/pixdesc.h>
 #include <libavutil/channel_layout.h>
 #include <libswscale/swscale.h>
 #include <libswresample/swresample.h>
@@ -34,6 +35,7 @@ typedef void* FFLibHandle;
 	X(avutil, av_channel_layout_default) \
 	X(avutil, av_channel_layout_uninit) \
 	X(avutil, av_samples_get_buffer_size) \
+	X(avutil, av_get_pix_fmt_name) \
 	X(swresample, swresample_version) \
 	X(swresample, swr_alloc_set_opts2) \
 	X(swresample, swr_init) \

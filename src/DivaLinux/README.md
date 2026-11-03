@@ -30,6 +30,8 @@ Same sections and keys as `DivaGL.ini` (`[general]`, `[experimentals]`, `[stereo
 | --- | --- | --- |
 | `ffmpeg_player` | 1 | Play movies with FFmpeg. 0 uses the game's movie player. |
 | `movie_audio` | 0 | Play movies' own audio tracks. Never during songs, where the video follows the song. |
+| `fast_decode` | 0 | Skip the H.264/HEVC deblocking filter and use FFmpeg's "fast" shortcuts from the start. Slightly blockier, noticeably cheaper on slow CPUs (Quest/phones through FEX). Without it, the player only does this while it's behind. |
+| `decode_threads` | 0 | Threads for video decoding; 0 lets FFmpeg use one per CPU. |
 
 On the first run, if `DivaLinux.ini` doesn't exist yet, it is created from `DivaVK.ini` (or
 `DivaGL.ini`), and `ffmpeg_player`/`movie_audio` are copied from `DivaMovie.ini`.
@@ -73,6 +75,12 @@ OpenXR runtime running.
 
 Everything goes to `plugins/DivaLinux.log`: Vulkan device, unimplemented GL calls, and movie
 lines tagged `[Movie]` (FFmpeg loaded or why not, each movie opened and finished).
+
+Each movie that played ends with a `[Movie] stats` line: codec, pixel format and decoder
+threads; decoded frames per second; CPU time per frame for decoding, YUV-to-BGRA conversion
+and the texture upload; the worst lag behind the clock; and how long the player spent catching
+up (reduced quality, keyframe jumps). A `Video decode:` line near the top says whether the GPU
+driver offers Vulkan Video decoding.
 
 Frame dump: press Scroll Lock or Pause, or create an empty file named `DivaLinux_dump_request`
 in the game folder. The next frame's passes are written to `DivaLinux_dump_<time>/`.

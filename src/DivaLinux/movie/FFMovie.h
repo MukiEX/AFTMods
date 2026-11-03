@@ -9,6 +9,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+#include <string>
 
 // ---- Minimal threading shim ----
 
@@ -111,6 +113,23 @@ inline double FFNow()
 }
 #endif
 
+// Milliseconds on a monotonic clock, for the playback statistics.
+static inline double FFNowMs()
+{
+#ifdef _WIN32
+	static LARGE_INTEGER frequency = {};
+	if (!frequency.QuadPart)
+		QueryPerformanceFrequency(&frequency);
+	LARGE_INTEGER now;
+	QueryPerformanceCounter(&now);
+	return now.QuadPart * 1000.0 / frequency.QuadPart;
+#else
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+#endif
+}
+
 struct FFLockGuard
 {
 	FFMutex& m;
@@ -153,8 +172,35 @@ public:
 	bool hasAudio = false;
 	std::string error;
 
+	// Decoder options, set before Open()
+	bool fastDecode = false;    // no H.264/HEVC loop filter and FFmpeg's "fast" shortcuts, from the start
+	int decodeThreads = 0;      // 0 = FFmpeg picks (one per CPU)
+
 	// Statistics
 	volatile long framesShown = 0, framesSkipped = 0, keyframeJumps = 0;
+	std::string videoInfo;      // codec, pixel format, threads (after Open)
+	long framesDecoded = 0;     // video thread
+	long framesConverted = 0;   // video thread
+	double decodeMs = 0.0;      // video thread time in send_packet/receive_frame
+	double convertMs = 0.0;     // video thread time in sws_scale (YUV -> BGRA)
+	double maxBehind = 0.0;     // worst lag of the newest decoded frame behind the clock, seconds
+	double reducedSeconds = 0.0; // time spent with skip_frame/skip_loop_filter turned on by CatchUp
+	double playStartMs = 0.0;   // when the consumer first asked for a frame
+
+	// One line with everything above, for the log.
+	std::string StatsLine()
+	{
+		char buf[512];
+		double wall = playStartMs > 0.0 ? (FFNowMs() - playStartMs) / 1000.0 : 0.0;
+		double reduced = reducedSeconds + (reducedQuality && reducedSinceMs > 0.0 ? (FFNowMs() - reducedSinceMs) / 1000.0 : 0.0);
+		snprintf(buf, sizeof(buf),
+			"%s; %.1f s played, %ld decoded (%.1f fps), decode %.2f ms/frame, convert %.2f ms/frame, "
+			"worst lag %.2f s, reduced quality %.1f s, keyframe jumps %ld, conversions skipped %ld",
+			videoInfo.c_str(), wall, framesDecoded, wall > 0.0 ? framesDecoded / wall : 0.0,
+			framesDecoded ? decodeMs / framesDecoded : 0.0, framesConverted ? convertMs / framesConverted : 0.0,
+			maxBehind, reduced, (long)keyframeJumps, (long)framesSkipped);
+		return buf;
+	}
 
 	MovieDecoder(FFLib& ff, AudioSink* audio) : ff(ff), audioSink(audio) {}
 
@@ -267,6 +313,8 @@ public:
 	{
 		FFLockGuard guard(mutex);
 		requestedTime = t;
+		if (!consumerStarted)
+			playStartMs = FFNowMs();
 		consumerStarted = true;
 		bool popped = false;
 		while (count >= 2 && queue[(head + 1) % CAPACITY].pts <= t)
@@ -385,6 +433,7 @@ private:
 	FFThread demuxThread, videoThread;
 	AVPacket* pendingVideo = nullptr; // packet the video decoder refused (video thread only)
 	bool reducedQuality = false;      // video thread only
+	double reducedSinceMs = 0.0;      // video thread only
 	bool stopping = false;
 	bool eof = false;
 
@@ -414,11 +463,30 @@ private:
 			ff.avcodec_free_context(&c);
 			return Fail("avcodec_parameters_to_context", r);
 		}
-		ff.av_opt_set(c, "threads", "auto", 0);
+		bool video = format->streams[index]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO;
+		if (video && decodeThreads > 0)
+			ff.av_opt_set(c, "threads", std::to_string(decodeThreads).c_str(), 0);
+		else
+			ff.av_opt_set(c, "threads", "auto", 0);
+		if (video && fastDecode)
+		{
+			ff.av_opt_set(c, "skip_loop_filter", "all", 0);
+			ff.av_opt_set(c, "flags2", "+fast", 0);
+		}
 		if ((r = ff.avcodec_open2(c, decoder, nullptr)) < 0)
 		{
 			ff.avcodec_free_context(&c);
 			return Fail("avcodec_open2", r);
+		}
+		if (video)
+		{
+			const char* pix = ff.av_get_pix_fmt_name ? ff.av_get_pix_fmt_name(c->pix_fmt) : nullptr;
+			char buf[256];
+			snprintf(buf, sizeof(buf), "%s %dx%d %s, %d thread%s (%s)%s", decoder->name, c->width, c->height,
+				pix ? pix : "?", c->thread_count, c->thread_count == 1 ? "" : "s",
+				(c->active_thread_type & FF_THREAD_FRAME) ? "frame" : (c->active_thread_type & FF_THREAD_SLICE) ? "slice" : "none",
+				fastDecode ? ", fast decode" : "");
+			videoInfo = buf;
 		}
 		*out = c;
 		return true;
@@ -525,13 +593,19 @@ private:
 			now = requestedTime;
 			behind = now - lastPts;
 		}
+		if (behind > maxBehind)
+			maxBehind = behind;
 
 		bool skip = behind > 0.15;
 		if (skip != reducedQuality)
 		{
 			reducedQuality = skip;
+			if (skip)
+				reducedSinceMs = FFNowMs();
+			else if (reducedSinceMs > 0.0)
+				reducedSeconds += (FFNowMs() - reducedSinceMs) / 1000.0;
 			ff.av_opt_set(videoCodec, "skip_frame", skip ? "noref" : "default", 0);
-			ff.av_opt_set(videoCodec, "skip_loop_filter", skip ? "all" : "default", 0);
+			ff.av_opt_set(videoCodec, "skip_loop_filter", skip ? "all" : (fastDecode ? "all" : "default"), 0);
 		}
 
 		if (behind < 0.5)
@@ -583,7 +657,10 @@ private:
 				fifoCount--;
 				cond.WakeAll(); // room for the demuxer
 			}
-			if (ff.avcodec_send_packet(videoCodec, pendingVideo) == AVERROR(EAGAIN))
+			double t0 = FFNowMs();
+			int sent = ff.avcodec_send_packet(videoCodec, pendingVideo);
+			decodeMs += FFNowMs() - t0;
+			if (sent == AVERROR(EAGAIN))
 				break; // decoder output must be drained first
 			ff.av_packet_free(&pendingVideo);
 			progress = true;
@@ -624,7 +701,9 @@ private:
 		{
 			if (QueueFull())
 				break; // leave remaining frames in the decoder for later
+			double t0 = FFNowMs();
 			int r = ff.avcodec_receive_frame(videoCodec, frame);
+			decodeMs += FFNowMs() - t0;
 			if (r == AVERROR(EAGAIN))
 				break;
 			if (r == AVERROR_EOF)
@@ -635,6 +714,7 @@ private:
 			if (r < 0)
 				continue; // corrupt data: skip it
 			received = true;
+			framesDecoded++;
 #ifdef FFMOVIE_TEST_DECODE_DELAY_US
 			usleep(FFMOVIE_TEST_DECODE_DELAY_US); // test hook: simulate a slow CPU
 #endif
@@ -714,7 +794,10 @@ private:
 
 		uint8_t* dst[4] = { slot->pixels, nullptr, nullptr, nullptr };
 		int dstStride[4] = { width * 4, 0, 0, 0 };
+		double t0 = FFNowMs();
 		ff.sws_scale(sws, frame->data, frame->linesize, 0, frame->height, dst, dstStride);
+		convertMs += FFNowMs() - t0;
+		framesConverted++;
 		slot->pts = pts;
 		slot->duration = frameDuration;
 

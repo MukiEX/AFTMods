@@ -65,6 +65,8 @@ namespace FFPlayer
 	bool ffTried = false;
 	SRWLOCK ffLoadLock = SRWLOCK_INIT;
 	bool movieAudio = false;
+	bool fastDecode = false;   // [movie] fast_decode
+	int decodeThreads = 0;     // [movie] decode_threads
 
 	inline bool EnsureFFmpeg()
 	{
@@ -466,6 +468,20 @@ namespace FFPlayer
 		// DivaLinux diagnostics: how far the game got with this player (logged on release)
 		volatile LONG nGetState = 0, nPlay = 0, nGetTexture = 0, nNoFrame = 0;
 		bool textureFailed = false;
+		bool statsLogged = false;
+		volatile LONG uploads = 0;
+		double uploadMs = 0.0;     // game thread time in glTexSubImage2D
+
+		// Playback statistics, once per movie (when it finishes, or when it's released early).
+		void LogStats(const char* when)
+		{
+			if (statsLogged || !decoder || decoder->playStartMs <= 0.0)
+				return; // never played
+			statsLogged = true;
+			PRINT("[Movie] stats (%s) %s: %s; upload %.2f ms/frame over %ld uploads; shown %ld, audio underruns %ld\n",
+				when, path.c_str(), decoder->StatsLine().c_str(), uploads ? uploadMs / uploads : 0.0, (long)uploads,
+				(long)decoder->framesShown, audio ? audio->underruns : 0L);
+		}
 		bool audioStarted = false;
 
 		static const PlayerVtbl vtable;
@@ -509,11 +525,13 @@ namespace FFPlayer
 			}
 
 			MovieDecoder* d = new MovieDecoder(ff, sink);
+			d->fastDecode = fastDecode;
+			d->decodeThreads = decodeThreads;
 			bool ok = d->Open(utf8.c_str());
 			if (ok)
 			{
-				PRINT("[Movie] opened %s (%dx%d, %.3f fps, %.3f s%s)\n", path.c_str(), d->width, d->height,
-					d->fps, d->duration, d->hasAudio ? ", with audio" : "");
+				PRINT("[Movie] opened %s (%dx%d, %.3f fps, %.3f s%s; %s)\n", path.c_str(), d->width, d->height,
+					d->fps, d->duration, d->hasAudio ? ", with audio" : "", d->videoInfo.c_str());
 			}
 			else
 			{
@@ -565,6 +583,7 @@ namespace FFPlayer
 				openThread = NULL;
 			}
 			AcquireSRWLockExclusive(&lock);
+			LogStats("stopped");
 			MovieDecoder* d = decoder;
 			WaveOutSink* a = audio;
 			decoder = nullptr;
@@ -658,9 +677,7 @@ namespace FFPlayer
 					(!self->audioStarted || self->audio->Exhausted());
 				if (finished && InterlockedCompareExchange(&self->state, STATE_STOPPED, STATE_PLAYING) == STATE_PLAYING)
 				{
-					PRINT("[Movie] finished %s (frames shown %ld, conversions skipped %ld, keyframe jumps %ld, audio underruns %ld)\n",
-						self->path.c_str(), self->decoder->framesShown, self->decoder->framesSkipped, self->decoder->keyframeJumps,
-						self->audio ? self->audio->underruns : 0L);
+					self->LogStats("finished");
 				}
 				ReleaseSRWLockShared(&self->lock);
 				if (finished)
@@ -800,7 +817,12 @@ namespace FFPlayer
 				changed = true;
 			}
 			if (frame && self->texture && changed)
+			{
+				double t0 = FFNowMs();
 				Upload(self->texture, frame, d->width, d->height);
+				self->uploadMs += FFNowMs() - t0; // only this thread uploads
+				InterlockedIncrement(&self->uploads);
+			}
 			if (frame && self->texture && !self->loggedFirstUpload)
 			{
 				self->loggedFirstUpload = true;
