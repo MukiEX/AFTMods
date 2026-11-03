@@ -218,9 +218,21 @@ static BOOL WINAPI bridge_SwapBuffers(HDC) {
     if (!s_created)
         return FALSE;
     if (s_hwnd) {
+        // Follow the window's size, but only once it has stayed the same for a few frames:
+        // windows often bounce between sizes while the game sets itself up, and each change
+        // rebuilds the swapchain.
+        static int s_pending_w = 0, s_pending_h = 0, s_stable = 0;
         RECT rc;
-        if (GetClientRect(s_hwnd, &rc) && rc.right > rc.left && rc.bottom > rc.top)
-            dvk_resize(rc.right - rc.left, rc.bottom - rc.top);
+        if (GetClientRect(s_hwnd, &rc) && rc.right > rc.left && rc.bottom > rc.top) {
+            int w = rc.right - rc.left, h = rc.bottom - rc.top;
+            if (w != s_pending_w || h != s_pending_h) {
+                s_pending_w = w;
+                s_pending_h = h;
+                s_stable = 0;
+            }
+            else if (++s_stable == 5)
+                dvk_resize(w, h);
+        }
     }
     // VR: Home puts the virtual screen back in front of where the player is looking.
     {

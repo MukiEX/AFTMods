@@ -600,8 +600,8 @@ namespace dvk {
                 image_index = ~0u;
                 acquire = VK_NULL_HANDLE;
             }
-            else if (r == VK_SUBOPTIMAL_KHR)
-                swapchain_dirty = true;
+            // VK_SUBOPTIMAL_KHR still presents fine; recreating on it makes some window systems
+            // rebuild the swapchain every frame. Only OUT_OF_DATE (or a resize) recreates.
             else if (r != VK_SUCCESS) {
                 image_index = ~0u;
                 acquire = VK_NULL_HANDLE;
@@ -692,7 +692,7 @@ namespace dvk {
             pi.pImageIndices = &image_index;
             DVK_STAGE("showing the frame in the window (vkQueuePresentKHR)");
             VkResult pr = vkQueuePresentKHR(queue, &pi);
-            if (pr == VK_ERROR_OUT_OF_DATE_KHR || pr == VK_SUBOPTIMAL_KHR)
+            if (pr == VK_ERROR_OUT_OF_DATE_KHR)
                 swapchain_dirty = true;
         }
         queue_lock.unlock();
@@ -782,7 +782,18 @@ namespace dvk {
         if (caps.maxImageCount)
             images = std::min(images, caps.maxImageCount);
 
-        VkSwapchainKHR old = swapchain;
+        // Replace an old swapchain by destroying it first instead of handing it over through
+        // oldSwapchain. Some window systems (WinlatorXR's X server) still hold the old images'
+        // pixmaps while the new ones are created, and fail with BadIDChoice.
+        const bool recreated = swapchain != VK_NULL_HANDLE;
+        if (recreated) {
+            {
+                std::lock_guard<std::mutex> q(queue_mutex);
+                vkDeviceWaitIdle(device);
+            }
+            destroy_swapchain();
+        }
+        VkSwapchainKHR old = VK_NULL_HANDLE;
         VkSwapchainCreateInfoKHR sci = { VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };
         sci.surface = surface;
         sci.minImageCount = images;
@@ -800,18 +811,21 @@ namespace dvk {
         sci.clipped = VK_TRUE;
         sci.oldSwapchain = old;
         VkSwapchainKHR sc;
-        if (vkCreateSwapchainKHR(device, &sci, nullptr, &sc) != VK_SUCCESS)
+        DVK_STAGE("creating the window's swapchain (vkCreateSwapchainKHR)");
+        VkResult scr = vkCreateSwapchainKHR(device, &sci, nullptr, &sc);
+        DVK_STAGE("running the game's GL calls");
+        if (scr != VK_SUCCESS) {
+            log("vkCreateSwapchainKHR %ux%u failed: %d", extent.width, extent.height, (int)scr);
             return false;
-
-        swapchain = VK_NULL_HANDLE;
-        destroy_swapchain();
-        if (old)
-            vkDestroySwapchainKHR(device, old, nullptr);
+        }
         swapchain = sc;
         swapchain_format = chosen.format;
         swapchain_extent = extent;
 
         vkGetSwapchainImagesKHR(device, swapchain, &count, nullptr);
+        static const char* mode_names[] = { "immediate", "mailbox", "fifo", "fifo relaxed" };
+        log("Swapchain %s: %ux%u, %u images, %s", recreated ? "recreated" : "created", extent.width, extent.height,
+            count, (unsigned)mode < 4 ? mode_names[mode] : "other");
         swapchain_images.resize(count);
         vkGetSwapchainImagesKHR(device, swapchain, &count, swapchain_images.data());
 
