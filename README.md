@@ -21,6 +21,22 @@ stereo_bg_infinity=1    ; draw 2D backgrounds / PV movies at infinite depth
 
 The whole pipeline (shadows, SSS, reflections, 3D, post-process, sprites) is rendered once per eye using parallel off-axis cameras, so GPU cost roughly doubles. TAA is disabled while stereo is on because its history would mix the two eyes.
 
+## DivaLinux
+A single plugin for running PDAFT 7.10 under Wine or Proton (Linux, Steam Deck, and WinlatorXR on Quest). It replaces both `DivaGL.dva` and DivaMovie's `DivaMovie.dva`, so only `DivaLinux.dva` goes in `plugins/`. It's built from:
+
+- **DivaGL, unchanged in what it draws.** The same renderer sources, including SBS stereo, are compiled with `DIVAVK` and `DIVALINUX` defined. Every GL and WGL call goes to DivaVK (`src/DivaVK`), an OpenGL 4.3 subset implemented on Vulkan, so the prefix doesn't need a working OpenGL driver.
+- **DivaMovie's FFmpeg movie player** (the `divamovie-ffmpeg` branch of MukiEX/PD-Loader). It replaces the game's own player, which is built on Media Foundation, DXVA2 and Direct3D 9 shared through `WGL_NV_DX_interop`. None of that works under Wine, so the game can't play its movies there.
+
+How the movie player is swapped in:
+
+1. At startup, DivaLinux checks that the game's movie player code matches diva.exe 7.10. Then it hooks the player factory, `CreatePlayer` (`0x1404255C0`), so the game gets the FFmpeg player instead of the Media Foundation one. The FFmpeg player implements the same interface: open, play, pause, seek, state queries and the movie texture.
+2. FFmpeg (`avformat`/`avcodec`/`swscale`/`swresample`) is loaded at run time from `plugins/`. If the DLLs are missing, the hook steps aside and the game's own player is used.
+3. Frames are decoded on the CPU, converted to BGRA and uploaded into a GL texture using DivaVK's own GL functions. There's no D3D surface or interop handle anywhere. The texture is created as soon as the video size is known, so the game sees one on its first query.
+4. DivaGL's movie task normally switches to a Direct3D 11 copy path when a player's texture isn't ready yet. DivaLinux recognises its own players and keeps them on the GL path.
+5. Movie audio is optional (`[movie] movie_audio=1`). It's resampled with `swresample` and played through `waveOut`, and its playback position drives the video timing. It never plays during songs, where the video follows the song's own audio.
+
+Settings live in `plugins/DivaLinux.ini`: DivaGL's sections plus `[movie]` and `[vr]`. On first run, the file is created from an existing `DivaVK.ini` or `DivaGL.ini`, with DivaMovie's player settings carried over. On Windows, keep using `DivaGL.dva`. See [src/DivaLinux/README.md](src/DivaLinux/README.md) for install steps, the FFmpeg DLL versions, settings, OpenXR output and building.
+
 ## OPD Play Gen
 Generates OPD files on demand if not present. Also allows files to be cached. It only generates cache for missing motions or modules. If FARC with OPD is present, and OPD file inside that FARC is present too, it won't do anything and will load existing data.
 
