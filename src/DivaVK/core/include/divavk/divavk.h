@@ -41,6 +41,8 @@ typedef struct dvk_create_info {
 } dvk_create_info;
 
 typedef struct dvk_stats {
+    uint64_t frames;
+    uint64_t programs_linked;
     uint64_t draws;
     uint64_t render_passes;
     uint64_t render_pass_breaks;
@@ -73,6 +75,9 @@ void dvk_save_pipeline_cache(void);
 // Debugging: writes every render target of the next frame to dir (PNG + index.txt).
 void dvk_request_frame_dump(const char* dir);
 void dvk_get_stats(dvk_stats* out);
+/* What DivaVK is doing right now (e.g. waiting for the window, compiling a pipeline), for a
+   watchdog that reports where a frame is stuck. Safe to call from any thread. */
+const char* dvk_debug_stage(void);
 
 /* Name of the Vulkan device in use (for logs/overlays). */
 const char* dvk_device_name(void);

@@ -31,6 +31,8 @@ namespace dvk {
             fprintf(stderr, "[DivaVK] %s\n", buf);
     }
 
+    std::atomic<const char*> g_stage{ "starting" };
+
     void set_log_target(dvk_log_func fn, void* user) {
         s_log_func = fn;
         s_log_user = user;
@@ -483,7 +485,9 @@ namespace dvk {
     void Context::wait_frame(Frame& f) {
         if (!f.pending)
             return;
+        DVK_STAGE("waiting for the GPU to finish an earlier frame (vkWaitForFences)");
         vkWaitForFences(device, 1, &f.fence, VK_TRUE, UINT64_MAX);
+        DVK_STAGE("running the game's GL calls");
         f.pending = false;
         query_collect_frame(*this, f);
         s_completed_serial = std::max(s_completed_serial, f.serial);
@@ -588,7 +592,9 @@ namespace dvk {
 
         if (do_present && swapchain) {
             acquire = acquire_sem[frame_index];
+            DVK_STAGE("getting a window image (vkAcquireNextImageKHR)");
             VkResult r = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, acquire, VK_NULL_HANDLE, &image_index);
+            DVK_STAGE("ending the frame");
             if (r == VK_ERROR_OUT_OF_DATE_KHR) {
                 swapchain_dirty = true;
                 image_index = ~0u;
@@ -669,6 +675,7 @@ namespace dvk {
             si.signalSemaphoreCount = 1;
             si.pSignalSemaphores = &present_sem[image_index];
         }
+        DVK_STAGE("submitting the frame (vkQueueSubmit)");
         std::unique_lock<std::mutex> queue_lock(queue_mutex);
         VkResult r = vkQueueSubmit(queue, 1, &si, f.fence);
         if (r != VK_SUCCESS)
@@ -683,11 +690,13 @@ namespace dvk {
             pi.swapchainCount = 1;
             pi.pSwapchains = &swapchain;
             pi.pImageIndices = &image_index;
+            DVK_STAGE("showing the frame in the window (vkQueuePresentKHR)");
             VkResult pr = vkQueuePresentKHR(queue, &pi);
             if (pr == VK_ERROR_OUT_OF_DATE_KHR || pr == VK_SUBOPTIMAL_KHR)
                 swapchain_dirty = true;
         }
         queue_lock.unlock();
+        DVK_STAGE("running the game's GL calls");
         if (do_present)
             xr_frame_submitted();
 

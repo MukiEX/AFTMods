@@ -237,6 +237,9 @@ namespace dvk {
         const char* vstr[] = { vsrc.c_str() };
         const char* fstr[] = { fsrc.c_str() };
 
+        DVK_STAGE("translating a shader program to SPIR-V (glslang)");
+        stats.programs_linked++;
+        struct StageReset { ~StageReset() { DVK_STAGE("running the game's GL calls"); } } stage_reset;
         glslang::TShader vsh(EShLangVertex), fsh(EShLangFragment);
         vsh.setStrings(vstr, 1);
         fsh.setStrings(fstr, 1);

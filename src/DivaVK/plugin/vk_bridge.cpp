@@ -20,6 +20,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <atomic>
 #include <psapi.h>
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <volk.h>
@@ -79,6 +80,34 @@ static dvk_surface create_surface(dvk_instance instance, void*) {
 }
 
 static void patch_all_modules();
+
+// ---------------------------------------------------------------- watchdog
+// Logs where things are stuck when no frame has been shown for a while (slow devices such as
+// a Quest under FEX can spend minutes compiling shaders; a real hang looks the same from
+// outside). Also logs the first few frames' timings.
+static std::atomic<uint64_t> s_frames_shown{ 0 };
+static std::atomic<DWORD> s_last_frame_tick{ 0 };
+static DWORD s_context_tick = 0;
+
+static DWORD WINAPI watchdog_thread(void*) {
+    DWORD last_report = 0;
+    for (;;) {
+        Sleep(1000);
+        DWORD now = GetTickCount();
+        DWORD since = now - s_last_frame_tick.load();
+        if (since < 5000 || now - last_report < 10000)
+            continue;
+        last_report = now;
+        dvk_stats st = {};
+        dvk_get_stats(&st);
+        bridge_logf("Watchdog: no new frame for %lu s (%llu shown so far). DivaVK is %s. "
+            "So far: %llu shader programs, %llu pipelines, %llu draws.",
+            since / 1000, (unsigned long long)s_frames_shown.load(), dvk_debug_stage(),
+            (unsigned long long)st.programs_linked, (unsigned long long)st.pipelines_created,
+            (unsigned long long)st.draws);
+    }
+}
+
 extern "C" bool divalinux_get_xr_info(dvk_xr_info* out);   // dllmain.cpp ([vr] settings)
 
 // DivaLinux.dva replaces DivaGL.dva, DivaVK.dva and DivaMovie.dva. With any of them loaded as
@@ -144,7 +173,12 @@ static bool ensure_context(HDC hdc) {
     if (!s_created)
         MessageBoxA(nullptr, "DivaLinux could not initialise Vulkan.\nSee plugins\\DivaLinux.log for details.", "DivaLinux", MB_OK | MB_ICONERROR);
     else
+    {
         bridge_logf("Context created %dx%d on %s", w, h, dvk_device_name());
+        s_context_tick = GetTickCount();
+        s_last_frame_tick = s_context_tick;
+        CloseHandle(CreateThread(nullptr, 0, watchdog_thread, nullptr, 0, nullptr));
+    }
     warn_about_replaced_plugins();
     return s_created;
 }
@@ -230,7 +264,14 @@ static BOOL WINAPI bridge_SwapBuffers(HDC) {
             dvk_request_frame_dump(dir);
         }
     }
+    DWORD t0 = GetTickCount();
     dvk_swap_buffers();
+    uint64_t n = ++s_frames_shown;
+    DWORD now = GetTickCount();
+    s_last_frame_tick = now;
+    if (n <= 3 || n == 60 || n == 600)
+        bridge_logf("Frame %llu shown, %lu ms after the context was created (present took %lu ms)",
+            (unsigned long long)n, now - s_context_tick, now - t0);
     return TRUE;
 }
 

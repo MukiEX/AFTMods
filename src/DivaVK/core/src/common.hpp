@@ -60,7 +60,14 @@
 #define GL_TEXTURE_MAX_ANISOTROPY           0x84FE
 #endif
 
+#include <atomic>
+
 namespace dvk {
+    // What DivaVK is doing right now, for the plugin's watchdog (dvk_debug_status): a string
+    // literal naming the step, set around calls that can take long or block.
+    extern std::atomic<const char*> g_stage;
+#define DVK_STAGE(s) (::dvk::g_stage.store((s), std::memory_order_relaxed))
+
     void log(const char* fmt, ...);
     void log_once(const char* key, const char* fmt, ...);
 

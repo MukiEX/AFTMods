@@ -66,12 +66,18 @@ extern "C" void dvk_get_stats(dvk_stats* out) {
     if (!g_ctx || !out)
         return;
     const Context::Stats& s = g_ctx->stats;
+    out->frames = g_ctx->serial;
+    out->programs_linked = s.programs_linked;
     out->draws = s.draws;
     out->render_passes = s.passes;
     out->render_pass_breaks = s.pass_breaks;
     out->pipelines_created = s.pipelines_created;
     out->hoisted_uploads = s.hoisted_uploads;
     out->inline_uploads = s.inline_uploads;
+}
+
+extern "C" const char* dvk_debug_stage(void) {
+    return dvk::g_stage.load(std::memory_order_relaxed);
 }
 
 extern "C" const char* dvk_device_name(void) {

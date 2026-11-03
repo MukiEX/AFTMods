@@ -471,6 +471,7 @@ namespace dvk {
             uint64_t passes = 0;
             uint64_t pass_breaks = 0;
             uint64_t pipelines_created = 0;
+            uint64_t programs_linked = 0;
             uint64_t hoisted_uploads = 0;
             uint64_t inline_uploads = 0;
         } stats;

@@ -323,7 +323,10 @@ namespace dvk {
         gpci.subpass = 0;
 
         VkPipeline pipe = VK_NULL_HANDLE;
-        if (vkCreateGraphicsPipelines(device, pipeline_cache, 1, &gpci, nullptr, &pipe) != VK_SUCCESS) {
+        DVK_STAGE("the GPU driver compiling a pipeline (vkCreateGraphicsPipelines)");
+        VkResult pipe_result = vkCreateGraphicsPipelines(device, pipeline_cache, 1, &gpci, nullptr, &pipe);
+        DVK_STAGE("running the game's GL calls");
+        if (pipe_result != VK_SUCCESS) {
             log("vkCreateGraphicsPipelines failed (program %u)", p->name);
             pipe = VK_NULL_HANDLE;
         }
