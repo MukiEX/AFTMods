@@ -159,7 +159,12 @@ class MovieDecoder
 public:
 	struct Frame
 	{
-		uint8_t* pixels = nullptr; // BGRA, stride = width * 4
+		uint8_t* pixels = nullptr; // BGRA, stride = width * 4 (CPU conversion)
+		AVFrame* yuv = nullptr;    // the decoded planes, when the GPU converts (isYuv)
+		bool isYuv = false;
+		bool bt709 = false;        // colour matrix and range of the YUV planes
+		bool fullRange = false;
+		int chromaWidth = 0, chromaHeight = 0;
 		double pts = 0.0;          // seconds from the start of the movie
 		double duration = 0.0;
 	};
@@ -174,6 +179,7 @@ public:
 
 	// Decoder options, set before Open()
 	bool fastDecode = false;    // no H.264/HEVC loop filter and FFmpeg's "fast" shortcuts, from the start
+	volatile bool gpuConvert = false; // queue 8-bit planar YUV frames as they are, for the GPU to convert
 	int decodeThreads = 0;      // 0 = FFmpeg picks (one per CPU)
 
 	// Statistics
@@ -181,6 +187,7 @@ public:
 	std::string videoInfo;      // codec, pixel format, threads (after Open)
 	long framesDecoded = 0;     // video thread
 	long framesConverted = 0;   // video thread
+	long framesGpu = 0;         // video thread: frames queued as YUV for the GPU
 	double decodeMs = 0.0;      // video thread time in send_packet/receive_frame
 	double convertMs = 0.0;     // video thread time in sws_scale (YUV -> BGRA)
 	double maxBehind = 0.0;     // worst lag of the newest decoded frame behind the clock, seconds
@@ -194,10 +201,12 @@ public:
 		double wall = playStartMs > 0.0 ? (FFNowMs() - playStartMs) / 1000.0 : 0.0;
 		double reduced = reducedSeconds + (reducedQuality && reducedSinceMs > 0.0 ? (FFNowMs() - reducedSinceMs) / 1000.0 : 0.0);
 		snprintf(buf, sizeof(buf),
-			"%s; %.1f s played, %ld decoded (%.1f fps), decode %.2f ms/frame, convert %.2f ms/frame, "
-			"worst lag %.2f s, reduced quality %.1f s, keyframe jumps %ld, conversions skipped %ld",
+			"%s; %.1f s played, %ld decoded (%.1f fps), decode %.2f ms/frame, %ld converted on the GPU, "
+			"%ld on the CPU at %.2f ms/frame, worst lag %.2f s, reduced quality %.1f s, keyframe jumps %ld, "
+			"conversions skipped %ld",
 			videoInfo.c_str(), wall, framesDecoded, wall > 0.0 ? framesDecoded / wall : 0.0,
-			framesDecoded ? decodeMs / framesDecoded : 0.0, framesConverted ? convertMs / framesConverted : 0.0,
+			framesDecoded ? decodeMs / framesDecoded : 0.0, framesGpu, framesConverted,
+			framesConverted ? convertMs / framesConverted : 0.0,
 			maxBehind, reduced, (long)keyframeJumps, (long)framesSkipped);
 		return buf;
 	}
@@ -208,7 +217,11 @@ public:
 	{
 		Stop();
 		for (auto& f : queue)
+		{
 			free(f.pixels);
+			if (f.yuv)
+				ff.av_frame_free(&f.yuv);
+		}
 		while (fifoCount > 0)
 			PopPacket();
 		if (pendingVideo)
@@ -766,17 +779,53 @@ private:
 			}
 		}
 
-		sws = ff.sws_getCachedContext(sws, frame->width, frame->height, (AVPixelFormat)frame->format,
-			width, height, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
-		if (!sws)
-			return;
-
 		// Colour matrix: honour the stream's tags, defaulting to BT.709 for HD
 		int colorspace = frame->colorspace;
 		if (colorspace == AVCOL_SPC_UNSPECIFIED)
 			colorspace = height >= 720 ? AVCOL_SPC_BT709 : AVCOL_SPC_BT470BG;
 		int srcFullRange = frame->color_range == AVCOL_RANGE_JPEG ||
 			frame->format == AV_PIX_FMT_YUVJ420P || frame->format == AV_PIX_FMT_YUVJ422P || frame->format == AV_PIX_FMT_YUVJ444P;
+
+		// GPU path: hand the planes over as they are (8-bit planar formats, same size as the texture)
+		int cw = 0, ch = 0;
+		switch (frame->format)
+		{
+		case AV_PIX_FMT_YUV420P: case AV_PIX_FMT_YUVJ420P: cw = (width + 1) / 2; ch = (height + 1) / 2; break;
+		case AV_PIX_FMT_YUV422P: case AV_PIX_FMT_YUVJ422P: cw = (width + 1) / 2; ch = height; break;
+		case AV_PIX_FMT_YUV444P: case AV_PIX_FMT_YUVJ444P: cw = width; ch = height; break;
+		default: break;
+		}
+		if (gpuConvert && cw && frame->width == width && frame->height == height)
+		{
+			Frame* slot;
+			{
+				FFLockGuard guard(mutex);
+				slot = &queue[(head + count) % CAPACITY];
+			}
+			if (!slot->yuv)
+				slot->yuv = ff.av_frame_alloc();
+			if (slot->yuv)
+			{
+				ff.av_frame_unref(slot->yuv);
+				ff.av_frame_move_ref(slot->yuv, frame); // keeps the decoder's buffer, no copy
+				slot->isYuv = true;
+				slot->bt709 = colorspace == AVCOL_SPC_BT709;
+				slot->fullRange = srcFullRange != 0;
+				slot->chromaWidth = cw;
+				slot->chromaHeight = ch;
+				slot->pts = pts;
+				slot->duration = frameDuration;
+				framesGpu++;
+				FFLockGuard guard(mutex);
+				count++;
+				return;
+			}
+		}
+
+		sws = ff.sws_getCachedContext(sws, frame->width, frame->height, (AVPixelFormat)frame->format,
+			width, height, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+		if (!sws)
+			return;
 		const int* coefficients = ff.sws_getCoefficients(colorspace == AVCOL_SPC_BT709 ? SWS_CS_ITU709 : SWS_CS_ITU601);
 		ff.sws_setColorspaceDetails(sws, coefficients, srcFullRange, coefficients, 1, 0, 1 << 16, 1 << 16);
 
@@ -785,6 +834,9 @@ private:
 			FFLockGuard guard(mutex);
 			slot = &queue[(head + count) % CAPACITY];
 		}
+		if (slot->yuv)
+			ff.av_frame_unref(slot->yuv); // the slot held planes for the GPU before
+		slot->isYuv = false;
 		if (!slot->pixels)
 		{
 			slot->pixels = (uint8_t*)malloc((size_t)width * height * 4);

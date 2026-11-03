@@ -30,6 +30,7 @@ Same sections and keys as `DivaGL.ini` (`[general]`, `[experimentals]`, `[stereo
 | --- | --- | --- |
 | `ffmpeg_player` | 1 | Play movies with FFmpeg. 0 uses the game's movie player. |
 | `movie_audio` | 0 | Play movies' own audio tracks. Never during songs, where the video follows the song. |
+| `gpu_convert` | 1 | Convert frames from YUV to RGB on the GPU: the decoded planes are uploaded as they are and a shader writes the movie texture. 0 converts on the CPU with swscale, as DivaMovie does. Falls back to the CPU by itself if the GPU path fails. |
 | `fast_decode` | 0 | Skip the H.264/HEVC deblocking filter and use FFmpeg's "fast" shortcuts from the start. Slightly blockier, noticeably cheaper on slow CPUs (Quest/phones through FEX). Without it, the player only does this while it's behind. |
 | `decode_threads` | 0 | Threads for video decoding; 0 lets FFmpeg use one per CPU. |
 
@@ -96,6 +97,7 @@ Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation la
 | `src/DivaVK/plugin/vk_bridge.cpp` | WGL emulation and GL import/table patching |
 | `movie/FFLoader.h`, `FFMovie.h`, `FFPlayer.h` | DivaMovie's FFmpeg player, nearly unchanged |
 | `movie/movie_gl.h` | The player's GL upload functions, taken from DivaVK instead of opengl32 |
+| `movie/movie_yuv.h` | GPU YUV-to-RGB conversion into the movie texture, inside `dvk_push_gl_state`/`dvk_pop_gl_state`; tested in `src/DivaVK/tests` |
 | `movie/movie.cpp` | Installs the player on the game's `CreatePlayer` factory |
 | `src/DivaVK/core/src/xr.cpp` | OpenXR output (virtual screen), tested against `src/DivaVK/tests/mock_xr_runtime.cpp` |
 
@@ -114,5 +116,3 @@ the DivaVK options. In Visual Studio, the `DivaLinux` project reads the same fol
 
 - Head-tracked VR: render each eye from the headset's pose (a projection layer) instead of
   showing the SBS frame on a virtual screen.
-- Upload movie frames as YUV planes and convert them in a shader, instead of converting to BGRA
-  on the CPU and swizzling again in DivaVK's upload.

@@ -19,6 +19,7 @@
 #include <dirent.h>
 #include <dlfcn.h>
 #include <vulkan/vulkan.h>
+#include "movie_yuv.h"
 
 #ifndef DIVAVK_SHADER_DIR
 #define DIVAVK_SHADER_DIR "res/ft_shaders"
@@ -904,6 +905,127 @@ static void test_present_loop() {
     CHECK(idx.find("RGBA16F") != std::string::npos && idx.find("final") != std::string::npos, "dump index incomplete");
 }
 
+// DivaLinux's GPU colour conversion for movies (src/DivaLinux/movie/movie_yuv.h): colours match
+// a CPU reference, and the GL state the game set up is the same afterwards.
+static void test_movie_yuv() {
+    printf("movie yuv conversion\n");
+    const int MW = 32, MH = 32, CW = 16, CH = 16;
+    GLuint target;
+    glGenTextures(1, &target);
+    glBindTexture(GL_TEXTURE_2D, target);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, MW, MH, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    // Luma ramp along x with padding at the end of each row; chroma constant per quadrant.
+    const int YS = MW + 8, CS = CW + 4;
+    std::vector<uint8_t> yp(YS * MH, 0), up(CS * CH, 0), vp(CS * CH, 0);
+    for (int y = 0; y < MH; y++)
+        for (int x = 0; x < MW; x++)
+            yp[y * YS + x] = (uint8_t)(32 + x * 6 + (y < MH / 2 ? 0 : 20));
+    const uint8_t QU[4] = { 128, 60, 200, 100 }, QV[4] = { 128, 200, 90, 40 };
+    for (int y = 0; y < CH; y++)
+        for (int x = 0; x < CW; x++) {
+            int q = (y >= CH / 2) * 2 + (x >= CW / 2);
+            up[y * CS + x] = QU[q];
+            vp[y * CS + x] = QV[q];
+        }
+
+    // Game-like state that must survive
+    GLuint other_tex;
+    glGenTextures(1, &other_tex);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, other_tex);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, other_tex);
+    glUseProgram(g_prog_color);
+    glEnable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    glViewport(3, 4, 50, 60);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 8);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindVertexArray(g_vao);
+    GLint unit0 = 0;
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &unit0);
+    glActiveTexture(GL_TEXTURE1);
+    while (glGetError() != GL_NO_ERROR) {}
+
+    static MovieYuv::Converter conv;
+    for (int full = 0; full < 2; full++)
+        for (int m = 0; m < 2; m++) {
+            MovieYuv::Planes p = {};
+            p.data[0] = yp.data(); p.data[1] = up.data(); p.data[2] = vp.data();
+            p.stride[0] = YS; p.stride[1] = CS; p.stride[2] = CS;
+            p.width = MW; p.height = MH; p.chromaWidth = CW; p.chromaHeight = CH;
+            p.matrix = m ? MovieYuv::BT709 : MovieYuv::BT601;
+            p.fullRange = full != 0;
+            bool ok = conv.Convert(target, MW, MH, p);
+            CHECK(ok, "Convert failed: %s", conv.error.c_str());
+            if (!ok)
+                return;
+
+            std::vector<uint8_t> out(MW * MH * 4);
+            glActiveTexture(GL_TEXTURE5);
+            glBindTexture(GL_TEXTURE_2D, target);
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glActiveTexture(GL_TEXTURE1);
+
+            int bad = 0, worst = 0;
+            for (int y = 0; y < MH; y++)
+                for (int x = 0; x < MW; x++) {
+                    if (x % 16 == 0 || x % 16 == 15 || y % 16 == 0 || y % 16 == 15)
+                        continue; // chroma is interpolated across the quadrant edges
+                    int q = (y >= MH / 2) * 2 + (x >= MW / 2);
+                    double Y = yp[y * YS + x] / 255.0, U = QU[q] / 255.0 - 128.0 / 255.0, V = QV[q] / 255.0 - 128.0 / 255.0;
+                    if (!full) { Y = (Y - 16.0 / 255.0) * 255.0 / 219.0; U *= 255.0 / 224.0; V *= 255.0 / 224.0; }
+                    double r, g, b;
+                    if (m) { r = Y + 1.5748 * V; g = Y - 0.1873 * U - 0.4681 * V; b = Y + 1.8556 * U; }
+                    else { r = Y + 1.402 * V; g = Y - 0.344136 * U - 0.714136 * V; b = Y + 1.772 * U; }
+                    double ref[3] = { r, g, b };
+                    for (int c = 0; c < 3; c++) {
+                        int e = (int)lround(std::min(std::max(ref[c], 0.0), 1.0) * 255.0);
+                        int d = abs(out[(y * MW + x) * 4 + c] - e);
+                        worst = std::max(worst, d);
+                        if (d > 2)
+                            bad++;
+                    }
+                    if (out[(y * MW + x) * 4 + 3] != 255)
+                        bad++;
+                }
+            CHECK(bad == 0, "matrix %d full %d: %d channels off (worst %d)", m, full, bad, worst);
+        }
+
+    GLint v[4] = {};
+    glGetIntegerv(GL_CURRENT_PROGRAM, v);
+    CHECK((GLuint)v[0] == g_prog_color, "program changed to %d", v[0]);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, v);
+    CHECK(v[0] == GL_TEXTURE1, "active texture changed to 0x%04X", v[0]);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, v);
+    CHECK((GLuint)v[0] == other_tex, "unit 1 binding changed to %d", v[0]);
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, v);
+    glActiveTexture(GL_TEXTURE1);
+    CHECK(v[0] == unit0, "unit 0 binding changed from %d to %d", unit0, v[0]);
+    glGetIntegerv(GL_VIEWPORT, v);
+    CHECK(v[0] == 3 && v[1] == 4 && v[2] == 50 && v[3] == 60, "viewport changed to %d,%d,%d,%d", v[0], v[1], v[2], v[3]);
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, v);
+    CHECK(v[0] == 8, "unpack alignment changed to %d", v[0]);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, v);
+    CHECK(v[0] == 0, "framebuffer changed to %d", v[0]);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, v);
+    CHECK((GLuint)v[0] == g_vao, "vertex array changed to %d", v[0]);
+    GLint blend = 0, depth = 0;
+    glGetIntegerv(GL_BLEND, &blend);
+    glGetIntegerv(GL_DEPTH_TEST, &depth);
+    CHECK(blend == 1 && depth == 1, "blend %d / depth test %d changed", blend, depth);
+    CHECK(glGetError() == GL_NO_ERROR, "GL error after the conversion");
+
+    glDisable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glActiveTexture(GL_TEXTURE0);
+}
+
 int main(int argc, char** argv) {
     bool validation = argc > 1 && !strcmp(argv[1], "--validate");
     const char* exts[] = { "VK_KHR_surface", "VK_EXT_headless_surface" };
@@ -950,6 +1072,7 @@ int main(int argc, char** argv) {
     test_cube_and_sampler_objects();
     test_ibl_cube_mips();
     test_depth_feedback();
+    test_movie_yuv();
     test_present_loop();
     test_all_divagl_shaders();
 

@@ -29,6 +29,7 @@ typedef void* FFLibHandle;
 	X(avutil, av_frame_alloc) \
 	X(avutil, av_frame_free) \
 	X(avutil, av_frame_unref) \
+	X(avutil, av_frame_move_ref) \
 	X(avutil, av_strerror) \
 	X(avutil, av_log_set_level) \
 	X(avutil, av_opt_set) \

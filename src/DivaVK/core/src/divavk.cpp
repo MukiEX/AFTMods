@@ -62,6 +62,81 @@ extern "C" void dvk_set_vsync(bool vsync) {
     g_ctx->swapchain_dirty = g_ctx->surface != VK_NULL_HANDLE;
 }
 
+extern "C" void dvk_push_gl_state(void) {
+    if (!g_ctx)
+        return;
+    Context& c = *g_ctx;
+    GLStateSnapshot st;
+    st.active_texture = c.active_texture;
+    memcpy(st.tex_2d, c.tex_2d, sizeof(st.tex_2d));
+    memcpy(st.tex_cube, c.tex_cube, sizeof(st.tex_cube));
+    memcpy(st.sampler_units, c.sampler_units, sizeof(st.sampler_units));
+    st.array_buffer = c.array_buffer;
+    st.copy_read_buffer = c.copy_read_buffer;
+    st.copy_write_buffer = c.copy_write_buffer;
+    st.pixel_pack_buffer = c.pixel_pack_buffer;
+    st.pixel_unpack_buffer = c.pixel_unpack_buffer;
+    st.generic_uniform_buffer = c.generic_uniform_buffer;
+    st.generic_storage_buffer = c.generic_storage_buffer;
+    for (uint32_t i = 0; i < MAX_UBO_BINDINGS; i++)
+        st.ubo[i] = c.ubo[i];
+    for (uint32_t i = 0; i < MAX_SSBO_BINDINGS; i++)
+        st.ssbo[i] = c.ssbo[i];
+    st.vertex_array = c.vertex_array;
+    st.draw_fbo = c.draw_fbo;
+    st.read_fbo = c.read_fbo;
+    st.renderbuffer = c.renderbuffer;
+    st.program = c.program;
+    st.unpack_alignment = c.unpack_alignment;
+    st.pack_alignment = c.pack_alignment;
+    st.unpack_row_length = c.unpack_row_length;
+    st.error = c.error;
+    st.rs = c.rs;
+    memcpy(st.clear_color_value, c.clear_color_value, sizeof(st.clear_color_value));
+    st.clear_depth_value = c.clear_depth_value;
+    st.clear_stencil_value = c.clear_stencil_value;
+    c.state_stack.push_back(st);
+}
+
+extern "C" void dvk_pop_gl_state(void) {
+    if (!g_ctx || g_ctx->state_stack.empty())
+        return;
+    Context& c = *g_ctx;
+    const GLStateSnapshot st = c.state_stack.back();
+    c.state_stack.pop_back();
+    c.active_texture = st.active_texture;
+    memcpy(c.tex_2d, st.tex_2d, sizeof(st.tex_2d));
+    memcpy(c.tex_cube, st.tex_cube, sizeof(st.tex_cube));
+    memcpy(c.sampler_units, st.sampler_units, sizeof(st.sampler_units));
+    c.array_buffer = st.array_buffer;
+    c.copy_read_buffer = st.copy_read_buffer;
+    c.copy_write_buffer = st.copy_write_buffer;
+    c.pixel_pack_buffer = st.pixel_pack_buffer;
+    c.pixel_unpack_buffer = st.pixel_unpack_buffer;
+    c.generic_uniform_buffer = st.generic_uniform_buffer;
+    c.generic_storage_buffer = st.generic_storage_buffer;
+    for (uint32_t i = 0; i < MAX_UBO_BINDINGS; i++)
+        c.ubo[i] = st.ubo[i];
+    for (uint32_t i = 0; i < MAX_SSBO_BINDINGS; i++)
+        c.ssbo[i] = st.ssbo[i];
+    c.vertex_array = st.vertex_array;
+    c.draw_fbo = st.draw_fbo;
+    c.read_fbo = st.read_fbo;
+    c.renderbuffer = st.renderbuffer;
+    c.program = st.program;
+    c.unpack_alignment = st.unpack_alignment;
+    c.pack_alignment = st.pack_alignment;
+    c.unpack_row_length = st.unpack_row_length;
+    c.error = st.error;
+    c.rs = st.rs;
+    memcpy(c.clear_color_value, st.clear_color_value, sizeof(st.clear_color_value));
+    c.clear_depth_value = st.clear_depth_value;
+    c.clear_stencil_value = st.clear_stencil_value;
+    // The next draw rebinds its pipeline and descriptors and switches render pass if needed.
+    c.bound_pipeline = VK_NULL_HANDLE;
+    c.descriptors_dirty = true;
+}
+
 extern "C" void dvk_get_stats(dvk_stats* out) {
     if (!g_ctx || !out)
         return;

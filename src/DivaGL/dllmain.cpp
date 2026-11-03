@@ -537,6 +537,17 @@ PluginConfig::PluginConfigOption config[] = {
     {
         PluginConfig::CONFIG_BOOLEAN,
         new PluginConfig::PluginConfigBooleanData {
+            L"gpu_convert",
+            L"movie",
+            CONFIG_FILE,
+            L"GPU Movie Colour Conversion",
+            L"Convert movie frames from YUV to RGB on the GPU instead of the CPU. Much cheaper on slow\nCPUs; turn it off only if movies show wrong colours.",
+            true,
+        }
+    },
+    {
+        PluginConfig::CONFIG_BOOLEAN,
+        new PluginConfig::PluginConfigBooleanData {
             L"fast_decode",
             L"movie",
             CONFIG_FILE,

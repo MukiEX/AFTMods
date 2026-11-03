@@ -66,6 +66,7 @@ extern "C" void divalinux_movie_install(const wchar_t* config_file) {
     s_ffmpeg_player = GetPrivateProfileIntW(L"movie", L"ffmpeg_player", 1, config_file) > 0;
     FFPlayer::movieAudio = GetPrivateProfileIntW(L"movie", L"movie_audio", 0, config_file) > 0;
     FFPlayer::fastDecode = GetPrivateProfileIntW(L"movie", L"fast_decode", 0, config_file) > 0;
+    FFPlayer::gpuConvert = GetPrivateProfileIntW(L"movie", L"gpu_convert", 1, config_file) > 0;
     FFPlayer::decodeThreads = (int)GetPrivateProfileIntW(L"movie", L"decode_threads", 0, config_file);
     if (FFPlayer::decodeThreads < 0 || FFPlayer::decodeThreads > 16)
         FFPlayer::decodeThreads = 0;
@@ -80,7 +81,7 @@ extern "C" void divalinux_movie_install(const wchar_t* config_file) {
         return;
     }
     INSTALL_HOOK(CreatePlayer);
-    PRINT("[Movie] FFmpeg player installed (movie audio %s, fast decode %s, decode threads %s)\n",
-        FFPlayer::movieAudio ? "on" : "off", FFPlayer::fastDecode ? "on" : "off",
+    PRINT("[Movie] FFmpeg player installed (movie audio %s, colour conversion on the %s, fast decode %s, decode threads %s)\n",
+        FFPlayer::movieAudio ? "on" : "off", FFPlayer::gpuConvert ? "GPU" : "CPU", FFPlayer::fastDecode ? "on" : "off",
         FFPlayer::decodeThreads ? std::to_string(FFPlayer::decodeThreads).c_str() : "auto");
 }

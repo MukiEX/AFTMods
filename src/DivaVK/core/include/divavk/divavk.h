@@ -79,6 +79,13 @@ void dvk_get_stats(dvk_stats* out);
    watchdog that reports where a frame is stuck. Safe to call from any thread. */
 const char* dvk_debug_stage(void);
 
+/* Saves / restores every piece of GL state an application can see (bindings, raster state,
+   pixel store, clear values, the error flag), so a plugin can draw with its own objects
+   without changing what the game's renderer, or its cached copy of the GL state, expects.
+   Calls nest. */
+void dvk_push_gl_state(void);
+void dvk_pop_gl_state(void);
+
 /* Name of the Vulkan device in use (for logs/overlays). */
 const char* dvk_device_name(void);
 

@@ -10,6 +10,7 @@
 // Include from dllmain.cpp only, after GLDXInteropEmu.h.
 
 #include "FFMovie.h"
+#include "movie_yuv.h"
 #include <mmsystem.h>
 
 #pragma comment(lib, "winmm.lib")
@@ -67,6 +68,8 @@ namespace FFPlayer
 	bool movieAudio = false;
 	bool fastDecode = false;   // [movie] fast_decode
 	int decodeThreads = 0;     // [movie] decode_threads
+	bool gpuConvert = true;    // [movie] gpu_convert
+	MovieYuv::Converter yuvConverter; // render thread only
 
 	inline bool EnsureFFmpeg()
 	{
@@ -527,6 +530,7 @@ namespace FFPlayer
 			MovieDecoder* d = new MovieDecoder(ff, sink);
 			d->fastDecode = fastDecode;
 			d->decodeThreads = decodeThreads;
+			d->gpuConvert = gpuConvert && !yuvConverter.Failed();
 			bool ok = d->Open(utf8.c_str());
 			if (ok)
 			{
@@ -819,16 +823,26 @@ namespace FFPlayer
 			if (frame && self->texture && changed)
 			{
 				double t0 = FFNowMs();
-				Upload(self->texture, frame, d->width, d->height);
+				Upload(self->texture, frame, d);
 				self->uploadMs += FFNowMs() - t0; // only this thread uploads
 				InterlockedIncrement(&self->uploads);
 			}
 			if (frame && self->texture && !self->loggedFirstUpload)
 			{
 				self->loggedFirstUpload = true;
-				const BYTE* c = frame->pixels + ((d->height / 2) * d->width + d->width / 2) * 4;
-				PRINT("[Movie] first frame uploaded (pts %.3f, center B=%u G=%u R=%u)\n",
-					frame->pts, c[0], c[1], c[2]);
+				if (frame->isYuv)
+				{
+					const AVFrame* f = frame->yuv;
+					PRINT("[Movie] first frame uploaded, converted on the GPU (pts %.3f, %s %s, center Y=%u)\n",
+						frame->pts, frame->bt709 ? "BT.709" : "BT.601", frame->fullRange ? "full range" : "video range",
+						f->data[0][(d->height / 2) * f->linesize[0] + d->width / 2]);
+				}
+				else
+				{
+					const BYTE* c = frame->pixels + ((d->height / 2) * d->width + d->width / 2) * 4;
+					PRINT("[Movie] first frame uploaded (pts %.3f, center B=%u G=%u R=%u)\n",
+						frame->pts, c[0], c[1], c[2]);
+				}
 			}
 			ReleaseSRWLockShared(&self->lock);
 
@@ -840,8 +854,36 @@ namespace FFPlayer
 			return S_OK;
 		}
 
-		static void Upload(TextureObject* texture, const MovieDecoder::Frame* frame, int width, int height)
+		static void Upload(TextureObject* texture, const MovieDecoder::Frame* frame, MovieDecoder* d)
 		{
+			int width = d->width, height = d->height;
+			if (frame->isYuv)
+			{
+				const AVFrame* f = frame->yuv;
+				MovieYuv::Planes p = {};
+				for (int i = 0; i < 3; i++)
+				{
+					p.data[i] = f->data[i];
+					p.stride[i] = f->linesize[i];
+				}
+				p.width = width;
+				p.height = height;
+				p.chromaWidth = frame->chromaWidth;
+				p.chromaHeight = frame->chromaHeight;
+				p.matrix = frame->bt709 ? MovieYuv::BT709 : MovieYuv::BT601;
+				p.fullRange = frame->fullRange;
+				if (width > texture->width || height > texture->height
+					|| !yuvConverter.Convert(texture->Name(), width, height, p))
+				{
+					// Off for good: this frame is dropped, the next ones come converted on the CPU.
+					if (d->gpuConvert)
+						PRINT("[Movie] GPU colour conversion unavailable (%s); converting on the CPU\n",
+							yuvConverter.error.empty() ? "frame larger than the texture" : yuvConverter.error.c_str());
+					d->gpuConvert = false;
+				}
+				return;
+			}
+
 			if (!GLDXEmu::pglTexSubImage2D && !GLDXEmu::LoadGL())
 				return;
 			GLDXEmu::GLUploadState saved;

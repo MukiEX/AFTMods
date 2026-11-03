@@ -375,6 +375,23 @@ namespace dvk {
 
     // ---------------------------------------------------------------- Context
 
+    // The GL-visible binding and raster state, for dvk_push_gl_state/dvk_pop_gl_state.
+    struct GLStateSnapshot {
+        GLuint active_texture;
+        GLuint tex_2d[MAX_TEXTURE_UNITS], tex_cube[MAX_TEXTURE_UNITS], sampler_units[MAX_TEXTURE_UNITS];
+        GLuint array_buffer, copy_read_buffer, copy_write_buffer, pixel_pack_buffer, pixel_unpack_buffer;
+        GLuint generic_uniform_buffer, generic_storage_buffer;
+        BufferBinding ubo[MAX_UBO_BINDINGS];
+        BufferBinding ssbo[MAX_SSBO_BINDINGS];
+        GLuint vertex_array, draw_fbo, read_fbo, renderbuffer, program;
+        GLint unpack_alignment, pack_alignment, unpack_row_length;
+        GLenum error;
+        RasterState rs;
+        float clear_color_value[4];
+        float clear_depth_value;
+        GLint clear_stencil_value;
+    };
+
     struct Context {
         // Device
         dvk_create_info info = {};
@@ -460,6 +477,8 @@ namespace dvk {
         std::unordered_map<uint64_t, VkFramebuffer> vk_framebuffers;
         std::unordered_map<uint64_t, VkPipeline> pipelines;
         std::unordered_map<uint64_t, VkSampler> vk_samplers;
+
+        std::vector<GLStateSnapshot> state_stack; // dvk_push_gl_state
 
         // Per-draw bound-state caches
         VkPipeline bound_pipeline = VK_NULL_HANDLE;
