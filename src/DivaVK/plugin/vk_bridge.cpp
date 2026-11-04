@@ -486,7 +486,14 @@ static int patch_imports(HMODULE module, const char* label) {
 // back from queries like GL_VIEWPORT and can crash (TLAC divided by one).
 static std::vector<HMODULE> s_patched;
 
+#ifdef DIVALINUX
+extern "C" void divalinux_io_trace_patch_modules(); // src/DivaLinux/io_trace.cpp
+#endif
+
 static void patch_all_modules() {
+#ifdef DIVALINUX
+    divalinux_io_trace_patch_modules(); // plugins loaded since the last call
+#endif
     wchar_t windir[MAX_PATH];
     UINT wn = GetWindowsDirectoryW(windir, MAX_PATH);
     HMODULE mods[1024];

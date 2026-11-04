@@ -34,6 +34,7 @@ extern "C" void divavk_bridge_install(HMODULE self);
 extern "C" void divavk_bridge_shutdown();
 extern "C" void divavk_log_text(const char* text);
 extern "C" void divalinux_movie_install(const wchar_t* config_file);
+extern "C" void divalinux_io_trace_install(HMODULE self, const wchar_t* config_file);
 #include <divavk/divavk.h>
 #define DIVAGL_PLUGIN_NAME L"DivaLinux"
 std::wstring CONFIG_FILE_STRING = GetDirPath() + L"\\plugins\\DivaLinux.ini";
@@ -163,6 +164,7 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
         // No WGL_NV_DX_interop2 under Vulkan: always use the CPU upload path for videos.
         sv_task_movie_player_no_interop = true;
         divalinux_movie_install(CONFIG_FILE);
+        divalinux_io_trace_install(handle, CONFIG_FILE);
 #endif
 
         dll_handle = (size_t)handle;

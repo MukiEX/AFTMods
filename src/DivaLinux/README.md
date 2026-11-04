@@ -86,6 +86,19 @@ driver offers Vulkan Video decoding.
 Frame dump: press Scroll Lock or Pause, or create an empty file named `DivaLinux_dump_request`
 in the game folder. The next frame's passes are written to `DivaLinux_dump_<time>/`.
 
+File I/O trace: with `[debug] io_trace=1`, DivaLinux hooks the file functions of the game and
+its plugins (import tables only; any plugin's own path redirection still runs) and logs a
+summary after each burst of file activity (start-up, each song load), once the game has been
+quiet for two seconds:
+
+- calls, time and misses for each function (`CreateFileW`, `GetFileAttributesW`,
+  `FindFirstFileW`, `ReadFile`, the C runtime's `fopen`/`_stat`/`fread`, ...)
+- the busiest folders (`mdata\<pack>`, `rom`, ...) by time
+- the most-missed file names, and the slowest single calls
+- megabytes read, and how long that took
+
+The hooks cost a little time themselves, so leave it off for normal play.
+
 Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation layer.
 
 ## Source layout
@@ -99,6 +112,7 @@ Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation la
 | `movie/movie_gl.h` | The player's GL upload functions, taken from DivaVK instead of opengl32 |
 | `movie/movie_yuv.h` | GPU YUV-to-RGB conversion into the movie texture, inside `dvk_push_gl_state`/`dvk_pop_gl_state`; tested in `src/DivaVK/tests` |
 | `movie/movie.cpp` | Installs the player on the game's `CreatePlayer` factory |
+| `io_trace.cpp` | The `[debug] io_trace` file I/O trace |
 | `src/DivaVK/core/src/xr.cpp` | OpenXR output (virtual screen), tested against `src/DivaVK/tests/mock_xr_runtime.cpp` |
 
 ## Building

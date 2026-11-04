@@ -127,6 +127,7 @@
   <ItemGroup>
     <ClCompile Include="..\DivaVK\plugin\vk_bridge.cpp" />
     <ClCompile Include="movie\movie.cpp" />
+    <ClCompile Include="io_trace.cpp" />
     <ClCompile Include="..\DivaGL\camera_render.cpp" />
     <ClCompile Include="..\DivaGL\GL\array_buffer.cpp" />
     <ClCompile Include="..\DivaGL\GL\element_array_buffer.cpp" />

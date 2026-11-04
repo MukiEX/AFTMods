@@ -117,6 +117,7 @@ if(AFTMODS_BUILD_DIVALINUX)
     add_library(DivaLinux SHARED
         ${AFT_ROOT}/src/DivaVK/plugin/vk_bridge.cpp
         ${AFT_ROOT}/src/DivaLinux/movie/movie.cpp
+        ${AFT_ROOT}/src/DivaLinux/io_trace.cpp
         ${DIVAGL_SOURCES})
     aft_plugin(DivaLinux)
     target_compile_definitions(DivaLinux PRIVATE DIVAVK DIVALINUX)
