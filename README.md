@@ -17,9 +17,10 @@ stereo_convergence=0    ; zero-parallax distance in cm, 0 = auto (camera interes
 stereo_swap_eyes=0      ; right eye on the left (cross-eyed viewing)
 stereo_hud_parallax=0   ; HUD depth in 0.1% of image width, + = behind screen
 stereo_bg_infinity=1    ; draw 2D backgrounds / PV movies at infinite depth
+stereo_shadow_once=1    ; render the shadow maps for the first eye only (they're seen from the light)
 ```
 
-The whole pipeline (shadows, SSS, reflections, 3D, post-process, sprites) is rendered once per eye using parallel off-axis cameras, so GPU cost roughly doubles. TAA is disabled while stereo is on because its history would mix the two eyes.
+The whole pipeline (SSS, reflections, 3D, post-process, sprites) is rendered once per eye using parallel off-axis cameras, so GPU cost roughly doubles. Shadow maps are the exception: they're drawn from the light's point of view, so the second eye reuses the first eye's (`stereo_shadow_once=0` draws them twice). TAA is disabled while stereo is on because its history would mix the two eyes.
 
 ## DivaLinux
 A single plugin for running PDAFT 7.10 under Wine or Proton (Linux, Steam Deck, and WinlatorXR on Quest). It replaces both `DivaGL.dva` and DivaMovie's `DivaMovie.dva`, so only `DivaLinux.dva` goes in `plugins/`. It's built from:

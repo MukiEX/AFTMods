@@ -26,6 +26,9 @@ extern bool stereo_enabled();
 // True while one of the two eye passes is being rendered.
 extern bool stereo_in_eye_pass();
 
+// True during the second eye when its shadow maps can be the first eye's (stereo_shadow_once).
+extern bool stereo_reuse_shadow_maps();
+
 // Called once per frame after the game camera has been computed.
 // Updates convergence and the culling margin.
 extern void stereo_update_camera(const cam_data& center);

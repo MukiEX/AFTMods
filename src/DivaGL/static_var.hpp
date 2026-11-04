@@ -30,3 +30,4 @@ extern bool sv_stereo_swap_eyes;
 extern int32_t sv_stereo_hud_parallax;
 extern int32_t sv_stereo_content_aspect;
 extern bool sv_stereo_bg_infinity;
+extern bool sv_stereo_shadow_once;

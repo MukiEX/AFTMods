@@ -43,6 +43,11 @@ bool stereo_in_eye_pass() {
     return stereo_current_eye != 0;
 }
 
+// The right eye renders second (render_all_stereo: -1, then +1).
+bool stereo_reuse_shadow_maps() {
+    return sv_stereo_shadow_once && stereo_current_eye > 0;
+}
+
 void stereo_update_camera(const cam_data& center) {
     if (!stereo_enabled()) {
         stereo_half_sep = 0.0f;

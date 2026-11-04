@@ -154,6 +154,8 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
             L"stereo_hud_parallax", 0, CONFIG_FILE), -50, 50);
         sv_stereo_bg_infinity = GetPrivateProfileIntW(L"stereo",
             L"stereo_bg_infinity", 1, CONFIG_FILE) > 0 ? true : false;
+        sv_stereo_shadow_once = GetPrivateProfileIntW(L"stereo",
+            L"stereo_shadow_once", 1, CONFIG_FILE) > 0 ? true : false;
         sv_stereo_content_aspect = clamp_def((int32_t)GetPrivateProfileIntW(L"stereo",
             L"stereo_content_aspect", 1778, CONFIG_FILE), 0, 10000);
 
@@ -270,6 +272,11 @@ extern "C" __declspec(dllexport) BOOL SetOption(const char* str) {
         if (parse_bool(val, val_len, value))
             sv_stereo_bg_infinity = !!value;
     }
+    else if (!strncmp(name, "stereo_shadow_once", name_len)) {
+        int32_t value = 0;
+        if (parse_bool(val, val_len, value))
+            sv_stereo_shadow_once = !!value;
+    }
     else if (!strncmp(name, "stereo_content_aspect", name_len)) {
         int32_t value = 0;
         if (parse_int(val, value))
@@ -304,6 +311,8 @@ extern "C" __declspec(dllexport) BOOL SetOptionInt(const char* name, int value) 
         sv_stereo_hud_parallax = clamp_def(value, -50, 50);
     else if (!strcmp(name, "stereo_bg_infinity"))
         sv_stereo_bg_infinity = !!value;
+    else if (!strcmp(name, "stereo_shadow_once"))
+        sv_stereo_shadow_once = !!value;
     else if (!strcmp(name, "stereo_content_aspect"))
         sv_stereo_content_aspect = clamp_def(value, 0, 10000);
     else
@@ -494,6 +503,18 @@ PluginConfig::PluginConfigOption config[] = {
             CONFIG_FILE,
             L"2D Backgrounds at Infinity",
             L"Places sprites drawn behind the 3D scene (2D stage backgrounds, PV movies) at infinite depth\ninstead of on the screen plane.",
+            true,
+            false,
+        }
+    },
+    {
+        PluginConfig::CONFIG_BOOLEAN,
+        new PluginConfig::PluginConfigBooleanData {
+            L"stereo_shadow_once",
+            L"stereo",
+            CONFIG_FILE,
+            L"Shadows Once per Frame",
+            L"Draw the shadow maps for the first eye only and reuse them for the second. They're seen from the\nlight, so both eyes need the same ones; this saves GPU time with no visible change.",
             true,
             false,
         }

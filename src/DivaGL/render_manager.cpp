@@ -481,7 +481,12 @@ namespace rndr {
         }
 
         Shadow* shad = shadow_ptr;
-        if (shadow && make_shadowmap) {
+        if (stereo_reuse_shadow_maps()) {
+            // Second stereo eye: the shadow maps are rendered from the light's camera, so the
+            // first eye's are exactly what this eye would draw. (The texproj part above uses
+            // the eye's camera and is still drawn per eye.)
+        }
+        else if (shadow && make_shadowmap) {
             int32_t group[2];
             shad->begin_make_shadow_textures(group);
 
