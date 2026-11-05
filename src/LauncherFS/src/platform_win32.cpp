@@ -1050,6 +1050,7 @@ namespace {
         uint32_t serial = 0;
         int cw = 0, ch = 0;         // canvas (menu picture) size
         int lay_w = 0, lay_h = 0, sbs = 0, win_w = 0, win_h = 0; // latest frame, for mouse positions
+        bool native_cursor = false; // DivaLinux draws a crosshair for the mouse: no Windows cursor
         LARGE_INTEGER qpc_freq = {}, qpc_last = {};
         Paths paths;
     };
@@ -1164,33 +1165,25 @@ namespace {
             g_ov.armed = false;
             g_ov.draining = false;
             g_block_input = true;
-            if (g_ov.hwnd)
+            if (g_ov.hwnd && !g_ov.native_cursor)
                 PostMessageW(g_ov.hwnd, WM_LFS_CURSOR, 1, 0);
             QueryPerformanceCounter(&g_ov.qpc_last);
             lf_log("In-game menu opened");
         }
         else {
             g_ov.draining = true; // g_block_input stays on until everything is let go
-            if (g_ov.hwnd)
+            if (g_ov.hwnd && !g_ov.native_cursor)
                 PostMessageW(g_ov.hwnd, WM_LFS_CURSOR, 0, 0);
             lf_log("In-game menu closed");
         }
     }
 
+    // The mouse's position across the whole window, mapped onto the menu picture: the same
+    // mapping the game uses, and the spot DivaLinux's crosshair shows. In side-by-side 3D that's
+    // the same place in both eyes, wherever the real cursor is.
     ImVec2 overlay_map_mouse(int x, int y) {
         float ww = (float)std::max(g_ov.win_w, 1), wh = (float)std::max(g_ov.win_h, 1);
-        if (g_ov.sbs == 0)
-            return ImVec2(x * g_ov.cw / ww, y * g_ov.ch / wh);
-        // Side by side: the menu is in both halves; either one works.
-        float half = ww * 0.5f, fx = (float)x;
-        if (fx >= half)
-            fx -= half;
-        if (g_ov.sbs == 1)
-            return ImVec2(fx * g_ov.cw / half, y * g_ov.ch / wh);
-        // Full SBS: the menu keeps its shape inside its half (window ~ framebuffer size)
-        float lw = (float)std::max(g_ov.lay_w, 1), lh = (float)std::max(g_ov.lay_h, 1);
-        float ox = (half - lw) * 0.5f, oy = (wh - lh) * 0.5f;
-        return ImVec2((fx - ox) * g_ov.cw / lw, (y - oy) * g_ov.ch / lh);
+        return ImVec2((x + 0.5f) * g_ov.cw / ww, (y + 0.5f) * g_ov.ch / wh);
     }
 
     // Input for the open menu. True when the message is the menu's (the game doesn't get it).
@@ -1229,7 +1222,7 @@ namespace {
             ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
             return true;
         case WM_SETCURSOR:
-            if (LOWORD(lp) == HTCLIENT) {
+            if (LOWORD(lp) == HTCLIENT && !g_ov.native_cursor) {
                 SetCursor(LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW));
                 result = TRUE;
                 return true;
@@ -1294,6 +1287,7 @@ namespace {
     void __cdecl overlay_frame(DivaLinuxOverlayFrame* f) {
         if (!f || f->version < 1)
             return;
+        g_ov.native_cursor = f->version >= 2 && f->cursor_drawn != 0;
         if (!g_ov.hwnd && f->hwnd) {
             g_ov.hwnd = f->hwnd;
             g_ov.game_proc = (WNDPROC)SetWindowLongPtrW(f->hwnd, GWLP_WNDPROC, (LONG_PTR)&overlay_wnd_proc);

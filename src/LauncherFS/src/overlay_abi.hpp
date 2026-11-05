@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define DIVALINUX_OVERLAY_VERSION 1
+#define DIVALINUX_OVERLAY_VERSION 2
 
 extern "C" {
     struct DivaLinuxOverlayFrame {
@@ -24,6 +24,9 @@ extern "C" {
         const uint32_t* pixels;  // 0xAARRGGBB, top row first, not premultiplied
         int32_t image_width, image_height, image_stride; // stride in pixels
         uint32_t serial;         // changes whenever the pixels do
+        // Version 2 (read only when version >= 2), filled in by DivaLinux:
+        int32_t cursor_drawn;    // DivaLinux draws the mouse crosshair: leave the Windows cursor hidden
+        int32_t reserved;
     };
 
     typedef void(__cdecl* DivaLinuxOverlayFn)(DivaLinuxOverlayFrame* frame);
@@ -33,4 +36,5 @@ extern "C" {
 // Same layout on both sides (MinGW launcher, MSVC DivaLinux); x64.
 static_assert(sizeof(void*) != 8 || (offsetof(DivaLinuxOverlayFrame, hwnd) == 8 && offsetof(DivaLinuxOverlayFrame, sbs) == 24
     && offsetof(DivaLinuxOverlayFrame, pixels) == 40 && offsetof(DivaLinuxOverlayFrame, serial) == 60
-    && sizeof(DivaLinuxOverlayFrame) == 64), "DivaLinuxOverlayFrame layout changed");
+    && offsetof(DivaLinuxOverlayFrame, cursor_drawn) == 64 && sizeof(DivaLinuxOverlayFrame) == 72),
+    "DivaLinuxOverlayFrame layout changed");

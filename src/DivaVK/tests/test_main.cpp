@@ -45,6 +45,7 @@
     X(PFNGLBINDBUFFERPROC, glBindBuffer) X(PFNGLBUFFERDATAPROC, glBufferData) \
     X(PFNGLBUFFERSUBDATAPROC, glBufferSubData) X(PFNGLBUFFERSTORAGEPROC, glBufferStorage) \
     X(PFNGLBINDBUFFERBASEPROC, glBindBufferBase) X(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays) \
+    X(PFNGLGETINTEGERI_VPROC, glGetIntegeri_v) \
     X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray) X(PFNGLVERTEXATTRIBPOINTERPROC, glVertexAttribPointer) \
     X(PFNGLENABLEVERTEXATTRIBARRAYPROC, glEnableVertexAttribArray) X(PFNGLDRAWARRAYSPROC, glDrawArrays) \
     X(PFNGLDRAWELEMENTSPROC, glDrawElements) X(PFNGLENABLEPROC, glEnable) X(PFNGLDISABLEPROC, glDisable) \
@@ -1103,6 +1104,64 @@ static void test_overlay() {
     glDisable(GL_DEPTH_TEST);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glActiveTexture(GL_TEXTURE0);
+
+    // ---- crosshair
+    printf("crosshair\n");
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    GLuint game_ubo;
+    glGenBuffers(1, &game_ubo);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 7, game_ubo); // the game's binding 7 must come back
+    glUseProgram(g_prog_color);
+    glViewport(3, 4, 50, 60);
+    while (glGetError() != GL_NO_ERROR) {}
+    // Centre at (32, 24) in a 128x96 picture, top-down; GL rows run bottom-up, so y = 96-1-24
+    OverlayGL::Crosshair c = { (float)W, (float)H, 32.0f, 24.0f, 12.0f, 1.0f, 0.0f, -1.0f, 1.0f, 1.0f, 1.0f };
+    ok = comp.DrawCrosshair(c, &full, 1);
+    CHECK(ok, "crosshair draw failed: %s", comp.error.c_str());
+    {
+        RGBA ctr = pixel(32, H - 1 - 24);
+        CHECK(ctr.r > 200 && ctr.g > 200 && ctr.b > 200, "crosshair centre dot %d,%d,%d", ctr.r, ctr.g, ctr.b);
+        RGBA ringp = pixel(32 + 12, H - 1 - 24);
+        CHECK(ringp.r > 150, "crosshair ring %d", ringp.r);
+        RGBA far = pixel(100, 80);
+        CHECK(far.r == 0 && far.g == 0 && far.b == 0, "pixel far from the crosshair changed: %d,%d,%d", far.r, far.g, far.b);
+        RGBA gap = pixel(32 + 3, H - 1 - 24 - 3); // between the dot and the ticks
+        CHECK(gap.r < 120, "gap between dot and ring is filled: %d", gap.r);
+    }
+    // Faded out: nothing drawn
+    glClear(GL_COLOR_BUFFER_BIT);
+    c.alpha = 0.0f;
+    comp.DrawCrosshair(c, &full, 1);
+    CHECK_PIXEL(32, H - 1 - 24, 0, 0, 0, 255);
+    // Half SBS: same picture position in each half, squeezed horizontally
+    glClear(GL_COLOR_BUFFER_BIT);
+    c.alpha = 1.0f;
+    c.x = 64.0f; c.y = 48.0f;
+    ok = comp.DrawCrosshair(c, halves, 2);
+    CHECK(ok, "crosshair draw (SBS) failed: %s", comp.error.c_str());
+    {
+        RGBA l = pixel(W / 4, H - 1 - 48), r = pixel(W / 2 + W / 4, H - 1 - 48);
+        // Squeezed to half width, the dot covers part of the centre pixel; both eyes alike.
+        CHECK(l.r > 100 && abs(l.r - r.r) <= 2, "SBS crosshair centres %d / %d", l.r, r.r);
+        RGBA mid = pixel(W / 2, H - 1 - 48);
+        CHECK(mid.r < 60, "crosshair drawn across the halves' border: %d", mid.r);
+    }
+    {
+        GLint v4[4] = {};
+        glGetIntegeri_v(GL_UNIFORM_BUFFER_BINDING, 7, v4);
+        CHECK((GLuint)v4[0] == game_ubo, "uniform binding 7 changed to %d", v4[0]);
+        glGetIntegerv(GL_VIEWPORT, v4);
+        CHECK(v4[0] == 3 && v4[1] == 4 && v4[2] == 50 && v4[3] == 60, "viewport changed to %d,%d,%d,%d", v4[0], v4[1], v4[2], v4[3]);
+        GLint sc = 0;
+        glGetIntegerv(GL_SCISSOR_TEST, &sc);
+        CHECK(sc == 0, "scissor test left on");
+        glGetIntegerv(GL_CURRENT_PROGRAM, v4);
+        CHECK((GLuint)v4[0] == g_prog_color, "program changed to %d", v4[0]);
+        CHECK(glGetError() == GL_NO_ERROR, "GL error after the crosshair");
+    }
+    glBindBufferBase(GL_UNIFORM_BUFFER, 7, 0);
 }
 
 int main(int argc, char** argv) {

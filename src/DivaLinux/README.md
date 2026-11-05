@@ -46,6 +46,25 @@ On the first run, if `DivaLinux.ini` doesn't exist yet, it is created from `Diva
 DivaMovie's other options (software/hybrid decoding, interop emulation, debug) are gone: they
 controlled Media Foundation and D3D9 paths that DivaLinux doesn't use.
 
+## Mouse crosshair: `[cursor]`
+
+DivaLinux hides the Windows cursor over the game and draws a crosshair into the picture
+instead: a teal ring with ticks and a centre dot, with a dark edge so it reads on bright and
+dark scenes. It pulses gently, ripples when you click, and fades out after a couple of seconds
+without mouse movement or clicks, then comes back as soon as you move the mouse.
+
+It's drawn where the game sees the mouse. In side-by-side 3D, the game gets the mouse's
+position over the whole window while its picture is squeezed into each half, so the real
+cursor is never where the game thinks it is. The crosshair is, in both eyes, on the screen
+plane. The launcher's in-game menu uses the same mapping, so the crosshair works there too.
+
+| `[cursor]` key | Default | What it does |
+| --- | --- | --- |
+| `crosshair` | 1 | Draw the crosshair and hide the Windows cursor. 0 leaves the cursor alone. |
+| `hide_after` | 2 | Seconds without mouse activity before it fades out. 0 = always shown. |
+| `size` | 100 | Size in percent (25-400); 100 is about 3% of the picture's height across. |
+| `color` | 39C5BB | Colour as RRGGBB hex. |
+
 ## In-game menu for the launcher
 
 Launcher.dva can run as a menu over the game instead of a window before it (Options >
@@ -200,7 +219,7 @@ Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation la
 | `movie/movie.cpp` | Installs the player on the game's `CreatePlayer` factory |
 | `io_trace.cpp` | The `[debug] io_trace` file I/O trace |
 | `vfs.cpp` | `[loading]`: the lookup cache and archive reading |
-| `overlay.cpp`, `overlay_gl.h` | Draws the launcher's in-game menu over the frame; tested in `src/DivaVK/tests` |
+| `overlay.cpp`, `overlay_gl.h` | Draws the launcher's in-game menu and the mouse crosshair over the frame; tested in `src/DivaVK/tests` |
 | `../../tools/divalinux_pack.py` | Makes `rom.zip` and `mdata\<pack>.zip` |
 | `src/DivaVK/core/src/xr.cpp` | OpenXR output (virtual screen), tested against `src/DivaVK/tests/mock_xr_runtime.cpp` |
 

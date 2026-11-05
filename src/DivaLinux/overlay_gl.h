@@ -12,6 +12,7 @@
 // it. Platform-independent: DivaVK's Linux tests run it against SwiftShader.
 
 #include <divavk/divavk.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string>
@@ -44,6 +45,7 @@ namespace OverlayGL
 		O_BLEND = 0x0BE2, O_CULL_FACE = 0x0B44, O_DEPTH_TEST = 0x0B71, O_STENCIL_TEST = 0x0B90,
 		O_SCISSOR_TEST = 0x0C11, O_TRIANGLES = 0x0004, O_NO_ERROR = 0,
 		O_FUNC_ADD = 0x8006, O_SRC_ALPHA = 0x0302, O_ONE_MINUS_SRC_ALPHA = 0x0303, O_ONE = 1,
+		O_UNIFORM_BUFFER = 0x8A11, O_DYNAMIC_DRAW = 0x88E8,
 	};
 
 	// One overlay image: 0xAARRGGBB words (B, G, R, A bytes in memory), top row first, not
@@ -61,6 +63,24 @@ namespace OverlayGL
 	{
 		int x, y, w, h;
 	};
+
+	// The mouse crosshair, drawn procedurally (no texture). Positions and sizes are in the
+	// picture's own pixels ("layout" pixels, top-down), the same space the menu is laid out in;
+	// each rect maps that space onto the framebuffer.
+	struct Crosshair
+	{
+		float layWidth, layHeight;  // the picture's size
+		float x, y;                 // the crosshair's centre
+		float radius;               // ring radius
+		float alpha;                // overall opacity (fades out when the mouse is idle)
+		float glow;                 // strength of the soft halo (pulses)
+		float ripple;               // 0..1 progress of a click ripple, < 0 for none
+		float r, g, b;              // colour
+	};
+
+	// The crosshair block the shader reads (std140; binding 7). DivaGL's own blocks use lower
+	// bindings, and dvk_push/pop_gl_state put every binding back anyway.
+	static const GLuint_ CROSSHAIR_UBO_BINDING = 7;
 
 	class Compositor
 	{
@@ -90,7 +110,38 @@ namespace OverlayGL
 			return ok;
 		}
 
+		bool DrawCrosshair(const Crosshair& c, const Rect* rects, int rectCount)
+		{
+			if (failed || (!loaded && !Load()))
+				return false;
+			if (c.alpha <= 0.003f || rectCount <= 0 || c.layWidth <= 0 || c.layHeight <= 0)
+				return true;
+
+			dvk_push_gl_state();
+			bool ok = CrosshairImpl(c, rects, rectCount);
+			GLenum_ e = glGetError_();
+			if (ok && e != O_NO_ERROR)
+			{
+				char buf[64];
+				snprintf(buf, sizeof(buf), "GL error 0x%04X while drawing the crosshair", e);
+				Fail(buf);
+				ok = false;
+			}
+			dvk_pop_gl_state();
+			return ok;
+		}
+
 	private:
+		typedef void (APIENTRY* P_GenBuffers)(GLsizei_, GLuint_*);
+		typedef void (APIENTRY* P_BufferData)(GLenum_, ptrdiff_t, const void*, GLenum_);
+		typedef void (APIENTRY* P_BindBufferBase)(GLenum_, GLuint_, GLuint_);
+		typedef void (APIENTRY* P_Scissor)(GLint_, GLint_, GLsizei_, GLsizei_);
+		P_GenBuffers glGenBuffers_ = nullptr;
+		P_BufferData glBufferData_ = nullptr;
+		P_BindBufferBase glBindBufferBase_ = nullptr;
+		P_Scissor glScissor_ = nullptr;
+		GLuint_ crossProgram = 0, crossUbo = 0;
+
 		typedef void (APIENTRY* P_GenTextures)(GLsizei_, GLuint_*);
 		typedef void (APIENTRY* P_BindTexture)(GLenum_, GLuint_);
 		typedef void (APIENTRY* P_TexImage2D)(GLenum_, GLint_, GLint_, GLsizei_, GLsizei_, GLint_, GLenum_, GLenum_, const void*);
@@ -189,7 +240,136 @@ namespace OverlayGL
 				& Get(glEnable_, "glEnable") & Get(glDisable_, "glDisable")
 				& Get(glBlendFuncSeparate_, "glBlendFuncSeparate") & Get(glBlendEquation_, "glBlendEquation")
 				& Get(glColorMask_, "glColorMask") & Get(glDrawArrays_, "glDrawArrays")
-				& Get(glGetError_, "glGetError");
+				& Get(glGetError_, "glGetError") & Get(glGenBuffers_, "glGenBuffers")
+				& Get(glBufferData_, "glBufferData") & Get(glBindBufferBase_, "glBindBufferBase")
+				& Get(glScissor_, "glScissor");
+		}
+
+		GLuint_ Link(const char* vsSrc, const char* fsSrc, const char* what)
+		{
+			GLuint_ vs = Shader(O_VERTEX_SHADER, vsSrc);
+			GLuint_ fs = vs ? Shader(O_FRAGMENT_SHADER, fsSrc) : 0;
+			if (!fs)
+				return 0;
+			GLuint_ prog = glCreateProgram_();
+			glAttachShader_(prog, vs);
+			glAttachShader_(prog, fs);
+			glLinkProgram_(prog);
+			GLint_ status = 0;
+			glGetProgramiv_(prog, O_LINK_STATUS, &status);
+			if (!status)
+			{
+				Fail(std::string(what) + " program link failed");
+				return 0;
+			}
+			return prog;
+		}
+
+		bool CrosshairProgram()
+		{
+			if (crossProgram)
+				return true;
+			static const char* VS =
+				"#version 430 core\n"
+				"void main() {\n"
+				"    vec2 p = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
+				"    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+				"}\n";
+			// Signed distances in picture pixels: a ring, four ticks pointing at the centre and a
+			// dot, antialiased over one framebuffer pixel, with a dark edge so it reads on bright
+			// and dark scenes alike, a soft halo, and an expanding ring after a click.
+			static const char* FS =
+				"#version 430 core\n"
+				"layout(std140, binding = 7) uniform CrosshairBlock {\n"
+				"    vec4 rect0; vec4 rect1; vec4 lay; vec4 style; vec4 color;\n"
+				"} u;\n"
+				"layout(location = 0) out vec4 result;\n"
+				"float box(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }\n"
+				"vec4 over(vec4 s, vec4 d) {\n"
+				"    float a = s.a + d.a * (1.0 - s.a);\n"
+				"    return vec4((s.rgb * s.a + d.rgb * d.a * (1.0 - s.a)) / max(a, 1e-5), a);\n"
+				"}\n"
+				"void main() {\n"
+				"    vec4 r = (u.color.w > 1.5 && gl_FragCoord.x >= u.rect1.x) ? u.rect1 : u.rect0;\n"
+				"    vec2 scale = u.lay.xy / r.zw;\n"
+				"    vec2 lp = (gl_FragCoord.xy - r.xy) * scale;\n"
+				"    lp.y = u.lay.y - lp.y;\n"
+				"    vec2 d = lp - u.lay.zw;\n"
+				"    float R = u.style.x;\n"
+				"    float t = max(R * 0.15, 1.5);\n"
+				"    float aa = max(max(scale.x, scale.y), 0.75);\n"
+				"    float dist = length(d);\n"
+				"    float a0 = R * 0.4, a1 = R * 0.8;\n"
+				"    float ring = abs(dist - R) - t * 0.5;\n"
+				"    float hx = box(vec2(abs(d.x) - (a0 + a1) * 0.5, d.y), vec2((a1 - a0) * 0.5, t * 0.5));\n"
+				"    float vy = box(vec2(d.x, abs(d.y) - (a0 + a1) * 0.5), vec2(t * 0.5, (a1 - a0) * 0.5));\n"
+				"    float shape = min(min(ring, dist - t * 0.7), min(hx, vy));\n"
+				"    float core = clamp(0.5 - shape / aa, 0.0, 1.0);\n"
+				"    float edge = clamp(0.5 - (shape - t * 0.65) / aa, 0.0, 1.0) * 0.55;\n"
+				"    float glow = u.style.z * exp(-max(shape, 0.0) / (R * 0.5));\n"
+				"    float rip = 0.0;\n"
+				"    if (u.style.w >= 0.0) {\n"
+				"        float rr = R * (1.0 + 1.3 * u.style.w);\n"
+				"        rip = clamp(0.5 - (abs(dist - rr) - t * 0.35) / aa, 0.0, 1.0) * (1.0 - u.style.w) * 0.8;\n"
+				"    }\n"
+				"    vec4 acc = vec4(u.color.rgb, glow);\n"
+				"    acc = over(vec4(0.0, 0.0, 0.0, edge), acc);\n"
+				"    acc = over(vec4(u.color.rgb, max(core, rip)), acc);\n"
+				"    result = vec4(acc.rgb, acc.a * u.style.y);\n"
+				"}\n";
+			crossProgram = Link(VS, FS, "crosshair");
+			return crossProgram != 0;
+		}
+
+		bool CrosshairImpl(const Crosshair& c, const Rect* rects, int rectCount)
+		{
+			if (!CrosshairProgram())
+				return false;
+			const int n = rectCount > 2 ? 2 : rectCount;
+			float block[20] = {
+				(float)rects[0].x, (float)rects[0].y, (float)rects[0].w, (float)rects[0].h,
+				(float)rects[n - 1].x, (float)rects[n - 1].y, (float)rects[n - 1].w, (float)rects[n - 1].h,
+				c.layWidth, c.layHeight, c.x, c.y,
+				c.radius, c.alpha, c.glow, c.ripple,
+				c.r, c.g, c.b, (float)n,
+			};
+			// Everything below is undone by dvk_pop_gl_state.
+			if (!crossUbo)
+				glGenBuffers_(1, &crossUbo);
+			glBindBuffer_(O_UNIFORM_BUFFER, crossUbo);
+			glBufferData_(O_UNIFORM_BUFFER, sizeof(block), block, O_DYNAMIC_DRAW);
+			glBindBufferBase_(O_UNIFORM_BUFFER, CROSSHAIR_UBO_BINDING, crossUbo);
+
+			glBindFramebuffer_(O_DRAW_FRAMEBUFFER, 0);
+			glEnable_(O_BLEND);
+			glBlendEquation_(O_FUNC_ADD);
+			glBlendFuncSeparate_(O_SRC_ALPHA, O_ONE_MINUS_SRC_ALPHA, O_ONE, O_ONE_MINUS_SRC_ALPHA);
+			glDisable_(O_CULL_FACE);
+			glDisable_(O_DEPTH_TEST);
+			glDisable_(O_STENCIL_TEST);
+			glEnable_(O_SCISSOR_TEST);
+			glColorMask_(1, 1, 1, 1);
+			glUseProgram_(crossProgram);
+			glBindVertexArray_(0);
+			// Only the pixels around the crosshair, in each eye's rect
+			const float reach = c.radius * 3.5f + 4.0f;
+			for (int i = 0; i < n; i++)
+			{
+				const Rect& r = rects[i];
+				if (r.w <= 0 || r.h <= 0)
+					continue;
+				const float sx = r.w / c.layWidth, sy = r.h / c.layHeight;
+				int x0 = r.x + (int)((c.x - reach) * sx), x1 = r.x + (int)((c.x + reach) * sx) + 1;
+				int y1 = r.y + r.h - (int)((c.y - reach) * sy) + 1, y0 = r.y + r.h - (int)((c.y + reach) * sy);
+				x0 = x0 < r.x ? r.x : x0; x1 = x1 > r.x + r.w ? r.x + r.w : x1;
+				y0 = y0 < r.y ? r.y : y0; y1 = y1 > r.y + r.h ? r.y + r.h : y1;
+				if (x1 <= x0 || y1 <= y0)
+					continue;
+				glViewport_(r.x, r.y, r.w, r.h);
+				glScissor_(x0, y0, x1 - x0, y1 - y0);
+				glDrawArrays_(O_TRIANGLES, 0, 3);
+			}
+			return true;
 		}
 
 		GLuint_ Shader(GLenum_ type, const char* source)
