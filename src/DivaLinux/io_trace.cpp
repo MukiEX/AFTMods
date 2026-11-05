@@ -582,6 +582,8 @@ extern "C" void divalinux_io_trace_patch_modules() {
         DWORD n = GetModuleFileNameW(m, path, (DWORD)(sizeof(path) / sizeof(path[0])));
         if (!n || (wn && n > wn && !_wcsnicmp(path, windir, wn) && (path[wn] == L'\\' || path[wn] == L'/')))
             continue; // system DLLs
+        if (g_game_dir.empty() || n <= g_game_dir.size() || _wcsnicmp(path, g_game_dir.c_str(), g_game_dir.size()))
+            continue; // only the game and its plugins: not overlays (OBS, Fences) or drivers loaded into it
         int patched = PatchModule(m);
         if (patched) {
             const wchar_t* base = wcsrchr(path, L'\\');

@@ -1502,6 +1502,8 @@ extern "C" void divalinux_vfs_patch_modules() {
         DWORD n = GetModuleFileNameW(m, path, (DWORD)(sizeof(path) / sizeof(path[0])));
         if (!n || (wn && n > wn && !_wcsnicmp(path, windir, wn) && (path[wn] == L'\\' || path[wn] == L'/')))
             continue; // system DLLs
+        if (n <= g_base.size() || _wcsnicmp(path, g_base.c_str(), g_base.size()))
+            continue; // only the game and its plugins: not overlays (OBS, Fences) or drivers loaded into it
         int skipped = 0;
         std::string partial;
         int patched = PatchModule(m, &skipped, &partial);
