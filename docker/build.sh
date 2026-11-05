@@ -15,7 +15,7 @@ cd /src
 # creates back to whoever owns the source folder when we exit, success or failure.
 OWNER=$(stat -c %u:%g /src)
 give_back() {
-    chown -R "$OWNER" .deps bin out obj lib src/DivaVK/external/Vulkan-Headers src/DivaVK/lib 2>/dev/null || true
+    chown -R "$OWNER" .deps bin out obj lib src/DivaVK/external/Vulkan-Headers src/DivaVK/lib src/LauncherFS/build 2>/dev/null || true
 }
 trap give_back EXIT
 
@@ -86,5 +86,31 @@ done
 
 mkdir -p out
 cp -v bin/DivaGL.dva bin/DivaLinux.dva out/
+
+# Launcher.dva (src/LauncherFS) is built with llvm-mingw, not cl.exe: it shares nothing with
+# the game's STL, and MinGW's headers cover what it uses. llvm-mingw is fetched into .deps
+# on first use (with Python: the image has no curl/xz). BUILD_LAUNCHER=0 skips it.
+LLVM_MINGW_TAG=20251104
+LLVM_MINGW="$DEPS/llvm-mingw-$LLVM_MINGW_TAG-ucrt-ubuntu-22.04-x86_64"
+if [ "${BUILD_LAUNCHER:-1}" = 1 ]; then
+    if [ ! -x "$LLVM_MINGW/bin/x86_64-w64-mingw32-clang++" ]; then
+        echo "== Fetching llvm-mingw $LLVM_MINGW_TAG (for Launcher.dva)"
+        python3 - "$LLVM_MINGW_TAG" "$DEPS" <<'PY'
+import os, sys, tarfile, urllib.request
+tag, deps = sys.argv[1], sys.argv[2]
+name = f"llvm-mingw-{tag}-ucrt-ubuntu-22.04-x86_64.tar.xz"
+url = f"https://github.com/mstorsjo/llvm-mingw/releases/download/{tag}/{name}"
+path = os.path.join(deps, name)
+urllib.request.urlretrieve(url, path)
+with tarfile.open(path, "r:xz") as t:
+    t.extractall(deps)
+os.remove(path)
+PY
+    fi
+    echo "== Building Launcher.dva (llvm-mingw)"
+    (cd src/LauncherFS && LLVM_MINGW="$LLVM_MINGW" sh ./build-mingw.sh)
+    cp -v src/LauncherFS/build/win/Launcher.dva out/
+fi
 echo "== Done: out/DivaGL.dva (Windows: DivaGL + SBS stereo)"
 echo "         out/DivaLinux.dva (Wine/Proton: DivaGL on Vulkan + FFmpeg movies; replaces DivaVK.dva and DivaMovie.dva)"
+[ -f out/Launcher.dva ] && echo "         out/Launcher.dva (the fullscreen launcher, for both)" || true
