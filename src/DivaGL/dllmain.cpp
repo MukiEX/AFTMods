@@ -35,6 +35,7 @@ extern "C" void divavk_bridge_shutdown();
 extern "C" void divavk_log_text(const char* text);
 extern "C" void divalinux_movie_install(const wchar_t* config_file);
 extern "C" void divalinux_io_trace_install(HMODULE self, const wchar_t* config_file);
+extern "C" void divalinux_lookup_cache_install(HMODULE self, const wchar_t* config_file);
 #include <divavk/divavk.h>
 #define DIVAGL_PLUGIN_NAME L"DivaLinux"
 std::wstring CONFIG_FILE_STRING = GetDirPath() + L"\\plugins\\DivaLinux.ini";
@@ -164,6 +165,8 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
         // No WGL_NV_DX_interop2 under Vulkan: always use the CPU upload path for videos.
         sv_task_movie_player_no_interop = true;
         divalinux_movie_install(CONFIG_FILE);
+        // The cache's hooks go in first, so the trace (when on) measures the cached calls.
+        divalinux_lookup_cache_install(handle, CONFIG_FILE);
         divalinux_io_trace_install(handle, CONFIG_FILE);
 #endif
 
@@ -590,6 +593,17 @@ PluginConfig::PluginConfigOption config[] = {
             0,
             0,
             16,
+        }
+    },
+    {
+        PluginConfig::CONFIG_BOOLEAN,
+        new PluginConfig::PluginConfigBooleanData {
+            L"lookup_cache",
+            L"loading",
+            CONFIG_FILE,
+            L"File Lookup Cache",
+            L"Answer the game's file lookups in rom and mdata from folder listings made once, instead of\nasking Wine every time. Loading spends most of its time in these lookups under Wine; turn it off\nonly if a mod's files aren't found.",
+            true,
         }
     },
     {

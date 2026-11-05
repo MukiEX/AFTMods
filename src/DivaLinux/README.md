@@ -40,6 +40,29 @@ On the first run, if `DivaLinux.ini` doesn't exist yet, it is created from `Diva
 DivaMovie's other options (software/hybrid decoding, interop emulation, debug) are gone: they
 controlled Media Foundation and D3D9 paths that DivaLinux doesn't use.
 
+## Faster loading: the file lookup cache
+
+While loading, the game asks every mdata pack for every file it might override: tens of
+thousands of single-file lookups (`FindFirstFileExW`) per start-up or song load, most of
+which find nothing. Under Wine each lookup scans a whole folder, because Windows names ignore
+case and Linux ones don't, and under FEX on a Quest that costs about 5 ms. A
+`[debug] io_trace` log there showed a 160 s start-up spending 200 s of loading-thread time in
+lookups that missed, and 1 s reading data.
+
+DivaLinux lists each folder under `rom\` and `mdata\` once, the first time something in it is
+looked for, and answers later lookups there from memory: misses fail at once with the error
+Windows would give, hits return the file's details. Wildcard searches, other folders and
+unusual requests still go to Wine. A file created in a cached folder through `CreateFileW`
+drops that folder's listing. Functions another plugin has already hooked are left alone.
+
+| `[loading]` key | Default | What it does |
+| --- | --- | --- |
+| `lookup_cache` | 1 | The cache above. 0 asks Wine for every lookup, as before. |
+
+The log shows a `Lookup cache:` line every 10 s while it's busy: lookups answered from
+memory, lookups passed to Wine, and folders listed. If a mod's files are only added while the
+game runs (by another tool), turn it off.
+
 ## VR headsets (OpenXR)
 
 With `[vr] enabled=1`, DivaLinux also shows the game on a virtual screen in a headset, through
@@ -113,6 +136,7 @@ Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation la
 | `movie/movie_yuv.h` | GPU YUV-to-RGB conversion into the movie texture, inside `dvk_push_gl_state`/`dvk_pop_gl_state`; tested in `src/DivaVK/tests` |
 | `movie/movie.cpp` | Installs the player on the game's `CreatePlayer` factory |
 | `io_trace.cpp` | The `[debug] io_trace` file I/O trace |
+| `lookup_cache.cpp` | The `[loading] lookup_cache` file lookup cache |
 | `src/DivaVK/core/src/xr.cpp` | OpenXR output (virtual screen), tested against `src/DivaVK/tests/mock_xr_runtime.cpp` |
 
 ## Building
