@@ -46,24 +46,27 @@ On the first run, if `DivaLinux.ini` doesn't exist yet, it is created from `Diva
 DivaMovie's other options (software/hybrid decoding, interop emulation, debug) are gone: they
 controlled Media Foundation and D3D9 paths that DivaLinux doesn't use.
 
-## Mouse crosshair: `[cursor]`
+## Mouse pointer: `[cursor]`
 
-DivaLinux hides the Windows cursor over the game and draws a crosshair into the picture
-instead: a teal ring with ticks and a centre dot, with a dark edge so it reads on bright and
-dark scenes. It pulses gently, ripples when you click, and fades out after a couple of seconds
-without mouse movement or clicks, then comes back as soon as you move the mouse.
+DivaLinux hides the Windows cursor over the game and draws a pointer into the picture
+instead: a leek by default (its left leaf's tip is the point that clicks, like an arrow
+pointer's), or a crosshair. It has a dark edge so it reads on bright and dark scenes, pulses
+gently, ripples when you click, and fades out after a couple of seconds without mouse movement
+or clicks, coming back as soon as you move the mouse.
 
-It's drawn where the game sees the mouse. In side-by-side 3D, the game gets the mouse's
-position over the whole window while its picture is squeezed into each half, so the real
-cursor is never where the game thinks it is. The crosshair is, in both eyes, on the screen
-plane. The launcher's in-game menu uses the same mapping, so the crosshair works there too.
+It's drawn where the game sees the mouse. In side-by-side 3D each eye shows the game's 16:9
+picture, and the game reads the mouse against that picture's area of the window, so the real
+cursor is never in the right place for either eye. The drawn pointer is, in both eyes, on the
+screen plane, and a click lands under it. On a 5120x1440 screen in half SBS, for example, the
+game's picture is the middle 2560x1440 of the window, and each half shows it at full size. The
+launcher's in-game menu reads the mouse the same way.
 
 | `[cursor]` key | Default | What it does |
 | --- | --- | --- |
-| `crosshair` | 1 | Draw the crosshair and hide the Windows cursor. 0 leaves the cursor alone. |
+| `pointer` | 1 | 0 = the Windows cursor, 1 = leek, 2 = crosshair. |
 | `hide_after` | 2 | Seconds without mouse activity before it fades out. 0 = always shown. |
-| `size` | 100 | Size in percent (25-400); 100 is about 3% of the picture's height across. |
-| `color` | 39C5BB | Colour as RRGGBB hex. |
+| `size` | 100 | Size in percent (25-400). At 100 the leek is about 4% of the picture's height long. |
+| `color` | 39C5BB | Colour of the glow, the click ripple and the crosshair, as RRGGBB hex. |
 
 ## In-game menu for the launcher
 
@@ -219,7 +222,7 @@ Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation la
 | `movie/movie.cpp` | Installs the player on the game's `CreatePlayer` factory |
 | `io_trace.cpp` | The `[debug] io_trace` file I/O trace |
 | `vfs.cpp` | `[loading]`: the lookup cache and archive reading |
-| `overlay.cpp`, `overlay_gl.h` | Draws the launcher's in-game menu and the mouse crosshair over the frame; tested in `src/DivaVK/tests` |
+| `overlay.cpp`, `overlay_gl.h` | Draws the launcher's in-game menu and the mouse pointer over the frame; tested in `src/DivaVK/tests` |
 | `../../tools/divalinux_pack.py` | Makes `rom.zip` and `mdata\<pack>.zip` |
 | `src/DivaVK/core/src/xr.cpp` | OpenXR output (virtual screen), tested against `src/DivaVK/tests/mock_xr_runtime.cpp` |
 

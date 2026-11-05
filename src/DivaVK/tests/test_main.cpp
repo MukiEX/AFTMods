@@ -1117,7 +1117,10 @@ static void test_overlay() {
     glViewport(3, 4, 50, 60);
     while (glGetError() != GL_NO_ERROR) {}
     // Centre at (32, 24) in a 128x96 picture, top-down; GL rows run bottom-up, so y = 96-1-24
-    OverlayGL::Crosshair c = { (float)W, (float)H, 32.0f, 24.0f, 12.0f, 1.0f, 0.0f, -1.0f, 1.0f, 1.0f, 1.0f };
+    OverlayGL::Crosshair c = {};
+    c.layWidth = (float)W; c.layHeight = (float)H; c.x = 32.0f; c.y = 24.0f;
+    c.kind = OverlayGL::POINTER_CROSSHAIR; c.radius = 12.0f; c.alpha = 1.0f; c.glow = 0.0f; c.ripple = -1.0f;
+    c.r = c.g = c.b = 1.0f;
     ok = comp.DrawCrosshair(c, &full, 1);
     CHECK(ok, "crosshair draw failed: %s", comp.error.c_str());
     {
@@ -1160,6 +1163,36 @@ static void test_overlay() {
         glGetIntegerv(GL_CURRENT_PROGRAM, v4);
         CHECK((GLuint)v4[0] == g_prog_color, "program changed to %d", v4[0]);
         CHECK(glGetError() == GL_NO_ERROR, "GL error after the crosshair");
+    }
+    // ---- leek pointer: tip (hotspot) at (20, 16), 60 px long, pointing up-left
+    glClear(GL_COLOR_BUFFER_BIT);
+    c.kind = OverlayGL::POINTER_LEEK;
+    c.x = 20.0f; c.y = 16.0f; c.radius = 60.0f; c.glow = 0.0f;
+    ok = comp.DrawCrosshair(c, &full, 1);
+    CHECK(ok, "leek draw failed: %s", comp.error.c_str());
+    {
+        // Just inside the tip: leaf green
+        RGBA tip = pixel(20 + 1, H - 1 - (16 + 2));
+        CHECK(tip.g > 90 && tip.g > tip.r + 30 && tip.g > tip.b + 30, "leek tip isn't leaf green: %d,%d,%d", tip.r, tip.g, tip.b);
+        // Near the bulb end, 0.9 of the way along (0.6, 0.8): almost white
+        RGBA bulb = pixel(20 + (int)(0.9f * 0.6f * 60), H - 1 - (16 + (int)(0.9f * 0.8f * 60)));
+        CHECK(bulb.r > 200 && bulb.g > 200 && bulb.b > 190, "leek bulb isn't white: %d,%d,%d", bulb.r, bulb.g, bulb.b);
+        // Up and left of the tip: nothing (the tip is the pointer's extreme)
+        RGBA ul = pixel(20 - 6, H - 1 - (16 - 6));
+        CHECK(ul.r == 0 && ul.g == 0 && ul.b == 0, "leek drawn up-left of its tip: %d,%d,%d", ul.r, ul.g, ul.b);
+        CHECK(glGetError() == GL_NO_ERROR, "GL error after the leek");
+        // DVK_TEST_DUMP=<file.ppm>: write what was drawn, to look at it
+        if (const char* dump = getenv("DVK_TEST_DUMP")) {
+            std::vector<unsigned char> px((size_t)W * H * 4);
+            glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+            if (FILE* fp = fopen(dump, "wb")) {
+                fprintf(fp, "P6 %d %d 255\n", W, H);
+                for (int y = H - 1; y >= 0; y--)
+                    for (int x = 0; x < W; x++)
+                        fwrite(&px[((size_t)y * W + x) * 4], 1, 3, fp);
+                fclose(fp);
+            }
+        }
     }
     glBindBufferBase(GL_UNIFORM_BUFFER, 7, 0);
 }

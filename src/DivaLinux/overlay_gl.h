@@ -64,14 +64,17 @@ namespace OverlayGL
 		int x, y, w, h;
 	};
 
-	// The mouse crosshair, drawn procedurally (no texture). Positions and sizes are in the
+	enum PointerKind { POINTER_CROSSHAIR = 0, POINTER_LEEK = 1 };
+
+	// The mouse pointer (a leek or a crosshair), drawn procedurally (no texture). Positions and sizes are in the
 	// picture's own pixels ("layout" pixels, top-down), the same space the menu is laid out in;
 	// each rect maps that space onto the framebuffer.
 	struct Crosshair
 	{
 		float layWidth, layHeight;  // the picture's size
-		float x, y;                 // the crosshair's centre
-		float radius;               // ring radius
+		float x, y;                 // the hotspot: crosshair centre, leek's leaf tip
+		int kind;                   // PointerKind
+		float radius;               // crosshair: ring radius; leek: length from tip to bulb
 		float alpha;                // overall opacity (fades out when the mouse is idle)
 		float glow;                 // strength of the soft halo (pulses)
 		float ripple;               // 0..1 progress of a click ripple, < 0 for none
@@ -275,13 +278,16 @@ namespace OverlayGL
 				"    vec2 p = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
 				"    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
 				"}\n";
-			// Signed distances in picture pixels: a ring, four ticks pointing at the centre and a
-			// dot, antialiased over one framebuffer pixel, with a dark edge so it reads on bright
-			// and dark scenes alike, a soft halo, and an expanding ring after a click.
+			// Signed distances in picture pixels, antialiased over one framebuffer pixel, with a
+			// dark edge so the pointer reads on bright and dark scenes alike, a soft halo that
+			// pulses, and a ring that expands from the hotspot after a click.
+			//   Crosshair: a ring, four ticks pointing at the centre and a dot.
+			//   Leek: the hotspot is the tip of the left leaf; the stalk runs down to the right
+			//   like an arrow pointer's tail, white at the bulb, pale green up to the leaves.
 			static const char* FS =
 				"#version 430 core\n"
 				"layout(std140, binding = 7) uniform CrosshairBlock {\n"
-				"    vec4 rect0; vec4 rect1; vec4 lay; vec4 style; vec4 color;\n"
+				"    vec4 rect0; vec4 rect1; vec4 lay; vec4 style; vec4 color; vec4 extra;\n"
 				"} u;\n"
 				"layout(location = 0) out vec4 result;\n"
 				"float box(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }\n"
@@ -289,32 +295,67 @@ namespace OverlayGL
 				"    float a = s.a + d.a * (1.0 - s.a);\n"
 				"    return vec4((s.rgb * s.a + d.rgb * d.a * (1.0 - s.a)) / max(a, 1e-5), a);\n"
 				"}\n"
+				// Tapered capsule from a (radius r1) to b (radius r2); h = position along it
+				"float taper(vec2 p, vec2 a, vec2 b, float r1, float r2, out float h) {\n"
+				"    vec2 pa = p - a, ba = b - a;\n"
+				"    h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);\n"
+				"    return length(pa - ba * h) - mix(r1, r2, h);\n"
+				"}\n"
+				"vec2 rot(vec2 v, float deg) { float a = radians(deg); return vec2(v.x * cos(a) - v.y * sin(a), v.x * sin(a) + v.y * cos(a)); }\n"
 				"void main() {\n"
 				"    vec4 r = (u.color.w > 1.5 && gl_FragCoord.x >= u.rect1.x) ? u.rect1 : u.rect0;\n"
 				"    vec2 scale = u.lay.xy / r.zw;\n"
 				"    vec2 lp = (gl_FragCoord.xy - r.xy) * scale;\n"
 				"    lp.y = u.lay.y - lp.y;\n"
 				"    vec2 d = lp - u.lay.zw;\n"
-				"    float R = u.style.x;\n"
-				"    float t = max(R * 0.15, 1.5);\n"
 				"    float aa = max(max(scale.x, scale.y), 0.75);\n"
 				"    float dist = length(d);\n"
-				"    float a0 = R * 0.4, a1 = R * 0.8;\n"
-				"    float ring = abs(dist - R) - t * 0.5;\n"
-				"    float hx = box(vec2(abs(d.x) - (a0 + a1) * 0.5, d.y), vec2((a1 - a0) * 0.5, t * 0.5));\n"
-				"    float vy = box(vec2(d.x, abs(d.y) - (a0 + a1) * 0.5), vec2(t * 0.5, (a1 - a0) * 0.5));\n"
-				"    float shape = min(min(ring, dist - t * 0.7), min(hx, vy));\n"
-				"    float core = clamp(0.5 - shape / aa, 0.0, 1.0);\n"
-				"    float edge = clamp(0.5 - (shape - t * 0.65) / aa, 0.0, 1.0) * 0.55;\n"
-				"    float glow = u.style.z * exp(-max(shape, 0.0) / (R * 0.5));\n"
-				"    float rip = 0.0;\n"
-				"    if (u.style.w >= 0.0) {\n"
-				"        float rr = R * (1.0 + 1.3 * u.style.w);\n"
-				"        rip = clamp(0.5 - (abs(dist - rr) - t * 0.35) / aa, 0.0, 1.0) * (1.0 - u.style.w) * 0.8;\n"
+				"    float S = u.style.x;\n"
+				"    vec4 acc;\n"
+				"    float shape;\n"
+				"    if (u.extra.x > 0.5) {\n"
+				"        vec2 p = d / S; float a1 = aa / S;\n"
+				"        vec2 ax = vec2(0.6, 0.8);\n"
+				"        float hs, h1, h2;\n"
+				"        float st = taper(p, ax * 0.42, ax, 0.068, 0.088, hs);\n"
+				"        vec2 b0 = ax * 0.46;\n"
+				"        float l1 = taper(p, b0, vec2(0.0), 0.090, 0.022, h1);\n"
+				"        float l2 = taper(p, b0, b0 + rot(-ax * 0.36, 36.0), 0.085, 0.022, h2);\n"
+				"        float leaf = min(l1, l2);\n"
+				"        float hl = l1 < l2 ? h1 : h2;\n"
+				"        float sh = min(st, leaf);\n"
+				"        shape = sh * S;\n"
+				"        vec3 stalk = mix(vec3(0.72, 0.90, 0.55), vec3(0.97, 0.98, 0.93), smoothstep(0.2, 0.75, hs));\n"
+				"        vec3 leafc = mix(vec3(0.10, 0.55, 0.16), vec3(0.30, 0.82, 0.30), hl);\n"
+				"        float edge = clamp(0.5 - (sh - 0.035) / a1, 0.0, 1.0) * 0.75;\n"
+				"        acc = vec4(u.color.rgb, u.style.z * exp(-max(sh, 0.0) / 0.14));\n"
+				"        acc = over(vec4(0.05, 0.16, 0.07, edge), acc);\n"
+				"        acc = over(vec4(stalk, clamp(0.5 - st / a1, 0.0, 1.0)), acc);\n"
+				"        acc = over(vec4(leafc, clamp(0.5 - leaf / a1, 0.0, 1.0)), acc);\n"
+				"        if (u.style.w >= 0.0) {\n"
+				"            float rr = S * (0.18 + 0.5 * u.style.w);\n"
+				"            float rip = clamp(0.5 - (abs(dist - rr) - S * 0.02) / aa, 0.0, 1.0) * (1.0 - u.style.w) * 0.85;\n"
+				"            acc = over(vec4(u.color.rgb, rip), acc);\n"
+				"        }\n"
+				"    } else {\n"
+				"        float R = S;\n"
+				"        float t = max(R * 0.15, 1.5);\n"
+				"        float a0 = R * 0.4, a1 = R * 0.8;\n"
+				"        float ring = abs(dist - R) - t * 0.5;\n"
+				"        float hx = box(vec2(abs(d.x) - (a0 + a1) * 0.5, d.y), vec2((a1 - a0) * 0.5, t * 0.5));\n"
+				"        float vy = box(vec2(d.x, abs(d.y) - (a0 + a1) * 0.5), vec2(t * 0.5, (a1 - a0) * 0.5));\n"
+				"        shape = min(min(ring, dist - t * 0.7), min(hx, vy));\n"
+				"        float core = clamp(0.5 - shape / aa, 0.0, 1.0);\n"
+				"        float edge = clamp(0.5 - (shape - t * 0.65) / aa, 0.0, 1.0) * 0.55;\n"
+				"        float rip = 0.0;\n"
+				"        if (u.style.w >= 0.0) {\n"
+				"            float rr = R * (1.0 + 1.3 * u.style.w);\n"
+				"            rip = clamp(0.5 - (abs(dist - rr) - t * 0.35) / aa, 0.0, 1.0) * (1.0 - u.style.w) * 0.8;\n"
+				"        }\n"
+				"        acc = vec4(u.color.rgb, u.style.z * exp(-max(shape, 0.0) / (R * 0.5)));\n"
+				"        acc = over(vec4(0.0, 0.0, 0.0, edge), acc);\n"
+				"        acc = over(vec4(u.color.rgb, max(core, rip)), acc);\n"
 				"    }\n"
-				"    vec4 acc = vec4(u.color.rgb, glow);\n"
-				"    acc = over(vec4(0.0, 0.0, 0.0, edge), acc);\n"
-				"    acc = over(vec4(u.color.rgb, max(core, rip)), acc);\n"
 				"    result = vec4(acc.rgb, acc.a * u.style.y);\n"
 				"}\n";
 			crossProgram = Link(VS, FS, "crosshair");
@@ -326,12 +367,13 @@ namespace OverlayGL
 			if (!CrosshairProgram())
 				return false;
 			const int n = rectCount > 2 ? 2 : rectCount;
-			float block[20] = {
+			float block[24] = {
 				(float)rects[0].x, (float)rects[0].y, (float)rects[0].w, (float)rects[0].h,
 				(float)rects[n - 1].x, (float)rects[n - 1].y, (float)rects[n - 1].w, (float)rects[n - 1].h,
 				c.layWidth, c.layHeight, c.x, c.y,
 				c.radius, c.alpha, c.glow, c.ripple,
 				c.r, c.g, c.b, (float)n,
+				(float)c.kind, 0.0f, 0.0f, 0.0f,
 			};
 			// Everything below is undone by dvk_pop_gl_state.
 			if (!crossUbo)
@@ -352,7 +394,8 @@ namespace OverlayGL
 			glUseProgram_(crossProgram);
 			glBindVertexArray_(0);
 			// Only the pixels around the crosshair, in each eye's rect
-			const float reach = c.radius * 3.5f + 4.0f;
+			// The leek reaches about its length down-right of the tip; the crosshair, its halo.
+			const float reach = (c.kind == POINTER_LEEK ? c.radius * 1.4f : c.radius * 3.5f) + 4.0f;
 			for (int i = 0; i < n; i++)
 			{
 				const Rect& r = rects[i];

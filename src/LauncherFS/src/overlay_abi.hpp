@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define DIVALINUX_OVERLAY_VERSION 2
+#define DIVALINUX_OVERLAY_VERSION 3
 
 extern "C" {
     struct DivaLinuxOverlayFrame {
@@ -25,7 +25,11 @@ extern "C" {
         int32_t image_width, image_height, image_stride; // stride in pixels
         uint32_t serial;         // changes whenever the pixels do
         // Version 2 (read only when version >= 2), filled in by DivaLinux:
-        int32_t cursor_drawn;    // DivaLinux draws the mouse crosshair: leave the Windows cursor hidden
+        int32_t cursor_drawn;    // DivaLinux draws the mouse pointer: leave the Windows cursor hidden
+        // Version 3 (read only when version >= 3): where the game sees the mouse, in layout
+        // pixels (width x height): layout = (window position - mouse_offset) * mouse_scale
+        float mouse_offset_x, mouse_offset_y;
+        float mouse_scale_x, mouse_scale_y;
         int32_t reserved;
     };
 
@@ -36,5 +40,6 @@ extern "C" {
 // Same layout on both sides (MinGW launcher, MSVC DivaLinux); x64.
 static_assert(sizeof(void*) != 8 || (offsetof(DivaLinuxOverlayFrame, hwnd) == 8 && offsetof(DivaLinuxOverlayFrame, sbs) == 24
     && offsetof(DivaLinuxOverlayFrame, pixels) == 40 && offsetof(DivaLinuxOverlayFrame, serial) == 60
-    && offsetof(DivaLinuxOverlayFrame, cursor_drawn) == 64 && sizeof(DivaLinuxOverlayFrame) == 72),
+    && offsetof(DivaLinuxOverlayFrame, cursor_drawn) == 64 && offsetof(DivaLinuxOverlayFrame, mouse_scale_y) == 80
+    && sizeof(DivaLinuxOverlayFrame) == 88),
     "DivaLinuxOverlayFrame layout changed");

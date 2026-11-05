@@ -642,14 +642,15 @@ PluginConfig::PluginConfigOption config[] = {
         }
     },
     {
-        PluginConfig::CONFIG_BOOLEAN,
-        new PluginConfig::PluginConfigBooleanData {
-            L"crosshair",
+        PluginConfig::CONFIG_DROPDOWN_INDEX,
+        new PluginConfig::PluginConfigDropdownIndexData {
+            L"pointer",
             L"cursor",
             CONFIG_FILE,
-            L"Mouse Crosshair",
-            L"Hide the Windows cursor over the game and draw a crosshair into the picture instead, where the\ngame sees the mouse. In side-by-side 3D it shows in both eyes, so you can tell where the mouse\nis in the game. It fades out when the mouse is left alone.",
-            true,
+            L"Mouse Pointer",
+            L"Draw the mouse pointer into the picture, where the game sees the mouse, instead of showing the\nWindows cursor. In side-by-side 3D it's in the right place in both eyes. It pulses gently and\nfades out when the mouse is left alone.",
+            1,
+            { L"Windows Cursor", L"Leek", L"Crosshair" },
         }
     },
     {
@@ -658,8 +659,8 @@ PluginConfig::PluginConfigOption config[] = {
             L"hide_after",
             L"cursor",
             CONFIG_FILE,
-            L"Crosshair Fades After (s)",
-            L"Seconds without mouse movement or clicks before the crosshair fades out. 0 = always shown.",
+            L"Pointer Fades After (s)",
+            L"Seconds without mouse movement or clicks before the pointer fades out. 0 = always shown.",
             2,
             0,
             60,
@@ -671,8 +672,8 @@ PluginConfig::PluginConfigOption config[] = {
             L"size",
             L"cursor",
             CONFIG_FILE,
-            L"Crosshair Size (%)",
-            L"Crosshair size in percent. 100 is about 3% of the picture's height across.",
+            L"Pointer Size (%)",
+            L"Pointer size in percent. At 100 the leek is about 4% of the picture's height long.",
             100,
             25,
             400,

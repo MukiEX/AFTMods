@@ -1050,7 +1050,9 @@ namespace {
         uint32_t serial = 0;
         int cw = 0, ch = 0;         // canvas (menu picture) size
         int lay_w = 0, lay_h = 0, sbs = 0, win_w = 0, win_h = 0; // latest frame, for mouse positions
-        bool native_cursor = false; // DivaLinux draws a crosshair for the mouse: no Windows cursor
+        bool native_cursor = false; // DivaLinux draws the mouse pointer: no Windows cursor
+        bool mouse_map = false;     // DivaLinux says where the game sees the mouse (version 3)
+        float mouse_ox = 0, mouse_oy = 0, mouse_sx = 1, mouse_sy = 1;
         LARGE_INTEGER qpc_freq = {}, qpc_last = {};
         Paths paths;
     };
@@ -1178,10 +1180,14 @@ namespace {
         }
     }
 
-    // The mouse's position across the whole window, mapped onto the menu picture: the same
-    // mapping the game uses, and the spot DivaLinux's crosshair shows. In side-by-side 3D that's
-    // the same place in both eyes, wherever the real cursor is.
+    // Where the game sees the mouse, on the menu picture: DivaLinux's mapping (the game's
+    // picture's area of the window, which in side-by-side 3D is where the drawn pointer is in
+    // both eyes), or the whole window onto the whole picture with an older DivaLinux.
     ImVec2 overlay_map_mouse(int x, int y) {
+        if (g_ov.mouse_map) {
+            float lx = (x + 0.5f - g_ov.mouse_ox) * g_ov.mouse_sx, ly = (y + 0.5f - g_ov.mouse_oy) * g_ov.mouse_sy;
+            return ImVec2(lx * g_ov.cw / (float)std::max(g_ov.lay_w, 1), ly * g_ov.ch / (float)std::max(g_ov.lay_h, 1));
+        }
         float ww = (float)std::max(g_ov.win_w, 1), wh = (float)std::max(g_ov.win_h, 1);
         return ImVec2((x + 0.5f) * g_ov.cw / ww, (y + 0.5f) * g_ov.ch / wh);
     }
@@ -1288,6 +1294,13 @@ namespace {
         if (!f || f->version < 1)
             return;
         g_ov.native_cursor = f->version >= 2 && f->cursor_drawn != 0;
+        g_ov.mouse_map = f->version >= 3 && f->mouse_scale_x > 0.0f && f->mouse_scale_y > 0.0f;
+        if (g_ov.mouse_map) {
+            g_ov.mouse_ox = f->mouse_offset_x;
+            g_ov.mouse_oy = f->mouse_offset_y;
+            g_ov.mouse_sx = f->mouse_scale_x;
+            g_ov.mouse_sy = f->mouse_scale_y;
+        }
         if (!g_ov.hwnd && f->hwnd) {
             g_ov.hwnd = f->hwnd;
             g_ov.game_proc = (WNDPROC)SetWindowLongPtrW(f->hwnd, GWLP_WNDPROC, (LONG_PTR)&overlay_wnd_proc);

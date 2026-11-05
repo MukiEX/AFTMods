@@ -41,7 +41,7 @@ How the movie player is swapped in:
 4. DivaGL's movie task normally switches to a Direct3D 11 copy path when a player's texture isn't ready yet. DivaLinux recognises its own players and keeps them on the GL path.
 5. Movie audio is optional (`[movie] movie_audio=1`). It's resampled with `swresample` and played through `waveOut`, and its playback position drives the video timing. It never plays during songs, where the video follows the song's own audio.
 
-DivaLinux also replaces the mouse cursor with a crosshair drawn into the picture (`[cursor]` in `DivaLinux.ini`). It shows where the game sees the mouse, so in side-by-side 3D it's in the right place in both eyes, and it fades out when the mouse isn't in use.
+DivaLinux also replaces the mouse cursor with a pointer drawn into the picture, a leek or a crosshair (`[cursor]` in `DivaLinux.ini`). It shows where the game sees the mouse, so in side-by-side 3D it's in the right place in both eyes and clicks land under it, and it fades out when the mouse isn't in use.
 
 DivaLinux also speeds up loading under Wine. It answers the game's many file lookups from folder listings it makes once, instead of asking Wine every time. It can also read `rom.zip` and `mdata\<pack>.zip` (uncompressed, made with `tools/divalinux_pack.py`) in place of those folders, so a copy of the game is a few dozen files instead of tens of thousands.
 

@@ -9,12 +9,13 @@
 // The ABI is plain C so the launcher, built with MinGW, and DivaLinux, built with MSVC, can
 // share it; LauncherFS/src/overlay_abi.hpp mirrors this declaration.
 //
-// Also here: the mouse crosshair ([cursor] crosshair=1). The Windows cursor is hidden over the
-// game window and a crosshair is drawn into the frame instead, at the point the game itself
-// sees the mouse at. In side-by-side 3D the game gets the mouse's position over the whole
-// window while its picture is squeezed into each half, so the real cursor is in the wrong place
-// for both eyes; the crosshair shows the game's idea of it, in both eyes, on the screen plane.
-// It pulses gently and fades out when the mouse is left alone.
+// Also here: the mouse pointer ([cursor] pointer, a leek by default, or a crosshair). The
+// Windows cursor is hidden over the game window and the pointer is drawn into the frame
+// instead, where the game itself sees the mouse. In side-by-side 3D the game reads the mouse
+// against its 16:9 picture's area of the window, while each eye shows that picture in its own
+// half, so the real cursor is in the wrong place for both eyes; the drawn pointer is in the
+// right place in both, on the screen plane. It pulses gently and fades out when the mouse is
+// left alone.
 
 #include <windows.h>
 #include <stdint.h>
@@ -27,7 +28,7 @@
 #include "overlay_gl.h"
 #include "../DivaGL/static_var.hpp"
 
-#define DIVALINUX_OVERLAY_VERSION 2
+#define DIVALINUX_OVERLAY_VERSION 3
 
 extern "C" {
     typedef struct DivaLinuxOverlayFrame {
@@ -42,7 +43,11 @@ extern "C" {
         int32_t image_width, image_height, image_stride; // stride in pixels
         uint32_t serial;         // changes whenever the pixels do
         // Version 2, filled in by DivaLinux:
-        int32_t cursor_drawn;    // DivaLinux draws the mouse crosshair: leave the Windows cursor hidden
+        int32_t cursor_drawn;    // DivaLinux draws the mouse pointer: leave the Windows cursor hidden
+        // Version 3: where the game sees the mouse, in the menu's layout pixels:
+        //   layout = (window position - mouse_offset) * mouse_scale
+        float mouse_offset_x, mouse_offset_y;
+        float mouse_scale_x, mouse_scale_y;
         int32_t reserved;
     } DivaLinuxOverlayFrame;
 
@@ -52,7 +57,8 @@ extern "C" {
 // Same layout on both sides (MinGW launcher, MSVC DivaLinux); x64.
 static_assert(sizeof(void*) != 8 || (offsetof(DivaLinuxOverlayFrame, hwnd) == 8 && offsetof(DivaLinuxOverlayFrame, sbs) == 24
     && offsetof(DivaLinuxOverlayFrame, pixels) == 40 && offsetof(DivaLinuxOverlayFrame, serial) == 60
-    && offsetof(DivaLinuxOverlayFrame, cursor_drawn) == 64 && sizeof(DivaLinuxOverlayFrame) == 72),
+    && offsetof(DivaLinuxOverlayFrame, cursor_drawn) == 64 && offsetof(DivaLinuxOverlayFrame, mouse_scale_y) == 80
+    && sizeof(DivaLinuxOverlayFrame) == 88),
     "DivaLinuxOverlayFrame layout changed");
 
 extern "C" void divavk_log_text(const char* text); // DivaLinux.log (vk_bridge.cpp)
@@ -75,43 +81,84 @@ extern "C" __declspec(dllexport) int32_t __cdecl DivaLinux_SetOverlay(DivaLinuxO
     return DIVALINUX_OVERLAY_VERSION;
 }
 
-// Where each copy of the menu goes, in GL's coordinates (origin bottom left). Matches how
-// stereo_eye_end places each eye's picture: half SBS squeezes it into its half; full SBS keeps
-// the picture's shape inside its half.
-static int overlay_rects(int32_t fb_w, int32_t fb_h, int32_t mode, OverlayGL::Rect rects[2], int32_t& lay_w, int32_t& lay_h) {
-    if (mode != 1 && mode != 2) {
-        rects[0] = { 0, 0, fb_w, fb_h };
-        lay_w = fb_w;
-        lay_h = fb_h;
-        return 1;
+// The game's own picture inside a w x h screen: 16:9 (stereo_content_aspect), centred, with
+// bars on screens of any other shape. Stereo takes just this part into each eye
+// (stereo_eye_end), and the game reads the mouse against it.
+static void content_rect(int32_t w, int32_t h, int32_t& x, int32_t& y, int32_t& cw, int32_t& ch) {
+    x = 0; y = 0; cw = w; ch = h;
+    if (sv_stereo_content_aspect <= 0 || w <= 0 || h <= 0)
+        return;
+    const double aspect = sv_stereo_content_aspect / 1000.0;
+    if ((double)w / h > aspect + 0.01) {
+        cw = (int32_t)(h * aspect + 0.5);
+        x = (w - cw) / 2;
     }
-    const int32_t half = fb_w / 2;
-    int32_t w = half, h = fb_h, y = 0, xoff = 0;
-    if (mode == 2) {
-        double aspect = sv_stereo_content_aspect > 0 ? sv_stereo_content_aspect / 1000.0 : (double)fb_w / fb_h;
-        if ((double)half / fb_h > aspect) {
-            w = (int32_t)(fb_h * aspect + 0.5);
-            xoff = (half - w) / 2;
-        }
-        else {
-            h = (int32_t)(half / aspect + 0.5);
-            y = (fb_h - h) / 2;
-        }
-        lay_w = w;
-        lay_h = h;
+    else if ((double)w / h < aspect - 0.01) {
+        ch = (int32_t)(w / aspect + 0.5);
+        y = (h - ch) / 2;
     }
-    else {
-        lay_w = fb_w;  // laid out for the whole screen, then squeezed like the game's picture
-        lay_h = fb_h;
-    }
-    rects[0] = { xoff, y, w, h };
-    rects[1] = { fb_w - half + xoff, y, w, h };
-    return 2;
 }
 
-// ---------------------------------------------------------------- mouse crosshair
+struct Layout {
+    OverlayGL::Rect rects[2]; // where the picture goes, in GL's coordinates (origin bottom left)
+    int n = 1;
+    int32_t lay_w = 0, lay_h = 0;  // the picture's own size, to lay the menu out for
+    // window position -> picture position (where the game sees the mouse)
+    float mouse_ox = 0, mouse_oy = 0, mouse_sx = 1, mouse_sy = 1;
+};
 
-static bool g_cursor_on = false;
+// Flat: the menu covers the whole screen, and the mouse is where it is. Side by side: each
+// eye shows the game's picture (content_rect) the way stereo_eye_end puts it there (squeezed
+// into its half in half SBS, fitted with its shape in full SBS); the menu is laid out for
+// that picture, and the mouse maps from the same picture's area of the window, which is how
+// the game reads it.
+static Layout make_layout(int32_t fb_w, int32_t fb_h, int32_t mode, int32_t win_w, int32_t win_h) {
+    Layout L;
+    if (win_w <= 0 || win_h <= 0) {
+        win_w = fb_w;
+        win_h = fb_h;
+    }
+    if (mode != 1 && mode != 2) {
+        L.rects[0] = { 0, 0, fb_w, fb_h };
+        L.lay_w = fb_w;
+        L.lay_h = fb_h;
+        L.mouse_sx = (float)fb_w / win_w;
+        L.mouse_sy = (float)fb_h / win_h;
+        return L;
+    }
+    int32_t sx, sy, sw, sh;
+    content_rect(fb_w, fb_h, sx, sy, sw, sh);
+    L.lay_w = sw;
+    L.lay_h = sh;
+    const int32_t half = fb_w / 2;
+    int32_t dx = 0, dy = 0, dw = half, dh = fb_h;
+    if (mode == 2) {
+        const double src_aspect = (double)sw / sh;
+        if ((double)half / fb_h > src_aspect) {
+            dw = (int32_t)(fb_h * src_aspect + 0.5);
+            dx = (half - dw) / 2;
+        }
+        else {
+            dh = (int32_t)(half / src_aspect + 0.5);
+            dy = (fb_h - dh) / 2;
+        }
+    }
+    L.rects[0] = { dx, dy, dw, dh };
+    L.rects[1] = { fb_w - half + dx, dy, dw, dh };
+    L.n = 2;
+    int32_t wx, wy, ww, wh;
+    content_rect(win_w, win_h, wx, wy, ww, wh);
+    L.mouse_ox = (float)wx;
+    L.mouse_oy = (float)wy;
+    L.mouse_sx = (float)sw / ww;
+    L.mouse_sy = (float)sh / wh;
+    return L;
+}
+
+// ---------------------------------------------------------------- mouse pointer
+
+static bool g_cursor_on = false;          // DivaLinux draws the pointer (Windows cursor hidden)
+static int g_pointer_kind = OverlayGL::POINTER_LEEK;
 static float g_cursor_hide_after = 2.0f;  // seconds without mouse activity before it fades
 static float g_cursor_size = 1.0f;
 static float g_cursor_rgb[3] = { 0x39 / 255.0f, 0xC5 / 255.0f, 0xBB / 255.0f };
@@ -138,7 +185,7 @@ static double now_seconds() {
     return (double)t.QuadPart / (double)freq.QuadPart;
 }
 
-// The Windows cursor stays hidden over the game's picture (the crosshair replaces it).
+// The Windows cursor stays hidden over the game's window (the drawn pointer replaces it).
 static LRESULT CALLBACK cursor_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_SETCURSOR && LOWORD(lp) == HTCLIENT && g_cursor_on) {
         SetCursor(nullptr);
@@ -150,15 +197,19 @@ static LRESULT CALLBACK cursor_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
     return r;
 }
 
+// [cursor] pointer: 0 = the Windows cursor, 1 = leek (default), 2 = crosshair
 extern "C" void divalinux_cursor_install(const wchar_t* config_file) {
-    g_cursor_on = GetPrivateProfileIntW(L"cursor", L"crosshair", 1, config_file) > 0;
+    int pointer = (int)GetPrivateProfileIntW(L"cursor", L"pointer", 1, config_file);
+    g_cursor_on = pointer == 1 || pointer == 2;
+    g_pointer_kind = pointer == 2 ? OverlayGL::POINTER_CROSSHAIR : OverlayGL::POINTER_LEEK;
     g_cursor_hide_after = (float)GetPrivateProfileIntW(L"cursor", L"hide_after", 2, config_file);
     int size = (int)GetPrivateProfileIntW(L"cursor", L"size", 100, config_file);
     g_cursor_size = (size < 25 ? 25 : size > 400 ? 400 : size) / 100.0f;
     wchar_t col[16] = {};
     GetPrivateProfileStringW(L"cursor", L"color", L"39C5BB", col, 16, config_file);
-    unsigned long rgb = wcstoul(col[0] == L'#' ? col + 1 : col, nullptr, 16);
-    if (wcslen(col) >= 6) {
+    const wchar_t* hex = col[0] == L'#' ? col + 1 : col;
+    if (wcslen(hex) >= 6) {
+        unsigned long rgb = wcstoul(hex, nullptr, 16);
         g_cursor_rgb[0] = ((rgb >> 16) & 0xFF) / 255.0f;
         g_cursor_rgb[1] = ((rgb >> 8) & 0xFF) / 255.0f;
         g_cursor_rgb[2] = (rgb & 0xFF) / 255.0f;
@@ -170,12 +221,13 @@ static void cursor_attach(HWND hwnd) {
         return;
     g_cursor_hwnd = hwnd;
     g_cursor_prev_proc = (WNDPROC)SetWindowLongPtrW(hwnd, GWLP_WNDPROC, (LONG_PTR)&cursor_wnd_proc);
-    divavk_log_text("Mouse crosshair on: the Windows cursor is hidden over the game ([cursor] crosshair=0 turns this off)");
+    divavk_log_text(g_pointer_kind == OverlayGL::POINTER_LEEK
+        ? "Mouse pointer: leek, drawn into the picture ([cursor] pointer=0 brings back the Windows cursor)"
+        : "Mouse pointer: crosshair, drawn into the picture ([cursor] pointer=0 brings back the Windows cursor)");
 }
 
-// Updates the crosshair from the mouse and draws it. lay_w x lay_h is the picture's size (as
-// for the menu), rects where it's shown.
-static void cursor_frame(HWND hwnd, const OverlayGL::Rect* rects, int n, int32_t lay_w, int32_t lay_h) {
+// Updates the pointer from the mouse and draws it where the game sees the mouse.
+static void cursor_frame(HWND hwnd, const Layout& L) {
     if (!g_cursor_on || !hwnd || g_compositor.Failed())
         return;
     cursor_attach(hwnd);
@@ -185,13 +237,16 @@ static void cursor_frame(HWND hwnd, const OverlayGL::Rect* rects, int n, int32_t
     g_cs.last_time = now;
 
     RECT rc;
-    POINT p;
+    POINT p = {};
     bool inside = false;
-    int32_t ww = 0, wh = 0;
+    float lx = 0, ly = 0;
     if (GetClientRect(hwnd, &rc) && GetCursorPos(&p) && ScreenToClient(hwnd, &p)) {
-        ww = rc.right - rc.left;
-        wh = rc.bottom - rc.top;
-        inside = ww > 0 && wh > 0 && p.x >= 0 && p.y >= 0 && p.x < ww && p.y < wh && GetForegroundWindow() == hwnd;
+        const int32_t ww = rc.right - rc.left, wh = rc.bottom - rc.top;
+        lx = (p.x + 0.5f - L.mouse_ox) * L.mouse_sx;
+        ly = (p.y + 0.5f - L.mouse_oy) * L.mouse_sy;
+        inside = ww > 0 && wh > 0 && p.x >= 0 && p.y >= 0 && p.x < ww && p.y < wh
+            && lx >= 0 && ly >= 0 && lx < L.lay_w && ly < L.lay_h  // not in the bars beside the picture
+            && GetForegroundWindow() == hwnd;
     }
     if (inside) {
         if (p.x != g_cs.last_pos.x || p.y != g_cs.last_pos.y) {
@@ -208,37 +263,42 @@ static void cursor_frame(HWND hwnd, const OverlayGL::Rect* rects, int n, int32_t
     }
 
     // Shown while the mouse is in use; fades out over 0.6 s after hide_after seconds idle
-    // (0 = never), and quickly when the mouse leaves the window.
+    // (0 = never), and quickly when the mouse leaves the picture.
     const bool active = inside && (g_cursor_hide_after <= 0.0f || now - g_cs.last_active < g_cursor_hide_after);
     if (active)
         g_cs.alpha = g_cs.alpha + (1.0f - g_cs.alpha) * (dt * 14.0f > 1.0f ? 1.0f : dt * 14.0f);
     else
         g_cs.alpha -= dt / (inside ? 0.6f : 0.15f);
     g_cs.alpha = g_cs.alpha < 0.0f ? 0.0f : g_cs.alpha > 1.0f ? 1.0f : g_cs.alpha;
-    if (g_cs.alpha <= 0.003f || ww <= 0 || wh <= 0)
+    if (g_cs.alpha <= 0.003f || L.lay_w <= 0 || L.lay_h <= 0)
         return;
 
-    // Where the game sees the mouse: its position across the whole window, mapped onto the
-    // picture (in SBS, the same spot in each eye).
     const float pulse = 0.5f + 0.5f * (float)sin(now * 6.2831853 / 1.6);
+    const float unit = L.lay_h / 1080.0f * g_cursor_size;  // sizes are for a 1080-line picture
     OverlayGL::Crosshair c = {};
-    c.layWidth = (float)lay_w;
-    c.layHeight = (float)lay_h;
-    c.x = (p.x + 0.5f) * lay_w / ww;
-    c.y = (p.y + 0.5f) * lay_h / wh;
-    c.radius = 14.0f * (lay_h / 1080.0f) * g_cursor_size * (0.97f + 0.06f * pulse);
-    if (c.radius < 6.0f)
-        c.radius = 6.0f;
+    c.kind = g_pointer_kind;
+    c.layWidth = (float)L.lay_w;
+    c.layHeight = (float)L.lay_h;
+    c.x = lx;
+    c.y = ly;
+    if (g_pointer_kind == OverlayGL::POINTER_LEEK) {
+        c.radius = 46.0f * unit * (0.985f + 0.03f * pulse);
+        c.radius = c.radius < 16.0f ? 16.0f : c.radius;
+    }
+    else {
+        c.radius = 18.0f * unit * (0.97f + 0.06f * pulse);
+        c.radius = c.radius < 6.0f ? 6.0f : c.radius;
+    }
     c.alpha = g_cs.alpha;
-    c.glow = 0.18f + 0.16f * pulse;
+    c.glow = 0.16f + 0.16f * pulse;
     const double since_click = now - g_cs.click_time;
     c.ripple = since_click >= 0.0 && since_click < 0.35 ? (float)(since_click / 0.35) : -1.0f;
     c.r = g_cursor_rgb[0];
     c.g = g_cursor_rgb[1];
     c.b = g_cursor_rgb[2];
-    if (!g_compositor.DrawCrosshair(c, rects, n) && !g_cursor_failed_logged) {
+    if (!g_compositor.DrawCrosshair(c, L.rects, L.n) && !g_cursor_failed_logged) {
         g_cursor_failed_logged = true;
-        overlay_log("Mouse crosshair can't be drawn: %s", g_compositor.error.c_str());
+        overlay_log("Mouse pointer can't be drawn: %s", g_compositor.error.c_str());
     }
 }
 
@@ -252,31 +312,41 @@ extern "C" void divalinux_overlay_before_swap(HWND hwnd) {
     if (fb_w <= 0 || fb_h <= 0)
         return;
 
-    OverlayGL::Rect rects[2];
-    DivaLinuxOverlayFrame f = {};
-    f.version = DIVALINUX_OVERLAY_VERSION;
-    f.hwnd = hwnd;
-    f.sbs = (sv_stereo_mode == 1 || sv_stereo_mode == 2) ? sv_stereo_mode : 0;
-    f.cursor_drawn = g_cursor_on ? 1 : 0;
-    int n = overlay_rects(fb_w, fb_h, f.sbs, rects, f.width, f.height);
+    int32_t win_w = 0, win_h = 0;
     RECT rc;
     if (hwnd && GetClientRect(hwnd, &rc)) {
-        f.window_width = rc.right - rc.left;
-        f.window_height = rc.bottom - rc.top;
+        win_w = rc.right - rc.left;
+        win_h = rc.bottom - rc.top;
     }
-    // The crosshair's window hook goes in before the launcher's, so the launcher's sits on
-    // top and passes the cursor through to it.
+    const int32_t sbs = (sv_stereo_mode == 1 || sv_stereo_mode == 2) ? sv_stereo_mode : 0;
+    const Layout L = make_layout(fb_w, fb_h, sbs, win_w, win_h);
+
+    // The pointer's window hook goes in before the launcher's, so the launcher's sits on top
+    // and passes the cursor through to it.
     cursor_attach(hwnd);
     if (fn) {
+        DivaLinuxOverlayFrame f = {};
+        f.version = DIVALINUX_OVERLAY_VERSION;
+        f.hwnd = hwnd;
+        f.sbs = sbs;
+        f.width = L.lay_w;
+        f.height = L.lay_h;
+        f.window_width = win_w;
+        f.window_height = win_h;
+        f.cursor_drawn = g_cursor_on ? 1 : 0;
+        f.mouse_offset_x = L.mouse_ox;
+        f.mouse_offset_y = L.mouse_oy;
+        f.mouse_scale_x = L.mouse_sx;
+        f.mouse_scale_y = L.mouse_sy;
         fn(&f);
         if (f.pixels && f.image_width > 0 && f.image_height > 0) {
             OverlayGL::Image img = { f.pixels, f.image_width, f.image_height,
                 f.image_stride > 0 ? f.image_stride : f.image_width, f.serial };
-            if (!g_compositor.Draw(img, rects, n) && !g_failed_logged) {
+            if (!g_compositor.Draw(img, L.rects, L.n) && !g_failed_logged) {
                 g_failed_logged = true;
                 overlay_log("In-game overlay can't be drawn: %s", g_compositor.error.c_str());
             }
         }
     }
-    cursor_frame(hwnd, rects, n, f.width, f.height); // over the menu too
+    cursor_frame(hwnd, L); // over the menu too
 }
