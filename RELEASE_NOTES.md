@@ -1,8 +1,24 @@
-# MukiEX's AFTMods fork: first alpha
+# MukiEX's AFTMods fork: 0.1.1
 
 Builds on korenkonder's AFTMods (DivaGL 0.11.0.0) for Hatsune Miku: Project DIVA Arcade
-Future Tone 7.10 under PD Loader. Alpha means it has been played on a handful of setups
-(Windows with AMD, Steam Deck with Proton, Quest 3 with WinlatorXR) and nowhere else yet.
+Future Tone 7.10 under PD Loader. It has been played on a handful of setups (Windows with AMD,
+Steam Deck with Proton, Quest 3 with WinlatorXR) and nowhere else yet.
+
+## New in 0.1.1
+
+- **Movies play from zip archives.** With `rom.zip` or `mdata\<pack>.zip` in place of the
+  folders, PV and attract movies inside them failed to open ("No such file or directory" in
+  `DivaLinux.log`), because FFmpeg opened movie files itself and didn't see the archives.
+  It now reads them through DivaLinux's file layer, so movies inside the zips play and can
+  seek.
+- **A movie that won't open no longer hangs the song.** The game waits for a movie it asked
+  for to become ready; when one failed, the song froze on its loading screen forever. A movie
+  that can't be opened is now logged and played as an empty one, and the song carries on.
+- **One package for Windows and Wine.** DivaLinux.dva runs fine on Windows too (with DivaGL.dva
+  and DivaMovie.dva removed), so the plain-OpenGL DivaGL.dva is no longer released, and the
+  separate Windows and Linux zips are now a single `AFTMods-<version>.zip`. If you used the
+  Windows package, replace `plugins\DivaGL.dva` with `plugins\DivaLinux.dva`; its settings go
+  in `plugins\DivaLinux.ini`, created from your `DivaGL.ini` on first run.
 
 ## What's in it
 
