@@ -31,3 +31,4 @@ extern int32_t sv_stereo_hud_parallax;
 extern int32_t sv_stereo_content_aspect;
 extern bool sv_stereo_bg_infinity;
 extern bool sv_stereo_shadow_once;
+extern int32_t sv_stereo_max_parallax;

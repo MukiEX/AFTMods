@@ -158,6 +158,8 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
             L"stereo_bg_infinity", 1, CONFIG_FILE) > 0 ? true : false;
         sv_stereo_shadow_once = GetPrivateProfileIntW(L"stereo",
             L"stereo_shadow_once", 1, CONFIG_FILE) > 0 ? true : false;
+        sv_stereo_max_parallax = clamp_def((int32_t)GetPrivateProfileIntW(L"stereo",
+            L"stereo_max_parallax", 20, CONFIG_FILE), 0, 200);
         sv_stereo_content_aspect = clamp_def((int32_t)GetPrivateProfileIntW(L"stereo",
             L"stereo_content_aspect", 1778, CONFIG_FILE), 0, 10000);
 
@@ -277,6 +279,11 @@ extern "C" __declspec(dllexport) BOOL SetOption(const char* str) {
         if (parse_bool(val, val_len, value))
             sv_stereo_bg_infinity = !!value;
     }
+    else if (!strncmp(name, "stereo_max_parallax", name_len)) {
+        int32_t value = 0;
+        if (parse_int(val, value))
+            sv_stereo_max_parallax = clamp_def(value, 0, 200);
+    }
     else if (!strncmp(name, "stereo_shadow_once", name_len)) {
         int32_t value = 0;
         if (parse_bool(val, val_len, value))
@@ -316,6 +323,8 @@ extern "C" __declspec(dllexport) BOOL SetOptionInt(const char* name, int value) 
         sv_stereo_hud_parallax = clamp_def(value, -50, 50);
     else if (!strcmp(name, "stereo_bg_infinity"))
         sv_stereo_bg_infinity = !!value;
+    else if (!strcmp(name, "stereo_max_parallax"))
+        sv_stereo_max_parallax = clamp_def(value, 0, 200);
     else if (!strcmp(name, "stereo_shadow_once"))
         sv_stereo_shadow_once = !!value;
     else if (!strcmp(name, "stereo_content_aspect"))
@@ -469,10 +478,23 @@ PluginConfig::PluginConfigOption config[] = {
             L"stereo",
             CONFIG_FILE,
             L"Convergence Distance (cm)",
-            L"Distance that appears on the screen plane. Closer things pop out, farther things recede.\n0 = automatic (the point the PV camera is looking at, usually the singer).",
+            L"Distance that appears on the screen plane. Closer things pop out, farther things recede.\n0 = automatic: the character the shot is framing (or the camera's aim point if none is in view).",
             0,
             0,
             100000,
+        }
+    },
+    {
+        PluginConfig::CONFIG_NUMERIC,
+        new PluginConfig::PluginConfigNumericData {
+            L"stereo_max_parallax",
+            L"stereo",
+            CONFIG_FILE,
+            L"Max Depth Difference",
+            L"The most the two eyes' pictures may differ, in 0.1% of the picture width (20 = 2%). Zoomed-in\nshots get less eye separation so nothing splits into a double image. 0 = no limit.",
+            20,
+            0,
+            200,
         }
     },
     {

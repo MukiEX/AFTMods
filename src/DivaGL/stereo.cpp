@@ -19,6 +19,7 @@
 #include "render_texture.hpp"
 #include "shared.hpp"
 #include "static_var.hpp"
+#include "../AFTModsShared/rob/rob.hpp"
 
 extern render_context* rctx;
 
@@ -32,8 +33,11 @@ static int32_t stereo_buffer_height = 0;
 static int32_t stereo_current_eye = 0;
 
 // Updated once per frame from the center camera
-static float_t stereo_half_sep = 0.0f;     // half the eye separation, world units
+static float_t stereo_half_sep = 0.0f;     // half the eye separation in use, world units
 static float_t stereo_conv_dist = 1.0f;    // convergence (zero parallax) distance, world units
+static float_t stereo_conv_smoothed = 0.0f; // auto convergence, eased between frames (0 = none yet)
+static vec3 stereo_last_view_point = 0.0f;
+static vec3 stereo_last_interest = 0.0f;
 
 bool stereo_enabled() {
     return sv_stereo_mode > STEREO_MODE_OFF && sv_stereo_mode < STEREO_MODE_MAX;
@@ -48,29 +52,109 @@ bool stereo_reuse_shadow_maps() {
     return sv_stereo_shadow_once && stereo_current_eye > 0;
 }
 
+// Depths (along the view axis) of the visible characters in front of the camera. Returns
+// the one nearest the middle of the picture (the one the shot is framing) in *framed and the
+// nearest one in *nearest; false if none is in view.
+static bool stereo_chara_depths(const cam_data& center, const vec3& forward, const vec3& right,
+    const vec3& up, float_t min_depth, float_t* framed, float_t* nearest) {
+    const float_t tan_y = tanf(center.fov * 0.5f);
+    const float_t tan_x = tan_y * center.aspect;
+    size_t rob_chara_smth = get_rob_chara_smth();
+    float_t best = 1e30f;
+    bool found = false;
+    *nearest = 1e30f;
+    for (int32_t i = 0; i < ROB_CHARA_COUNT; i++) {
+        if (!rob_chara_pv_data_array_check_chara_id(rob_chara_smth, i)
+            || !rob_chara_array_check_visibility(rob_chara_smth, i))
+            continue;
+        const mat4* mat = rob_chara_bone_data_get_mats_mat(rob_chara_array_get_bone_data(rob_chara_smth, i), 0);
+        if (!mat)
+            continue;
+        mat4 temp;
+        mat4_transpose(mat, &temp);
+        vec3 pos;
+        mat4_get_translation(&temp, &pos);
+        // The root bone is at the hips; the face and chest are what the eye goes to.
+        pos = pos + up * 0.35f;
+        const vec3 rel = pos - center.view_point;
+        const float_t depth = vec3::dot(rel, forward);
+        if (depth < min_depth)
+            continue;
+        // How far off the middle of the picture, as a fraction of the half-width/height
+        const float_t off_x = fabsf(vec3::dot(rel, right)) / (depth * tan_x);
+        const float_t off_y = fabsf(vec3::dot(rel, up)) / (depth * tan_y);
+        if (off_x > 1.2f || off_y > 1.2f)
+            continue; // out of the shot
+        const float_t off = off_x * off_x + off_y * off_y;
+        if (off < best) {
+            best = off;
+            *framed = depth;
+        }
+        *nearest = min_def(*nearest, depth);
+        found = true;
+    }
+    return found;
+}
+
 void stereo_update_camera(const cam_data& center) {
     if (!stereo_enabled()) {
         stereo_half_sep = 0.0f;
+        stereo_conv_smoothed = 0.0f;
         return;
     }
 
-    stereo_half_sep = (float_t)sv_stereo_separation * 0.001f * 0.5f;
-
-    float_t conv;
-    if (sv_stereo_convergence > 0)
-        conv = (float_t)sv_stereo_convergence * 0.01f;
-    else {
-        // Auto: converge on the camera's interest point. PV cameras almost always
-        // aim at the singer, which puts her on the screen plane.
-        const mat4& view = center.view_mat;
-        const vec3 forward = -vec3(view.row0.z, view.row1.z, view.row2.z);
-        conv = vec3::dot(center.interest - center.view_point, forward);
-    }
+    const mat4& view = center.view_mat;
+    const vec3 forward = -vec3(view.row0.z, view.row1.z, view.row2.z);
+    const vec3 right(view.row0.x, view.row1.x, view.row2.x);
+    const vec3 up(view.row0.y, view.row1.y, view.row2.y);
 
     // Keep the convergence plane sane: never closer than the near plane or 10 cm,
     // never so far that the stereo shift vanishes.
     const float_t min_conv = max_def(center.min_distance * 2.0f, 0.1f);
+
+    float_t nearest_chara = 1e30f;
+    float_t conv;
+    if (sv_stereo_convergence > 0)
+        conv = (float_t)sv_stereo_convergence * 0.01f;
+    else {
+        // Auto: converge on the character the shot is framing, which puts the singer on the
+        // screen plane even when the camera aims past her (at the stage, a dancer behind, the
+        // sky). Without a character in view, the camera's interest point.
+        float_t framed = 0.0f;
+        if (stereo_chara_depths(center, forward, right, up, min_conv, &framed, &nearest_chara))
+            conv = framed;
+        else
+            conv = vec3::dot(center.interest - center.view_point, forward);
+        conv = clamp_def(conv, min_conv, 1000.0f);
+
+        // Ease between frames so a character walking towards the camera doesn't make the
+        // depth twitch, but follow a camera cut (or a big jump) at once.
+        const bool cut = vec3::distance(center.view_point, stereo_last_view_point) > 0.5f
+            || vec3::distance(center.interest, stereo_last_interest) > 1.0f;
+        if (stereo_conv_smoothed <= 0.0f || cut || fabsf(conv / stereo_conv_smoothed - 1.0f) > 0.5f)
+            stereo_conv_smoothed = conv;
+        else
+            stereo_conv_smoothed += (conv - stereo_conv_smoothed) * 0.15f;
+        conv = stereo_conv_smoothed;
+        stereo_last_view_point = center.view_point;
+        stereo_last_interest = center.interest;
+    }
     stereo_conv_dist = clamp_def(conv, min_conv, 1000.0f);
+
+    // Separation, limited so the two pictures never drift too far apart on screen. The
+    // on-screen offset of a point at depth z, as a fraction of the picture's width, is
+    // half_sep * p00 * |1/z - 1/conv|: zoomed-in shots (large p00) and a far convergence
+    // plane make the background split; a character well in front of it splits the other way.
+    float_t half_sep = (float_t)sv_stereo_separation * 0.001f * 0.5f;
+    if (sv_stereo_max_parallax > 0) {
+        const float_t p00 = 1.0f / (center.aspect * tanf(center.fov * 0.5f));
+        const float_t limit = (float_t)sv_stereo_max_parallax * 0.001f;
+        float_t worst = 1.0f / stereo_conv_dist;                       // the background (infinity)
+        if (nearest_chara < stereo_conv_dist)
+            worst = max_def(worst, 1.0f / nearest_chara - 1.0f / stereo_conv_dist);
+        half_sep = min_def(half_sep, limit / (p00 * worst));
+    }
+    stereo_half_sep = half_sep;
 }
 
 float_t stereo_cull_margin(float_t depth) {

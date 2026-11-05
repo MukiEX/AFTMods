@@ -28,4 +28,5 @@ bool sv_stereo_swap_eyes = false;    // Right eye on the left (cross-eyed viewin
 int32_t sv_stereo_hud_parallax = 0;  // HUD parallax, 0.1% of image width (+ = behind screen)
 bool sv_stereo_bg_infinity = true;
 bool sv_stereo_shadow_once = true;
+int32_t sv_stereo_max_parallax = 20; // most the eyes' pictures may differ, 0.1% of the picture width (0 = no limit)
 int32_t sv_stereo_content_aspect = 1778; // Game picture aspect x1000 (16:9); 0 = use the whole screen   // Push pre-3D sprites (2D backgrounds, PV movies) to infinity
