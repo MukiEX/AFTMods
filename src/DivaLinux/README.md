@@ -18,10 +18,11 @@ it's now the only renderer plugin this fork ships. The plain-OpenGL `DivaGL.dva`
 2. Remove or disable `DivaGL.dva`, `DivaVK.dva` and `DivaMovie.dva`. DivaLinux contains all
    three, and it shows a warning if any of them is loaded too.
 3. For movies, put the FFmpeg DLLs in `plugins/`: `avutil-61.dll`, `swresample-7.dll`,
-   `swscale-10.dll`, `avcodec-63.dll`, `avformat-63.dll`. These are the same files DivaMovie
-   uses: FFmpeg master builds from October 2026 (DivaLinux is built against master `ba987fe`,
-   2026-10-10). Their major versions must match exactly. Without them, the game's own movie
-   player is used.
+   `swscale-10.dll`, `avcodec-63.dll`, `avformat-63.dll`. Get them from the
+   `aftmods-ffmpeg-ba987fe24` release of [MukiEX/FFmpeg-Builds](https://github.com/MukiEX/FFmpeg-Builds/releases/tag/aftmods-ffmpeg-ba987fe24)
+   (`aftmods-ffmpeg-*.zip`): an LGPL build of FFmpeg master `ba987fe` (2026-10-10), the commit
+   DivaLinux is built against. Other FFmpeg builds work if their library major versions match
+   exactly (DivaMovie's DLLs do). Without them, the game's own movie player is used.
 
 ## Settings: `plugins/DivaLinux.ini`
 

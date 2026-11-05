@@ -7,6 +7,8 @@ SDK_TAG=vulkan-sdk-1.4.363.0
 # FFmpeg headers for DivaLinux's movie player. They must come from the same FFmpeg as the DLLs
 # it loads (avutil-61, swresample-7, swscale-10, avcodec-63, avformat-63): this is master
 # from 2026-10-10, the build DivaMovie's FFmpeg player was tested with.
+# The matching DLLs are built by github.com/MukiEX/FFmpeg-Builds (Actions: "AFTMods FFmpeg"),
+# release aftmods-ffmpeg-ba987fe24. Change both together.
 FFMPEG_COMMIT=ba987fe24d6713c4d4b3a15cebaeca18c41fbd31
 DEPS=/src/.deps
 cd /src

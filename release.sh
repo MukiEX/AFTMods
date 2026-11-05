@@ -97,7 +97,8 @@ for f in src/DivaVK/external/volk/LICENSE.md:volk.md src/DivaVK/external/vma/LIC
     if [ -f "$src" ]; then cp "$src" "$LIN/licenses/$dst"; else echo "!! licence file $src not found" >&2; fi
 done
 FFMPEG_NOTE="Movies need FFmpeg's DLLs in plugins\\ as well: avutil-61, swresample-7, swscale-10,
-avcodec-63 and avformat-63 (the same files DivaMovie uses). Without them the game's own
+avcodec-63 and avformat-63, from the aftmods-ffmpeg-ba987fe24 release at
+https://github.com/MukiEX/FFmpeg-Builds/releases (DivaMovie's DLLs work too). Without them the game's own
 movie player is used, which doesn't work under Wine."
 if [ -n "${FFMPEG_DIR:-}" ]; then
     for d in avutil-61 swresample-7 swscale-10 avcodec-63 avformat-63; do
