@@ -40,6 +40,11 @@ DivaLinux also speeds up loading under Wine. It answers the game's many file loo
 
 Settings live in `plugins/DivaLinux.ini`: DivaGL's sections plus `[movie]` and `[vr]`. On first run, the file is created from an existing `DivaVK.ini` or `DivaGL.ini`, with DivaMovie's player settings carried over. On Windows, keep using `DivaGL.dva`. See [src/DivaLinux/README.md](src/DivaLinux/README.md) for install steps, the FFmpeg DLL versions, settings, OpenXR output and building.
 
+## LauncherFS (Launcher.dva)
+A fullscreen, controller-friendly replacement for PD Loader's launcher (`src/LauncherFS`). It has Xbox- or PlayStation-style button prompts (which can also be clicked or tapped), and plugin options you can edit with a controller. It draws with Direct3D 11, OpenGL or the CPU, picking the CPU automatically under WinlatorXR, where the GPU paths leave X11 resources behind that the game's window then trips over.
+
+It's built separately from DivaGL and DivaLinux, with llvm-mingw: `src/LauncherFS/build-mingw.sh`, or its Docker image (see `src/LauncherFS/README.md`).
+
 ## OPD Play Gen
 Generates OPD files on demand if not present. Also allows files to be cached. It only generates cache for missing motions or modules. If FARC with OPD is present, and OPD file inside that FARC is present too, it won't do anything and will load existing data.
 
