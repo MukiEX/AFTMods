@@ -6,8 +6,9 @@
 #   ./release.sh v0.1.0-alpha.1 --publish       also tags the commit, pushes the tag to the fork
 #                                               and creates a GitHub pre-release with the files
 #
-# FFMPEG_DIR=<folder with avutil-61.dll ...> also ships FFmpeg's DLLs in the Linux package
-# (FFmpeg is LGPL: only add a build whose licence allows it, and its licence file goes along).
+# FFMPEG_DIR=<folder with avutil-61.dll ...> also ships FFmpeg's DLLs in the package: unzip the
+# aftmods-ffmpeg-*.zip from a github.com/MukiEX/FFmpeg-Builds release (LGPL; its licence and
+# BUILDINFO.txt go along). GPL or nonfree builds are refused.
 # FORK_REMOTE overrides where --publish pushes (default git@github.com:MukiEX/AFTMods.git).
 #
 # One package for Windows and Wine/Proton alike, laid out like the game folder (unzip into the
@@ -102,11 +103,16 @@ if [ -n "${FFMPEG_DIR:-}" ]; then
     for d in avutil-61 swresample-7 swscale-10 avcodec-63 avformat-63; do
         cp "$FFMPEG_DIR/$d.dll" "$LIN/plugins/"
     done
-    for l in LICENSE LICENSE.md LICENSE.txt COPYING.LGPLv2.1 COPYING.LGPLv3 COPYING.GPLv3; do
+    if strings "$FFMPEG_DIR/avutil-61.dll" | grep -Eq '^(GPL version|nonfree and unredistributable)'; then
+        echo "FFMPEG_DIR has a GPL or nonfree FFmpeg build; only an LGPL build can ship with AFTMods" >&2; exit 1
+    fi
+    for l in LICENSE LICENSE.md LICENSE.txt COPYING.LGPLv2.1 COPYING.LGPLv3 COPYING.GPLv3 BUILDINFO.txt; do
         [ -f "$FFMPEG_DIR/$l" ] && cp "$FFMPEG_DIR/$l" "$LIN/licenses/FFmpeg_$l"
     done
     ls "$LIN/licenses"/FFmpeg_* >/dev/null 2>&1 || echo "!! no FFmpeg licence file found in $FFMPEG_DIR; add one before publishing" >&2
-    FFMPEG_NOTE="FFmpeg's DLLs for the movie player are included in plugins\\ (licence in licenses\\)."
+    FFMPEG_NOTE="FFmpeg's DLLs for the movie player are included in plugins\\. They're FFmpeg
+(https://ffmpeg.org) under the LGPL: licence, build details and where to get the source are in
+licenses\\FFmpeg_*. Any FFmpeg build with the same library versions can replace them."
 fi
 cat > "$LIN/INSTALL.txt" <<EOF
 AFTMods $VERSION (MukiEX fork, built from $COMMIT) - Windows, Wine, Proton, Steam Deck, WinlatorXR
