@@ -487,13 +487,13 @@ static int patch_imports(HMODULE module, const char* label) {
 static std::vector<HMODULE> s_patched;
 
 #ifdef DIVALINUX
-extern "C" void divalinux_lookup_cache_patch_modules(); // src/DivaLinux/lookup_cache.cpp
+extern "C" void divalinux_vfs_patch_modules(); // src/DivaLinux/vfs.cpp
 extern "C" void divalinux_io_trace_patch_modules(); // src/DivaLinux/io_trace.cpp
 #endif
 
 static void patch_all_modules() {
 #ifdef DIVALINUX
-    divalinux_lookup_cache_patch_modules(); // plugins loaded since the last call (cache first,
+    divalinux_vfs_patch_modules();     // plugins loaded since the last call (file layer first,
     divalinux_io_trace_patch_modules();     // so the trace wraps it)
 #endif
     wchar_t windir[MAX_PATH];

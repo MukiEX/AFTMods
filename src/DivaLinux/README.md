@@ -40,28 +40,74 @@ On the first run, if `DivaLinux.ini` doesn't exist yet, it is created from `Diva
 DivaMovie's other options (software/hybrid decoding, interop emulation, debug) are gone: they
 controlled Media Foundation and D3D9 paths that DivaLinux doesn't use.
 
-## Faster loading: the file lookup cache
+## Faster loading and fewer files: `[loading]`
+
+DivaLinux can take over the game's file access in `rom\` and `mdata\` (`vfs.cpp`). This
+helps with two problems on slow devices such as a Quest, or a phone running the game through
+Wine and FEX.
+
+### Lookup cache
 
 While loading, the game asks every mdata pack for every file it might override: tens of
 thousands of single-file lookups (`FindFirstFileExW`) per start-up or song load, most of
-which find nothing. Under Wine each lookup scans a whole folder, because Windows names ignore
-case and Linux ones don't, and under FEX on a Quest that costs about 5 ms. A
-`[debug] io_trace` log there showed a 160 s start-up spending 200 s of loading-thread time in
-lookups that missed, and 1 s reading data.
+which find nothing. Under Wine, each lookup scans a whole folder, because Windows names ignore
+case and Linux ones don't. Under FEX on a Quest that costs about 5 ms. A `[debug] io_trace`
+log there showed a 160 s start-up spending 200 s of loading-thread time in lookups that
+missed, and 1 s reading data.
 
-DivaLinux lists each folder under `rom\` and `mdata\` once, the first time something in it is
-looked for, and answers later lookups there from memory: misses fail at once with the error
-Windows would give, hits return the file's details. Wildcard searches, other folders and
-unusual requests still go to Wine. A file created in a cached folder through `CreateFileW`
-drops that folder's listing. Functions another plugin has already hooked are left alone.
+With the cache, each folder is listed once, the first time something in it is looked for.
+Later lookups are answered from memory: misses fail at once with the error Windows would
+give, and hits return the file's details. Wildcard searches are answered from the same
+listings. A file created through `CreateFileW` drops its folder's listing, so the next lookup
+sees it.
+
+### Archives
+
+`rom.zip` (next to `diva.exe`) and `mdata\<pack>.zip` stand in for the `rom` folder and
+the `mdata\<pack>` folders, so a copy of the game is a few dozen files instead of tens of
+thousands. That matters over MTP, which copies files one by one. With an archive present,
+DivaLinux reads it instead of the folder of the same name. Without it, the folder is used.
+Archives and loose packs can be mixed freely.
+
+- **Uncompressed only.** A member is then a plain range of the zip, read with one
+  positional read, and nothing is decompressed on the emulated CPU. The game's data (FARC
+  archives, textures, movies) is compressed already, so compressing again saves little
+  space. A zip with compressed members is ignored, with a log line naming one, and the
+  folder is used.
+- **Laid out like the game folder.** `rom.zip` holds `rom/...` and `MZKO.zip` holds
+  `mdata/MZKO/...`, so "extract here" in the game folder rebuilds the original folders.
+  Zips of just the folder (`MZKO/...`) or of its contents are read as well.
+- **Read-only.** Opening an archived file for writing fails with "access denied".
+- **zip64** is supported, for archives and members over 4 GB.
+
+To make the archives:
+
+```
+python tools/divalinux_pack.py H:\Games\PDAFT                 (writes H:\Games\PDAFT_packed)
+python tools/divalinux_pack.py H:\Games\PDAFT --packs MZKO     (just one pack)
+```
+
+The output mirrors the game folder (`rom.zip`, `mdata\<pack>.zip`); copy it into the game
+folder on the device. A zip is only rewritten when its folder changed. It needs Python 3.8 or
+later and nothing else.
+
+With 7-Zip, from the game folder: `7z a -tzip -mx0 rom.zip rom` and
+`7z a -tzip -mx0 mdata\MZKO.zip mdata\MZKO`. `-mx0` (Store) matters. Windows' own "Send to
+compressed folder" compresses, so those zips won't be read.
 
 | `[loading]` key | Default | What it does |
 | --- | --- | --- |
-| `lookup_cache` | 1 | The cache above. 0 asks Wine for every lookup, as before. |
+| `lookup_cache` | 1 | The lookup cache. 0 asks Wine for every lookup in loose folders. |
+| `archives` | 1 | Read `rom.zip` and `mdata\<pack>.zip` in place of their folders. |
 
-The log shows a `Lookup cache:` line every 10 s while it's busy: lookups answered from
-memory, lookups passed to Wine, and folders listed. If a mod's files are only added while the
-game runs (by another tool), turn it off.
+The log names each archive in use, with its file count, and every 10 s while busy prints a
+`Files:` line with lookups answered, folders listed, archive files opened and MB read.
+
+All of this works through the import tables of the game and its plugins, never Wine's own
+DLLs. If another plugin already hooks a function, that plugin's version is left in place.
+One limit: a plugin that reads `rom`/`mdata` through the C runtime DLL (ucrtbase's `fopen`)
+bypasses the hooks and sees only real folders. The game itself reads through its own import
+table.
 
 ## VR headsets (OpenXR)
 
@@ -136,7 +182,8 @@ Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation la
 | `movie/movie_yuv.h` | GPU YUV-to-RGB conversion into the movie texture, inside `dvk_push_gl_state`/`dvk_pop_gl_state`; tested in `src/DivaVK/tests` |
 | `movie/movie.cpp` | Installs the player on the game's `CreatePlayer` factory |
 | `io_trace.cpp` | The `[debug] io_trace` file I/O trace |
-| `lookup_cache.cpp` | The `[loading] lookup_cache` file lookup cache |
+| `vfs.cpp` | `[loading]`: the lookup cache and archive reading |
+| `../../tools/divalinux_pack.py` | Makes `rom.zip` and `mdata\<pack>.zip` |
 | `src/DivaVK/core/src/xr.cpp` | OpenXR output (virtual screen), tested against `src/DivaVK/tests/mock_xr_runtime.cpp` |
 
 ## Building

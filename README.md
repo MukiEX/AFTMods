@@ -36,6 +36,8 @@ How the movie player is swapped in:
 4. DivaGL's movie task normally switches to a Direct3D 11 copy path when a player's texture isn't ready yet. DivaLinux recognises its own players and keeps them on the GL path.
 5. Movie audio is optional (`[movie] movie_audio=1`). It's resampled with `swresample` and played through `waveOut`, and its playback position drives the video timing. It never plays during songs, where the video follows the song's own audio.
 
+DivaLinux also speeds up loading under Wine. It answers the game's many file lookups from folder listings it makes once, instead of asking Wine every time. It can also read `rom.zip` and `mdata\<pack>.zip` (uncompressed, made with `tools/divalinux_pack.py`) in place of those folders, so a copy of the game is a few dozen files instead of tens of thousands.
+
 Settings live in `plugins/DivaLinux.ini`: DivaGL's sections plus `[movie]` and `[vr]`. On first run, the file is created from an existing `DivaVK.ini` or `DivaGL.ini`, with DivaMovie's player settings carried over. On Windows, keep using `DivaGL.dva`. See [src/DivaLinux/README.md](src/DivaLinux/README.md) for install steps, the FFmpeg DLL versions, settings, OpenXR output and building.
 
 ## OPD Play Gen
