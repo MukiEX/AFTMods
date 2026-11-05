@@ -34,6 +34,10 @@ Same sections and keys as `DivaGL.ini` (`[general]`, `[experimentals]`, `[stereo
 | `fast_decode` | 0 | Skip the H.264/HEVC deblocking filter and use FFmpeg's "fast" shortcuts from the start. Slightly blockier, noticeably cheaper on slow CPUs (Quest/phones through FEX). Without it, the player only does this while it's behind. |
 | `decode_threads` | 0 | Threads for video decoding; 0 lets FFmpeg use one per CPU. |
 
+A movie that can't be opened (missing, or not a format FFmpeg reads) is logged and played as
+an empty movie that ends at once. The game otherwise waits for it forever, and the song
+hangs.
+
 On the first run, if `DivaLinux.ini` doesn't exist yet, it is created from `DivaVK.ini` (or
 `DivaGL.ini`), and `ffmpeg_player`/`movie_audio` are copied from `DivaMovie.ini`.
 
@@ -79,6 +83,8 @@ Archives and loose packs can be mixed freely.
   Zips of just the folder (`MZKO/...`) or of its contents are read as well.
 - **Read-only.** Opening an archived file for writing fails with "access denied".
 - **zip64** is supported, for archives and members over 4 GB.
+- **Movies play from archives too.** The movie player opens them through the same layer, and
+  FFmpeg reads them through callbacks, since it can't open zip members itself.
 
 To make the archives:
 

@@ -30,6 +30,8 @@ typedef void* FFLibHandle;
 	X(avutil, av_frame_free) \
 	X(avutil, av_frame_unref) \
 	X(avutil, av_frame_move_ref) \
+	X(avutil, av_malloc) \
+	X(avutil, av_freep) \
 	X(avutil, av_strerror) \
 	X(avutil, av_log_set_level) \
 	X(avutil, av_opt_set) \
@@ -66,7 +68,10 @@ typedef void* FFLibHandle;
 	X(avformat, avformat_find_stream_info) \
 	X(avformat, av_find_best_stream) \
 	X(avformat, av_read_frame) \
-	X(avformat, avformat_close_input)
+	X(avformat, avformat_close_input) \
+	X(avformat, avformat_alloc_context) \
+	X(avformat, avio_alloc_context) \
+	X(avformat, avio_context_free)
 
 struct FFLib
 {

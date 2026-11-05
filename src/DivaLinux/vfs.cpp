@@ -1561,3 +1561,42 @@ extern "C" void divalinux_vfs_install(HMODULE self, const wchar_t* config_file) 
     divalinux_vfs_patch_modules();
     CloseHandle(CreateThread(nullptr, 0, ReporterThread, nullptr, 0, nullptr));
 }
+
+// ---------------------------------------------------------------- DivaLinux's own file access
+//
+// For code inside DivaLinux that opens game files itself (the FFmpeg movie player): the same
+// view the game gets, archive members included. With the file layer off, plain kernel32.
+// Read-only, sequential or seeking; these are what FFmpeg's I/O callbacks need.
+
+extern "C" HANDLE divalinux_file_open(const wchar_t* path) {
+    if (!g_enabled)
+        return CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL, nullptr);
+    return Hook_CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+}
+
+extern "C" BOOL divalinux_file_read(HANDLE h, void* buffer, DWORD size, DWORD* read) {
+    return g_enabled ? Hook_ReadFile(h, buffer, size, read, nullptr) : ReadFile(h, buffer, size, read, nullptr);
+}
+
+// whence: FILE_BEGIN, FILE_CURRENT or FILE_END. Returns the new position, or -1.
+extern "C" long long divalinux_file_seek(HANDLE h, long long offset, DWORD whence) {
+    LARGE_INTEGER d, out;
+    d.QuadPart = offset;
+    BOOL ok = g_enabled ? Hook_SetFilePointerEx(h, d, &out, whence) : SetFilePointerEx(h, d, &out, whence);
+    return ok ? (long long)out.QuadPart : -1;
+}
+
+extern "C" long long divalinux_file_size(HANDLE h) {
+    LARGE_INTEGER s;
+    BOOL ok = g_enabled ? Hook_GetFileSizeEx(h, &s) : GetFileSizeEx(h, &s);
+    return ok ? (long long)s.QuadPart : -1;
+}
+
+extern "C" void divalinux_file_close(HANDLE h) {
+    if (g_enabled)
+        Hook_CloseHandle(h);
+    else
+        CloseHandle(h);
+}

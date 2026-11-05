@@ -69,6 +69,37 @@ namespace FFPlayer
 	bool fastDecode = false;   // [movie] fast_decode
 	int decodeThreads = 0;     // [movie] decode_threads
 	bool gpuConvert = true;    // [movie] gpu_convert
+
+	// Movies are opened through DivaLinux's file layer (vfs.cpp), so ones inside rom.zip or an
+	// mdata pack zip play too: FFmpeg's own file code would only see real folders.
+	extern "C" HANDLE divalinux_file_open(const wchar_t* path);
+	extern "C" BOOL divalinux_file_read(HANDLE h, void* buffer, DWORD size, DWORD* read);
+	extern "C" long long divalinux_file_seek(HANDLE h, long long offset, DWORD whence);
+	extern "C" long long divalinux_file_size(HANDLE h);
+	extern "C" void divalinux_file_close(HANDLE h);
+
+	inline void* GameFileOpen(const char* utf8)
+	{
+		int n = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, nullptr, 0);
+		if (n <= 0)
+			return nullptr;
+		std::wstring w(n, L'\0');
+		MultiByteToWideChar(CP_UTF8, 0, utf8, -1, &w[0], n);
+		HANDLE h = divalinux_file_open(w.c_str());
+		return h == INVALID_HANDLE_VALUE ? nullptr : (void*)h;
+	}
+	inline int GameFileRead(void* f, uint8_t* buffer, int size)
+	{
+		DWORD got = 0;
+		return divalinux_file_read((HANDLE)f, buffer, (DWORD)size, &got) ? (int)got : -1;
+	}
+	inline int64_t GameFileSeek(void* f, int64_t offset, int whence)
+	{
+		return divalinux_file_seek((HANDLE)f, offset, (DWORD)whence); // SEEK_* == FILE_*
+	}
+	inline int64_t GameFileSize(void* f) { return divalinux_file_size((HANDLE)f); }
+	inline void GameFileClose(void* f) { divalinux_file_close((HANDLE)f); }
+	const FFFileIO gameFileIO = { GameFileOpen, GameFileRead, GameFileSeek, GameFileSize, GameFileClose };
 	MovieYuv::Converter yuvConverter; // render thread only
 
 	inline bool EnsureFFmpeg()
@@ -531,6 +562,7 @@ namespace FFPlayer
 			d->fastDecode = fastDecode;
 			d->decodeThreads = decodeThreads;
 			d->gpuConvert = gpuConvert && !yuvConverter.Failed();
+			d->fileIO = &gameFileIO;
 			bool ok = d->Open(utf8.c_str());
 			if (ok)
 			{
@@ -539,7 +571,8 @@ namespace FFPlayer
 			}
 			else
 			{
-				PRINT("[Movie] failed to open %s: %s\n", path.c_str(), d->error.c_str());
+				PRINT("[Movie] failed to open %s: %s; playing it as an empty movie so the game carries on\n",
+					path.c_str(), d->error.c_str());
 			}
 
 			AcquireSRWLockExclusive(&lock);
@@ -550,6 +583,15 @@ namespace FFPlayer
 				if (!audio)
 					delete sink;
 				decoder->Start();
+				InterlockedExchange(&state, STATE_OPENED);
+			}
+			else if (!closing)
+			{
+				// The game waits for a movie it asked for to become ready, and never gives up
+				// on one that fails: a song with a missing or broken movie would hang. Report
+				// it opened, with nothing in it; it ends as soon as it's played.
+				delete d;
+				delete sink;
 				InterlockedExchange(&state, STATE_OPENED);
 			}
 			else
@@ -677,8 +719,9 @@ namespace FFPlayer
 			if (s == STATE_PLAYING)
 			{
 				AcquireSRWLockShared(&self->lock);
-				bool finished = self->decoder && self->decoder->Finished(self->Now()) &&
-					(!self->audioStarted || self->audio->Exhausted());
+				// No decoder: an empty movie (one that couldn't be opened), finished at once
+				bool finished = !self->decoder || (self->decoder->Finished(self->Now()) &&
+					(!self->audioStarted || self->audio->Exhausted()));
 				if (finished && InterlockedCompareExchange(&self->state, STATE_STOPPED, STATE_PLAYING) == STATE_PLAYING)
 				{
 					self->LogStats("finished");

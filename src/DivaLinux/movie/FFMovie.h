@@ -154,6 +154,17 @@ struct AudioSink
 
 // ---- Decoder ----
 
+// File access for the decoder, when the movie isn't a plain file FFmpeg can open itself
+// (DivaLinux: a member of rom.zip or an mdata pack zip). FFmpeg reads through these instead.
+struct FFFileIO
+{
+	void* (*open)(const char* utf8Path);             // nullptr when it can't be opened
+	int (*read)(void* file, uint8_t* buffer, int size); // bytes read, 0 at the end, < 0 on error
+	int64_t (*seek)(void* file, int64_t offset, int whence); // SEEK_SET/CUR/END; new position or < 0
+	int64_t (*size)(void* file);                      // < 0 if unknown
+	void (*close)(void* file);
+};
+
 class MovieDecoder
 {
 public:
@@ -180,6 +191,7 @@ public:
 	// Decoder options, set before Open()
 	bool fastDecode = false;    // no H.264/HEVC loop filter and FFmpeg's "fast" shortcuts, from the start
 	volatile bool gpuConvert = false; // queue 8-bit planar YUV frames as they are, for the GPU to convert
+	const FFFileIO* fileIO = nullptr; // read the movie through these instead of letting FFmpeg open it
 	int decodeThreads = 0;      // 0 = FFmpeg picks (one per CPU)
 
 	// Statistics
@@ -235,14 +247,36 @@ public:
 		if (videoCodec) ff.avcodec_free_context(&videoCodec);
 		if (audioCodec) ff.avcodec_free_context(&audioCodec);
 		if (format) ff.avformat_close_input(&format);
+		CloseCustomIO();
 	}
 
 	// Opens the file and decodes the first video frame (synchronous).
 	bool Open(const char* utf8Path)
 	{
 		int r;
+		if (fileIO)
+		{
+			// FFmpeg reads through fileIO; the name is only a hint for probing the format
+			ioFile = fileIO->open(utf8Path);
+			if (!ioFile)
+				return Fail("not found (opened through DivaLinux's file layer)", 0);
+			const int IO_BUFFER = 256 * 1024;
+			uint8_t* buffer = (uint8_t*)ff.av_malloc(IO_BUFFER);
+			if (buffer)
+				io = ff.avio_alloc_context(buffer, IO_BUFFER, 0, this, &MovieDecoder::IORead, nullptr, &MovieDecoder::IOSeek);
+			if (!io)
+			{
+				ff.av_freep(&buffer);
+				return Fail("avio_alloc_context", 0);
+			}
+			format = ff.avformat_alloc_context();
+			if (!format)
+				return Fail("avformat_alloc_context", 0);
+			format->pb = io;
+			format->flags |= AVFMT_FLAG_CUSTOM_IO;
+		}
 		if ((r = ff.avformat_open_input(&format, utf8Path, nullptr, nullptr)) < 0)
-			return Fail("avformat_open_input", r);
+			return Fail("avformat_open_input", r); // frees format; our io is freed with the decoder
 		if ((r = ff.avformat_find_stream_info(format, nullptr)) < 0)
 			return Fail("avformat_find_stream_info", r);
 
@@ -418,6 +452,40 @@ private:
 
 	FFLib& ff;
 	AudioSink* audioSink;
+
+	// Custom I/O (fileIO): the open file and FFmpeg's context reading it
+	void* ioFile = nullptr;
+	AVIOContext* io = nullptr;
+
+	static int IORead(void* opaque, uint8_t* buffer, int size)
+	{
+		MovieDecoder* self = (MovieDecoder*)opaque;
+		int n = self->fileIO->read(self->ioFile, buffer, size);
+		return n < 0 ? AVERROR(EIO) : n == 0 ? AVERROR_EOF : n;
+	}
+
+	static int64_t IOSeek(void* opaque, int64_t offset, int whence)
+	{
+		MovieDecoder* self = (MovieDecoder*)opaque;
+		if (whence & AVSEEK_SIZE)
+			return self->fileIO->size(self->ioFile);
+		int64_t r = self->fileIO->seek(self->ioFile, offset, whence & ~AVSEEK_FORCE);
+		return r < 0 ? AVERROR(EIO) : r;
+	}
+
+	void CloseCustomIO()
+	{
+		if (io)
+		{
+			ff.av_freep(&io->buffer); // FFmpeg may have replaced the buffer we gave it
+			ff.avio_context_free(&io);
+		}
+		if (ioFile)
+		{
+			fileIO->close(ioFile);
+			ioFile = nullptr;
+		}
+	}
 
 	AVFormatContext* format = nullptr;
 	AVCodecContext* videoCodec = nullptr;
