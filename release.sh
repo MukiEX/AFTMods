@@ -10,10 +10,11 @@
 # (FFmpeg is LGPL: only add a build whose licence allows it, and its licence file goes along).
 # FORK_REMOTE overrides where --publish pushes (default git@github.com:MukiEX/AFTMods.git).
 #
-# Two packages, each laid out like the game folder (unzip into the folder with diva.exe):
-#   AFTMods-<version>-Windows.zip  plugins/DivaGL.dva, plugins/Launcher.dva
-#   AFTMods-<version>-Linux.zip    plugins/DivaLinux.dva, plugins/Launcher.dva, tools/divalinux_pack.py
-# plus docs and third-party licences in both.
+# One package for Windows and Wine/Proton alike, laid out like the game folder (unzip into the
+# folder with diva.exe):
+#   AFTMods-<version>.zip  plugins/DivaLinux.dva, plugins/Launcher.dva, tools/divalinux_pack.py,
+#                          docs and third-party licences
+# (The plain-OpenGL DivaGL.dva is retired and not released.)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -24,7 +25,7 @@ for arg in "$@"; do
     case "$arg" in
         --build) BUILD=1 ;;
         --publish) PUBLISH=1 ;;
-        -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
         -*) echo "unknown option $arg" >&2; exit 2 ;;
         *) VERSION="$arg" ;;
     esac
@@ -52,12 +53,12 @@ if [ "$BUILD" = 1 ]; then
     docker run --rm --ulimit nofile=65536:65536 -v "$PWD:/src:z" --entrypoint /src/docker/build.sh aftmods-msvc
 fi
 
-for f in DivaGL.dva DivaLinux.dva Launcher.dva; do
+for f in DivaLinux.dva Launcher.dva; do
     [ -f "out/$f" ] || { echo "out/$f is missing; build first (or use --build)" >&2; exit 1; }
 done
 # DVAs older than the last commit were probably built from older source
 LAST_COMMIT_TIME=$(git log -1 --format=%ct)
-for f in out/DivaGL.dva out/DivaLinux.dva out/Launcher.dva; do
+for f in out/DivaLinux.dva out/Launcher.dva; do
     if [ "$(stat -c %Y "$f")" -lt "$LAST_COMMIT_TIME" ]; then
         echo "!! $f is older than the last commit ($COMMIT); rebuild (--build) unless that's intended." >&2
     fi
@@ -82,28 +83,8 @@ common() {
     cp src/LauncherFS/res/OFL.txt "$dir/licenses/M_PLUS_Rounded_1c_fonts_OFL.txt"
 }
 
-# ---- Windows
-WIN="$STAGE/AFTMods-$VERSION-Windows"
-mkdir -p "$WIN/plugins"
-cp out/DivaGL.dva out/Launcher.dva "$WIN/plugins/"
-common "$WIN"
-cat > "$WIN/INSTALL.txt" <<EOF
-AFTMods $VERSION (MukiEX fork, built from $COMMIT) - Windows
-
-Unzip into the game folder (the one with diva.exe), so the DVAs land in plugins\\.
-
-  plugins\\DivaGL.dva    Modern OpenGL renderer for PDAFT 7.10, with side-by-side 3D.
-                        Settings: plugins\\DivaGL.ini, [stereo] stereo_mode = 1 (half SBS)
-                        or 2 (full SBS). Replaces any older DivaGL.dva.
-  plugins\\Launcher.dva  Fullscreen, controller-friendly launcher.
-
-Don't use DivaLinux.dva on Windows unless you mean to (it runs DivaGL on Vulkan instead).
-Notes: docs\\RELEASE_NOTES.md. DivaGL and its shaders are korenkonder's work; credit them in
-anything you make with it (see docs\\AFTMods_README.md).
-EOF
-
-# ---- Linux / Wine / Proton / WinlatorXR
-LIN="$STAGE/AFTMods-$VERSION-Linux"
+# ---- the package (Windows, Wine, Proton, WinlatorXR)
+LIN="$STAGE/AFTMods-$VERSION"
 mkdir -p "$LIN/plugins" "$LIN/tools"
 cp out/DivaLinux.dva out/Launcher.dva "$LIN/plugins/"
 cp tools/divalinux_pack.py "$LIN/tools/"
@@ -116,7 +97,7 @@ for f in src/DivaVK/external/volk/LICENSE.md:volk.md src/DivaVK/external/vma/LIC
 done
 FFMPEG_NOTE="Movies need FFmpeg's DLLs in plugins\\ as well: avutil-61, swresample-7, swscale-10,
 avcodec-63 and avformat-63 (the same files DivaMovie uses). Without them the game's own
-movie player is used, and that doesn't work under Wine."
+movie player is used, which doesn't work under Wine."
 if [ -n "${FFMPEG_DIR:-}" ]; then
     for d in avutil-61 swresample-7 swscale-10 avcodec-63 avformat-63; do
         cp "$FFMPEG_DIR/$d.dll" "$LIN/plugins/"
@@ -128,13 +109,14 @@ if [ -n "${FFMPEG_DIR:-}" ]; then
     FFMPEG_NOTE="FFmpeg's DLLs for the movie player are included in plugins\\ (licence in licenses\\)."
 fi
 cat > "$LIN/INSTALL.txt" <<EOF
-AFTMods $VERSION (MukiEX fork, built from $COMMIT) - Wine, Proton, Steam Deck, WinlatorXR
+AFTMods $VERSION (MukiEX fork, built from $COMMIT) - Windows, Wine, Proton, Steam Deck, WinlatorXR
 
 Unzip into the game folder (the one with diva.exe), so the DVAs land in plugins\\.
 
-  plugins\\DivaLinux.dva  DivaGL's renderer on Vulkan, plus an FFmpeg movie player, faster
-                         loading and zip archive support. It replaces DivaGL.dva, DivaVK.dva
-                         and DivaMovie.dva: remove or disable those. Settings:
+  plugins\\DivaLinux.dva  DivaGL's renderer on Vulkan (any Vulkan driver, on Windows or under
+                         Wine), with SBS stereo, plus an FFmpeg movie player, faster loading
+                         and zip archive support. It replaces DivaGL.dva, DivaVK.dva and
+                         DivaMovie.dva: remove or disable those. Settings:
                          plugins\\DivaLinux.ini (created on first run). Log:
                          plugins\\DivaLinux.log.
   plugins\\Launcher.dva   Fullscreen, controller-friendly launcher (draws on the CPU under
@@ -148,7 +130,8 @@ uncompressed zips that DivaLinux reads in place of the folders:
 Copy rom.zip and mdata\\*.zip into the game folder on the device.
 
 Steam Deck / Proton: launch option  WINEDLLOVERRIDES="dinput8=n,b" %command%
-Details: docs\\DivaLinux_README.md and docs\\RELEASE_NOTES.md.
+Details: docs\\DivaLinux_README.md and docs\\RELEASE_NOTES.md. DivaGL and its shaders are
+korenkonder's work; credit them in anything you make with it (see docs\\AFTMods_README.md).
 EOF
 
 # ---- zip, checksums, notes

@@ -60,7 +60,11 @@ if [ ! -f "$FFINC/libavcodec/avcodec.h" ]; then
     rm -rf "$FFSRC"
 fi
 
-echo "== Building KKdLib, AFTModsShared, DivaGL and DivaLinux (cl.exe via CMake/Ninja, no MSBuild)"
+# DivaLinux.dva is the plugin for Windows and Wine alike now. The plain-GL DivaGL.dva is
+# retired from the default build; BUILD_DIVAGL=1 still builds it (its sources are DivaLinux's).
+TARGETS=DivaLinux
+[ "${BUILD_DIVAGL:-0}" = 1 ] && TARGETS="DivaGL DivaLinux"
+echo "== Building KKdLib, AFTModsShared and $TARGETS (cl.exe via CMake/Ninja, no MSBuild)"
 # MSBuild 18 can't run under Wine Mono (it loads Visual Studio telemetry assemblies that
 # Build Tools doesn't ship), so CMakeLists.txt mirrors the solution's Release|x64 settings.
 CC=cl CXX=cl cmake -S . -B "$DEPS/build-$CONFIG" -G Ninja \
@@ -73,7 +77,7 @@ CC=cl CXX=cl cmake -S . -B "$DEPS/build-$CONFIG" -G Ninja \
 # starting parallelism (default: up to 8).
 JOBS=${JOBS:-$(( $(nproc) < 8 ? $(nproc) : 8 ))}
 for attempt in 1 2 3 4; do
-    if cmake --build "$DEPS/build-$CONFIG" --target DivaGL DivaLinux -- -j "$JOBS"; then
+    if cmake --build "$DEPS/build-$CONFIG" --target $TARGETS -- -j "$JOBS"; then
         break
     fi
     if [ "$attempt" = 4 ]; then
@@ -85,7 +89,8 @@ for attempt in 1 2 3 4; do
 done
 
 mkdir -p out
-cp -v bin/DivaGL.dva bin/DivaLinux.dva out/
+rm -f out/DivaGL.dva   # an old one would look current
+for t in $TARGETS; do cp -v "bin/$t.dva" out/; done
 
 # Launcher.dva (src/LauncherFS) is built with llvm-mingw, not cl.exe: it shares nothing with
 # the game's STL, and MinGW's headers cover what it uses. llvm-mingw is fetched into .deps
@@ -111,6 +116,6 @@ PY
     (cd src/LauncherFS && LLVM_MINGW="$LLVM_MINGW" sh ./build-mingw.sh)
     cp -v src/LauncherFS/build/win/Launcher.dva out/
 fi
-echo "== Done: out/DivaGL.dva (Windows: DivaGL + SBS stereo)"
-echo "         out/DivaLinux.dva (Wine/Proton: DivaGL on Vulkan + FFmpeg movies; replaces DivaVK.dva and DivaMovie.dva)"
-[ -f out/Launcher.dva ] && echo "         out/Launcher.dva (the fullscreen launcher, for both)" || true
+echo "== Done: out/DivaLinux.dva (Windows and Wine/Proton: DivaGL on Vulkan + FFmpeg movies; replaces DivaGL.dva, DivaVK.dva and DivaMovie.dva)"
+[ -f out/DivaGL.dva ] && echo "         out/DivaGL.dva (retired plain-OpenGL build, BUILD_DIVAGL=1)" || true
+[ -f out/Launcher.dva ] && echo "         out/Launcher.dva (the fullscreen launcher)" || true

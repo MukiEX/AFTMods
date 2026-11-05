@@ -1,7 +1,7 @@
 # DivaLinux
 
-One PD Loader plugin for running Project DIVA Arcade Future Tone under Wine or Proton (Linux,
-Steam Deck, and later Android/ARM through FEX). It combines:
+One PD Loader plugin for Project DIVA Arcade Future Tone, on Windows and under Wine or Proton
+(Linux, Steam Deck, WinlatorXR on Quest). It combines:
 
 - **DivaGL on Vulkan (DivaVK).** DivaGL's renderer, including SBS stereo, with every GL/WGL call
   routed to a GL-on-Vulkan runtime (`src/DivaVK`). No real OpenGL context is created.
@@ -9,7 +9,8 @@ Steam Deck, and later Android/ARM through FEX). It combines:
   Song and attract-mode movies are decoded by FFmpeg and uploaded straight into the game's movie
   texture, so Media Foundation, DXVA2, Direct3D and `WGL_NV_DX_interop` are never needed.
 
-On Windows, use `DivaGL.dva` instead; it handles movies itself.
+It started as the Wine build, but it runs just as well on Windows (with any Vulkan driver), and
+it's now the only renderer plugin this fork ships. The plain-OpenGL `DivaGL.dva` is retired.
 
 ## Install
 
@@ -194,7 +195,8 @@ Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation la
 
 ## Building
 
-`docker/build.sh` (from the repo root) builds `out/DivaGL.dva` and `out/DivaLinux.dva`. It
+`docker/build.sh` (from the repo root) builds `out/DivaLinux.dva` (and the retired
+`out/DivaGL.dva` with `BUILD_DIVAGL=1`). It
 fetches the FFmpeg headers for commit `ba987fe` into
 `.deps/ffmpeg-ba987fe24d6713c4d4b3a15cebaeca18c41fbd31/include`; to use another FFmpeg, change
 `FFMPEG_COMMIT` there and ship that build's DLLs.

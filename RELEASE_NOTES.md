@@ -6,14 +6,12 @@ Future Tone 7.10 under PD Loader. Alpha means it has been played on a handful of
 
 ## What's in it
 
-**DivaGL.dva (Windows)**
-- Side-by-side stereoscopic 3D: half SBS for 3D TVs and XR glasses, full SBS for VR
-  players. Shadow maps are drawn once per frame and shared by both eyes. `[stereo]` in
-  DivaGL.ini.
-
-**DivaLinux.dva (Wine, Proton, Steam Deck, WinlatorXR)**: replaces DivaGL, DivaVK and
-DivaMovie
-- DivaGL's renderer, SBS stereo included, on Vulkan: no OpenGL driver needed in the prefix.
+**DivaLinux.dva (Windows, Wine, Proton, Steam Deck, WinlatorXR)**: replaces DivaGL, DivaVK
+and DivaMovie
+- DivaGL's renderer on Vulkan, on Windows (any Vulkan driver) and under Wine, where no OpenGL
+  driver is needed in the prefix. The plain-OpenGL DivaGL.dva is no longer released.
+- Side-by-side stereoscopic 3D: half SBS for 3D TVs and XR glasses, full SBS for VR players.
+  Shadow maps are drawn once per frame and shared by both eyes. `[stereo]` in DivaLinux.ini.
 - FFmpeg movie player (from DivaMovie), with colour conversion done on the GPU. Movies play
   smoothly on a Quest 3.
 - OpenXR output: the game on a virtual screen in a headset, in 3D with full SBS
@@ -22,11 +20,11 @@ DivaMovie
   made once; this was most of the load time under Wine.
 - `rom.zip` and `mdata\<pack>.zip` (uncompressed) read in place of their folders, so a copy
   of the game is a few hundred files instead of tens of thousands. Make them with
-  `tools/divalinux_pack.py`.
+  `tools/divalinux_pack.py`. Movies play from inside them too.
 - Diagnostics: frame dump (Scroll Lock), a watchdog that reports stalls, movie playback
   statistics, and a file I/O trace (`[debug] io_trace=1`).
 
-**Launcher.dva (both)**
+**Launcher.dva**
 - A fullscreen, controller-friendly launcher. It has Xbox- or PlayStation-style button
   prompts (which can also be clicked or tapped), and plugin options you can edit with a
   controller. Under WinlatorXR it draws on the CPU, which avoids an X11 error the game would

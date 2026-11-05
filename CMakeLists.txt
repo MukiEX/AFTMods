@@ -6,10 +6,11 @@
 #
 #   cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 #         -DDIVAVK_VULKAN_HEADERS_DIR=... -DDIVAVK_GLSLANG_DIR=... -DDIVALINUX_FFMPEG_INCLUDE_DIR=...
-#   cmake --build build            -> bin/DivaGL.dva, bin/DivaLinux.dva
+#   cmake --build build --target DivaLinux   -> bin/DivaLinux.dva
 #
-# DivaGL.dva is for Windows. DivaLinux.dva is for Wine/Proton: DivaGL's renderer on Vulkan
-# (DivaVK) plus DivaMovie's FFmpeg movie player, in one plugin.
+# DivaLinux.dva is the plugin to ship, on Windows and under Wine/Proton: DivaGL's renderer on
+# Vulkan (DivaVK) plus DivaMovie's FFmpeg movie player. The DivaGL target (plain OpenGL) is
+# retired: it still builds, since DivaLinux compiles the same sources, but isn't released.
 
 cmake_minimum_required(VERSION 3.20)
 cmake_policy(SET CMP0091 NEW)

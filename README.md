@@ -4,10 +4,12 @@ Various mods for Hatsune Miku: Project DIVA Mega Mix+
 ## DivaGL
 Ports graphics of PDAFT 7.10 from legacy OpenGL to modern one. Works on Nvidia GPUs as well as on AMD and Intel GPUs (last statement needs testing).
 
+In this fork, DivaGL's renderer ships inside **DivaLinux.dva** (below), on Windows as well as under Wine. The plain-OpenGL `DivaGL.dva` is retired: it isn't built by default or released, though its sources are the renderer DivaLinux compiles.
+
 The use of DivaGL and/or its code and/or its shaders and the author of this plugin must be acknowledged in content created using anything above.
 
 ### Stereoscopic 3D (Side-by-Side)
-Optional SBS stereo output, configured in the `[stereo]` section of `DivaGL.ini` (or the PD Loader config UI):
+Optional SBS stereo output, configured in the `[stereo]` section of `DivaLinux.ini` (`DivaGL.ini` for the retired plain-GL build), or the PD Loader config UI:
 
 ```ini
 [stereo]
@@ -26,7 +28,7 @@ The whole pipeline (SSS, reflections, 3D, post-process, sprites) is rendered onc
 With automatic convergence, the zero-parallax plane follows the character nearest the middle of the shot, so the singer stays on the screen plane even when a PV camera aims past her. Eye separation is reduced in zoomed-in shots, so the background (or a character close to the camera) never splits more than `stereo_max_parallax` allows. Raise that for stronger 3D; lower it if anything still doubles.
 
 ## DivaLinux
-A single plugin for running PDAFT 7.10 under Wine or Proton (Linux, Steam Deck, and WinlatorXR on Quest). It replaces both `DivaGL.dva` and DivaMovie's `DivaMovie.dva`, so only `DivaLinux.dva` goes in `plugins/`. It's built from:
+The single renderer plugin for PDAFT 7.10, on Windows and under Wine or Proton (Linux, Steam Deck, and WinlatorXR on Quest). It replaces both `DivaGL.dva` and DivaMovie's `DivaMovie.dva`, so only `DivaLinux.dva` goes in `plugins/`. It began as the Wine build (hence the name) and runs the same on Windows with any Vulkan driver. It's built from:
 
 - **DivaGL, unchanged in what it draws.** The same renderer sources, including SBS stereo, are compiled with `DIVAVK` and `DIVALINUX` defined. Every GL and WGL call goes to DivaVK (`src/DivaVK`), an OpenGL 4.3 subset implemented on Vulkan, so the prefix doesn't need a working OpenGL driver.
 - **DivaMovie's FFmpeg movie player** (the `divamovie-ffmpeg` branch of MukiEX/PD-Loader). It replaces the game's own player, which is built on Media Foundation, DXVA2 and Direct3D 9 shared through `WGL_NV_DX_interop`. None of that works under Wine, so the game can't play its movies there.
@@ -41,7 +43,7 @@ How the movie player is swapped in:
 
 DivaLinux also speeds up loading under Wine. It answers the game's many file lookups from folder listings it makes once, instead of asking Wine every time. It can also read `rom.zip` and `mdata\<pack>.zip` (uncompressed, made with `tools/divalinux_pack.py`) in place of those folders, so a copy of the game is a few dozen files instead of tens of thousands.
 
-Settings live in `plugins/DivaLinux.ini`: DivaGL's sections plus `[movie]` and `[vr]`. On first run, the file is created from an existing `DivaVK.ini` or `DivaGL.ini`, with DivaMovie's player settings carried over. On Windows, keep using `DivaGL.dva`. See [src/DivaLinux/README.md](src/DivaLinux/README.md) for install steps, the FFmpeg DLL versions, settings, OpenXR output and building.
+Settings live in `plugins/DivaLinux.ini`: DivaGL's sections plus `[movie]` and `[vr]`. On first run, the file is created from an existing `DivaVK.ini` or `DivaGL.ini`, with DivaMovie's player settings carried over. See [src/DivaLinux/README.md](src/DivaLinux/README.md) for install steps, the FFmpeg DLL versions, settings, OpenXR output and building.
 
 ## LauncherFS (Launcher.dva)
 A fullscreen, controller-friendly replacement for PD Loader's launcher (`src/LauncherFS`). It has Xbox- or PlayStation-style button prompts (which can also be clicked or tapped), and plugin options you can edit with a controller. It draws with Direct3D 11, OpenGL or the CPU, picking the CPU automatically under WinlatorXR, where the GPU paths leave X11 resources behind that the game's window then trips over.
