@@ -29,3 +29,17 @@ to skip it.
 
 On a Windows host, open `AFTMods.sln` in Visual Studio instead (see `src/DivaVK/README.md`).
 Microsoft's Windows containers can't run on a Linux host.
+
+## Releases
+
+`./release.sh v0.1.0-alpha.1` (from the repo root, after a build, or with `--build`) packages
+`out/` into `release/<version>/`:
+
+- `AFTMods-<version>-Windows.zip`: DivaGL and the launcher
+- `AFTMods-<version>-Linux.zip`: DivaLinux, the launcher and the pack tool
+- `SHA256SUMS`, and `NOTES.md` (`RELEASE_NOTES.md` plus the commits since the last release)
+
+Both zips have install notes and third-party licences. `FFMPEG_DIR=<folder>` adds FFmpeg's DLLs
+to the Linux zip. `--publish` tags the commit, pushes the branch and tag to
+`git@github.com:MukiEX/AFTMods.git` (never upstream), and creates a GitHub pre-release with
+`gh`.
