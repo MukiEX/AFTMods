@@ -218,6 +218,12 @@ int main(int argc, char** argv) {
     bool launched = false, quit = false;
     host.launch = [&]() { launched = true; };
     host.quit = [&]() { quit = true; };
+    // PREVIEW_IN_GAME=1: the in-game menu ([launcher] overlay=1), drawn with alpha and
+    // composited over a stand-in for the game's picture, the way DivaLinux shows it.
+    const bool in_game = getenv("PREVIEW_IN_GAME") != nullptr;
+    bool exited = false;
+    host.in_game = in_game;
+    host.exit_game = [&]() { exited = true; };
     App app(std::move(pages), host, fonts);
 
     io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
@@ -246,6 +252,33 @@ int main(int argc, char** argv) {
         ImGui::Render();
         char buf[64];
         snprintf(buf, sizeof(buf), "_%dx%d.png", W, H);
+        if (in_game) {
+            SoftCanvas sc;
+            sc.keep_alpha = true;
+            sc.resize(W, H);
+            sc.clear(0x00000000u);
+            soft_update_textures(ImGui::GetDrawData());
+            soft_render(sc, ImGui::GetDrawData());
+            // Stand-in game frame: a bright gradient with diagonal stripes
+            std::vector<unsigned char> rgb((size_t)W * H * 3);
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++) {
+                    size_t i = (size_t)y * W + x;
+                    float t = (float)x / W, u = (float)y / H;
+                    bool stripe = ((x + y) / 40) % 2 == 0;
+                    float gr = 0.15f + 0.8f * t, gg = 0.6f - 0.3f * u + (stripe ? 0.2f : 0.0f), gb = 0.9f - 0.5f * t;
+                    uint32_t p = sc.px[i];
+                    float a = (p >> 24) / 255.0f;
+                    float r = ((p >> 16) & 0xFF) / 255.0f, g = ((p >> 8) & 0xFF) / 255.0f, b = (p & 0xFF) / 255.0f;
+                    rgb[i * 3] = (unsigned char)std::lround(std::min(1.0f, r * a + gr * (1 - a)) * 255);
+                    rgb[i * 3 + 1] = (unsigned char)std::lround(std::min(1.0f, g * a + gg * (1 - a)) * 255);
+                    rgb[i * 3 + 2] = (unsigned char)std::lround(std::min(1.0f, b * a + gb * (1 - a)) * 255);
+                }
+            std::string path = out + "/ingame_" + name + buf;
+            stbi_write_png(path.c_str(), W, H, 3, rgb.data(), W * 3);
+            printf("wrote %s (in-game menu over a stand-in frame)\n", path.c_str());
+            return;
+        }
         if (getenv("PREVIEW_SOFT")) {
             // The launcher's own CPU renderer (src/soft_render.cpp), as used on the Quest
             SoftCanvas sc;
@@ -322,8 +355,23 @@ int main(int argc, char** argv) {
     shot("10_blocked");
     press(ImGuiKey_GamepadFaceDown);
     press(ImGuiKey_GamepadR1);          // Home
+    if (in_game) {
+        press(ImGuiKey_GamepadDpadDown);
+        press(ImGuiKey_GamepadDpadDown);   // "Quit game"
+        shot("11_quit_row");
+        press(ImGuiKey_GamepadFaceDown);
+        shot("12_quit_confirm");
+        press(ImGuiKey_GamepadFaceRight);  // cancel
+        press(ImGuiKey_GamepadR1);         // Display
+        press(ImGuiKey_GamepadDpadRight);  // change something (Display mode)
+        press(ImGuiKey_GamepadBack);       // Back to game with unsaved changes
+        shot("13_back_unsaved");
+        press(ImGuiKey_GamepadDpadDown);   // "Save for next time"
+        press(ImGuiKey_GamepadFaceDown);
+        shot("14_saved_back");
+    }
     press(ImGuiKey_GamepadBack);        // close with unsaved changes? (none yet) -> quits
-    printf("launched=%d quit=%d button=%d\n", launched, quit, g_button_ran);
+    printf("launched=%d quit=%d button=%d exited=%d\n", launched, quit, g_button_ran, exited);
 
     ImGui::DestroyContext();
     return 0;

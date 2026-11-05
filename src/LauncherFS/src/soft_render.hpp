@@ -18,6 +18,11 @@ namespace lfs {
     struct SoftCanvas {
         int w = 0, h = 0;
         std::vector<uint32_t> px;   // 0xAARRGGBB (BGRA in memory), top-down
+        // Keep real alpha (for an image composited over something else, such as the in-game
+        // overlay): drawing uses the "over" operator, so a canvas cleared to transparent ends up
+        // with straight (not premultiplied) colour and the coverage in alpha. Off, every drawn
+        // pixel is opaque, as on a window.
+        bool keep_alpha = false;
 
         void resize(int width, int height);
         void clear(uint32_t argb);

@@ -20,6 +20,7 @@
 #include <dlfcn.h>
 #include <vulkan/vulkan.h>
 #include "movie_yuv.h"
+#include "../overlay_gl.h"
 
 #ifndef DIVAVK_SHADER_DIR
 #define DIVAVK_SHADER_DIR "res/ft_shaders"
@@ -1026,6 +1027,84 @@ static void test_movie_yuv() {
     glActiveTexture(GL_TEXTURE0);
 }
 
+// The launcher's in-game menu image blended over the finished frame (DivaLinux overlay).
+static void test_overlay() {
+    printf("overlay compositing\n");
+    int32_t fw = 0, fh = 0;
+    dvk_get_framebuffer_size(&fw, &fh);
+    CHECK(fw == W && fh == H, "framebuffer size %dx%d, expected %dx%d", fw, fh, W, H);
+
+    // 8x4 image with a padded row stride: top two rows opaque red, bottom two half-transparent
+    // green; padding is garbage that mustn't show.
+    const int IW = 8, IH = 4, IS = 11;
+    std::vector<uint32_t> img(IS * IH, 0xFFFFFFFFu);
+    for (int y = 0; y < IH; y++)
+        for (int x = 0; x < IW; x++)
+            img[y * IS + x] = y < 2 ? 0xFFFF0000u : 0x8000FF00u;
+
+    // Game-like state that must survive
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+    glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(g_prog_color);
+    glEnable(GL_DEPTH_TEST);
+    glViewport(3, 4, 50, 60);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 8);
+    glBindVertexArray(g_vao);
+    glActiveTexture(GL_TEXTURE2);
+    while (glGetError() != GL_NO_ERROR) {}
+
+    static OverlayGL::Compositor comp;
+    OverlayGL::Image im = { img.data(), IW, IH, IS, 1 };
+    OverlayGL::Rect full = { 0, 0, W, H };
+    bool ok = comp.Draw(im, &full, 1);
+    CHECK(ok, "overlay draw failed: %s", comp.error.c_str());
+    // GL rows run bottom-up: the image's top row is at the top of the framebuffer.
+    CHECK_PIXEL(W / 2, H - 4, 255, 0, 0, 255);
+    CHECK_PIXEL(W / 2, 4, 0, 128, 127, 255);
+
+    // Side by side: one copy per half, image squeezed into each.
+    glClear(GL_COLOR_BUFFER_BIT);
+    img[0] = 0xFFFFFF00u; // top-left texel yellow, to tell the halves' orientation
+    im.serial = 2;
+    OverlayGL::Rect halves[2] = { { 0, 0, W / 2, H }, { W / 2, 0, W / 2, H } };
+    ok = comp.Draw(im, halves, 2);
+    CHECK(ok, "overlay draw (SBS) failed: %s", comp.error.c_str());
+    CHECK_PIXEL(1, H - 2, 255, 255, 0, 255);
+    CHECK_PIXEL(W / 2 + 1, H - 2, 255, 255, 0, 255);
+    CHECK_PIXEL(W / 4 + 8, H - 4, 255, 0, 0, 255);
+    CHECK_PIXEL(W / 2 + W / 4, 4, 0, 128, 127, 255);
+
+    // Same serial: no new upload (the yellow texel changed back without a new serial stays).
+    img[0] = 0xFFFF0000u;
+    glClear(GL_COLOR_BUFFER_BIT);
+    comp.Draw(im, halves, 2);
+    CHECK_PIXEL(1, H - 2, 255, 255, 0, 255);
+
+    GLint v[4] = {};
+    glGetIntegerv(GL_CURRENT_PROGRAM, v);
+    CHECK((GLuint)v[0] == g_prog_color, "program changed to %d", v[0]);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, v);
+    CHECK(v[0] == GL_TEXTURE2, "active texture changed to 0x%04X", v[0]);
+    glGetIntegerv(GL_VIEWPORT, v);
+    CHECK(v[0] == 3 && v[1] == 4 && v[2] == 50 && v[3] == 60, "viewport changed to %d,%d,%d,%d", v[0], v[1], v[2], v[3]);
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, v);
+    CHECK(v[0] == 8, "unpack alignment changed to %d", v[0]);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, v);
+    CHECK((GLuint)v[0] == g_vao, "vertex array changed to %d", v[0]);
+    GLint blend = 0, depth = 0;
+    glGetIntegerv(GL_BLEND, &blend);
+    glGetIntegerv(GL_DEPTH_TEST, &depth);
+    CHECK(blend == 0 && depth == 1, "blend %d / depth test %d changed", blend, depth);
+    CHECK(glGetError() == GL_NO_ERROR, "GL error after the overlay");
+
+    glDisable(GL_DEPTH_TEST);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glActiveTexture(GL_TEXTURE0);
+}
+
 int main(int argc, char** argv) {
     bool validation = argc > 1 && !strcmp(argv[1], "--validate");
     const char* exts[] = { "VK_KHR_surface", "VK_EXT_headless_surface" };
@@ -1073,6 +1152,7 @@ int main(int argc, char** argv) {
     test_ibl_cube_mips();
     test_depth_feedback();
     test_movie_yuv();
+    test_overlay();
     test_present_loop();
     test_all_divagl_shaders();
 

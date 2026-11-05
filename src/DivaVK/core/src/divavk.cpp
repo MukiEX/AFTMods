@@ -55,6 +55,16 @@ extern "C" void dvk_resize(int32_t width, int32_t height) {
     c.swapchain_dirty = c.surface != VK_NULL_HANDLE;
 }
 
+extern "C" void dvk_get_framebuffer_size(int32_t* width, int32_t* height) {
+    int32_t w = 0, h = 0;
+    if (g_ctx && g_ctx->default_color) {
+        w = g_ctx->default_color->width;
+        h = g_ctx->default_color->height;
+    }
+    if (width) *width = w;
+    if (height) *height = h;
+}
+
 extern "C" void dvk_set_vsync(bool vsync) {
     if (!g_ctx || g_ctx->vsync == vsync)
         return;

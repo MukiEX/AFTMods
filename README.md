@@ -48,6 +48,8 @@ Settings live in `plugins/DivaLinux.ini`: DivaGL's sections plus `[movie]` and `
 ## LauncherFS (Launcher.dva)
 A fullscreen, controller-friendly replacement for PD Loader's launcher (`src/LauncherFS`). It has Xbox- or PlayStation-style button prompts (which can also be clicked or tapped), and plugin options you can edit with a controller. It draws with Direct3D 11, OpenGL or the CPU, picking the CPU automatically under WinlatorXR, where the GPU paths leave X11 resources behind that the game's window then trips over.
 
+With DivaLinux, it can also run as an in-game menu instead (Options > In-game menu): the game starts straight away, F10 or View + Start opens the launcher over it, and Restart applies changed settings.
+
 It's built separately from DivaGL and DivaLinux, with llvm-mingw: `src/LauncherFS/build-mingw.sh`, or its Docker image (see `src/LauncherFS/README.md`).
 
 ## OPD Play Gen

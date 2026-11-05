@@ -32,6 +32,32 @@ Only one launcher can be installed at a time; both hook the game's entry point.
 4. To go straight into the game in future, turn on Options > Skip launcher. To get the launcher
    back, set `skip=0` in the `[launcher]` section of `plugins\config.ini`.
 
+## In-game menu (with DivaLinux)
+
+With Options > In-game menu on (`overlay=1` in the `[launcher]` section of
+`plugins\config.ini`), the game starts straight away and the launcher becomes a menu you open
+over the running game:
+
+- **Open it** with F10, or View and Start together on a controller.
+- **Restart** (Start, or the big button) saves your settings and restarts the game with them.
+  Most settings only take effect at start-up, so this is how to apply them.
+- **Back to game** (View, F10 again, or B on the home page) closes the menu. With unsaved changes
+  it asks whether to save and restart, save for next time, or discard them.
+- **Quit game** closes the game.
+
+The menu is drawn on the CPU and handed to DivaLinux.dva, which blends it over each frame (in
+both halves in side-by-side 3D). It needs a DivaLinux.dva with in-game menu support; without
+one, the launcher opens before the game as usual and says why in `plugins\Launcher.log`.
+
+While the menu is open the game doesn't see your input: its window gets no keyboard or mouse
+messages, and keyboard and XInput state read through Windows report nothing pressed until
+everything is released after closing it. Input the game reads through DirectInput isn't held
+back. The game keeps running underneath (a song keeps playing).
+
+Plugins that are off aren't loaded while the game runs, so their own options only show after
+you turn them on and restart. `overlay_key` in `[launcher]` changes the key (a Windows
+virtual-key code; F10 is 121).
+
 ## Controls
 
 | Action | Controller | Keyboard | Mouse |

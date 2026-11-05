@@ -120,6 +120,7 @@ if(AFTMODS_BUILD_DIVALINUX)
         ${AFT_ROOT}/src/DivaLinux/movie/movie.cpp
         ${AFT_ROOT}/src/DivaLinux/io_trace.cpp
         ${AFT_ROOT}/src/DivaLinux/vfs.cpp
+        ${AFT_ROOT}/src/DivaLinux/overlay.cpp
         ${DIVAGL_SOURCES})
     aft_plugin(DivaLinux)
     target_compile_definitions(DivaLinux PRIVATE DIVAVK DIVALINUX)

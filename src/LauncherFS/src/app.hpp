@@ -13,6 +13,10 @@ namespace lfs {
         std::function<void()> launch;   // start the game; does not return on success
         std::function<void()> quit;     // close without launching
         std::function<void()> toggle_windowed; // optional
+        // In-game overlay ([launcher] overlay=1): the menu sits over the running game. "Play"
+        // restarts the game (launch), "Close" goes back to it (quit), and exit_game ends it.
+        bool in_game = false;
+        std::function<void()> exit_game;
     };
 
     struct Fonts {

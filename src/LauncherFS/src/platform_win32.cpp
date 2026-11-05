@@ -21,10 +21,12 @@
 #include "soft_render.hpp"
 #include "ini.hpp"
 #include "plugin_abi.hpp"
+#include "overlay_abi.hpp"
 #include <MinHook.h>
 #include "../res/resource.h"
 
 #include <algorithm>
+#include <atomic>
 #include <string>
 #include <vector>
 #include <cmath>
@@ -191,7 +193,10 @@ namespace {
         FindClose(h);
     }
 
-    Page plugins_page(const Paths& p) {
+    // in_game: the game is already running (in-game overlay). Plugins PD Loader didn't load
+    // (turned off) are listed by file name only: loading one now would run its start-up code,
+    // and with it its hooks, inside the running game.
+    Page plugins_page(const Paths& p, bool in_game) {
         Page pg;
         pg.title = "Plugins";
         pg.kind = PageKind::Plugins;
@@ -201,7 +206,14 @@ namespace {
                 return;
             // Plugins are already loaded by PD Loader, so this just takes another reference.
             // Like the original launcher, never free them: plugin buttons may still be called.
-            HMODULE h = LoadLibraryW((p.plugins_dir + L"\\" + file).c_str());
+            const std::wstring path = p.plugins_dir + L"\\" + file;
+            if (in_game && !GetModuleHandleW(path.c_str())) {
+                std::wstring stem = file.substr(0, file.size() - 4);
+                pg.options.push_back(make_plugin(file, p.config, stem,
+                    stem + L" is off in this session. Its options show up after you turn it on and restart.", "", {}));
+                return;
+            }
+            HMODULE h = LoadLibraryW(path.c_str());
             if (!h)
                 return;
             if (h == g_module)
@@ -319,14 +331,24 @@ namespace {
         lf_log("XInput: no XInput DLL could be loaded; only keyboard and mouse will work");
     }
 
-    void poll_pads() {
-        ImGuiIO& io = ImGui::GetIO();
-        if (!g_xinput_get_state)
-            return;
+    // Every connected pad's state, merged.
+    struct PadSnapshot {
         WORD buttons = 0;
         float lx = 0, ly = 0;
         BYTE lt = 0, rt = 0;
         bool any = false;
+    };
+
+    PadSnapshot read_pads() {
+        PadSnapshot ps;
+        if (!g_xinput_get_state)
+            return ps;
+        WORD& buttons = ps.buttons;
+        float& lx = ps.lx;
+        float& ly = ps.ly;
+        BYTE& lt = ps.lt;
+        BYTE& rt = ps.rt;
+        bool& any = ps.any;
         DWORD now = GetTickCount();
         for (DWORD i = 0; i < XUSER_MAX_COUNT; i++) {
             // Polling a missing pad is slow on real XInput, so re-check those every 2 s
@@ -361,7 +383,16 @@ namespace {
             lt = std::max(lt, st.Gamepad.bLeftTrigger);
             rt = std::max(rt, st.Gamepad.bRightTrigger);
         }
-        if (any)
+        return ps;
+    }
+
+    // Feeds a pad snapshot to ImGui as gamepad keys.
+    void feed_pads(const PadSnapshot& ps) {
+        ImGuiIO& io = ImGui::GetIO();
+        const WORD buttons = ps.buttons;
+        const float lx = ps.lx, ly = ps.ly;
+        const BYTE lt = ps.lt, rt = ps.rt;
+        if (ps.any)
             io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
         else
             io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
@@ -387,6 +418,11 @@ namespace {
         io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, lx > dz, std::max(0.0f, lx));
         io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, ly > dz, std::max(0.0f, ly));
         io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, ly < -dz, std::max(0.0f, -ly));
+    }
+
+    void poll_pads() {
+        if (g_xinput_get_state)
+            feed_pads(read_pads());
     }
 
     // ------------------------------------------------------------ window + D3D11
@@ -782,6 +818,31 @@ namespace {
 
     // ------------------------------------------------------------ UI loop
 
+    std::vector<Page> make_pages(const Paths& paths, bool in_game) {
+        std::vector<Page> pages;
+        Page home;
+        home.title = "Home";
+        home.kind = PageKind::Home;
+        pages.push_back(home);
+        for (Page& p : build_builtin_pages(paths, query_screen()))
+            pages.push_back(std::move(p));
+        pages.push_back(plugins_page(paths, in_game));
+        pages.push_back(patches_page(paths));
+
+        // Custom patches only load when Options > Enable Custom Patches is on
+        OptionPtr custom;
+        for (Page& p : pages)
+            for (auto& o : p.options)
+                if (o->key == L"custom_patches")
+                    custom = o;
+        if (custom)
+            for (auto& o : pages.back().options) {
+                o->enabled = [custom]() { return custom->b; };
+                o->disabled_hint = "Turn on Enable Custom Patches in Options to use custom patches.";
+            }
+        return pages;
+    }
+
     int run_ui() {
         enable_dpi_awareness();
         load_xinput();
@@ -857,27 +918,7 @@ namespace {
         }
         Fonts fonts = load_fonts();
 
-        std::vector<Page> pages;
-        Page home;
-        home.title = "Home";
-        home.kind = PageKind::Home;
-        pages.push_back(home);
-        for (Page& p : build_builtin_pages(paths, query_screen()))
-            pages.push_back(std::move(p));
-        pages.push_back(plugins_page(paths));
-        pages.push_back(patches_page(paths));
-
-        // Custom patches only load when Options > Enable Custom Patches is on
-        OptionPtr custom;
-        for (Page& p : pages)
-            for (auto& o : p.options)
-                if (o->key == L"custom_patches")
-                    custom = o;
-        if (custom)
-            for (auto& o : pages.back().options) {
-                o->enabled = [custom]() { return custom->b; };
-                o->disabled_hint = "Turn on Enable Custom Patches in Options to use custom patches.";
-            }
+        std::vector<Page> pages = make_pages(paths, false);
 
         Host host;
         host.gpu = g_renderer == Renderer::D3D11 ? adapter_name()
@@ -978,6 +1019,382 @@ namespace {
         return 0;
     }
 
+    // ------------------------------------------------------------ in-game overlay
+    //
+    // [launcher] overlay=1: the game starts straight away, and this UI opens over it with F10
+    // (or View and Start together on a controller). DivaLinux.dva does the drawing: it calls
+    // overlay_frame on the game's render thread before every present, and blends the picture
+    // returned over the frame. The picture is drawn on the CPU with real alpha, so the game
+    // shows faintly behind the menu. While the menu is open, the game's own input is held back:
+    // its window gets no keyboard or mouse messages, and GetAsyncKeyState, GetKeyState,
+    // GetKeyboardState and XInputGetState report nothing pressed to anyone but the launcher.
+
+#if defined(_MSC_VER) && !defined(__clang__)
+#define LFS_RETURN_ADDRESS() _ReturnAddress()
+#else
+#define LFS_RETURN_ADDRESS() __builtin_return_address(0)
+#endif
+
+    struct OverlayState {
+        bool open = false;
+        bool armed = false;         // everything released since opening; until then the UI sees no buttons
+        bool draining = false;      // closed, but the game sees nothing pressed until everything is released
+        bool toggle_was_down = false;
+        int toggle_key = VK_F10;
+        HWND hwnd = nullptr;
+        WNDPROC game_proc = nullptr;
+        bool ui_ready = false;
+        App* app = nullptr;
+        SoftCanvas canvas;
+        uint64_t hash = 0;
+        uint32_t serial = 0;
+        int cw = 0, ch = 0;         // canvas (menu picture) size
+        int lay_w = 0, lay_h = 0, sbs = 0, win_w = 0, win_h = 0; // latest frame, for mouse positions
+        LARGE_INTEGER qpc_freq = {}, qpc_last = {};
+        Paths paths;
+    };
+    OverlayState g_ov;
+    std::atomic<bool> g_block_input{ false };
+    // The game window's messages and DivaLinux's per-frame call may come from different
+    // threads; ImGui's input queue and frame are only touched under this lock.
+    CRITICAL_SECTION g_ov_lock;
+    struct OvLock {
+        OvLock() { EnterCriticalSection(&g_ov_lock); }
+        ~OvLock() { LeaveCriticalSection(&g_ov_lock); }
+    };
+    // Posted to the game window to show/hide the cursor on the window's own thread
+    // (ShowCursor's count belongs to the calling thread's input state).
+    const UINT WM_LFS_CURSOR = WM_APP + 0x4C46;
+    uintptr_t g_mod_lo = 0, g_mod_hi = 0;
+
+    void find_module_range() {
+        uintptr_t base = (uintptr_t)g_module;
+        auto dos = (const IMAGE_DOS_HEADER*)base;
+        auto nt = (const IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
+        g_mod_lo = base;
+        g_mod_hi = base + nt->OptionalHeader.SizeOfImage;
+    }
+
+    inline bool from_launcher(void* ret) {
+        uintptr_t r = (uintptr_t)ret;
+        return r >= g_mod_lo && r < g_mod_hi;
+    }
+
+    inline bool hold_back_input(void* caller) {
+        return g_block_input.load(std::memory_order_relaxed) && !from_launcher(caller);
+    }
+
+    typedef SHORT(WINAPI* PFN_GetAsyncKeyState)(int);
+    typedef SHORT(WINAPI* PFN_GetKeyState)(int);
+    typedef BOOL(WINAPI* PFN_GetKeyboardState)(PBYTE);
+    PFN_GetAsyncKeyState o_GetAsyncKeyState = nullptr;
+    PFN_GetKeyState o_GetKeyState = nullptr;
+    PFN_GetKeyboardState o_GetKeyboardState = nullptr;
+
+    SHORT WINAPI hk_GetAsyncKeyState(int vk) {
+        if (hold_back_input(LFS_RETURN_ADDRESS()))
+            return 0;
+        return o_GetAsyncKeyState(vk);
+    }
+
+    SHORT WINAPI hk_GetKeyState(int vk) {
+        if (hold_back_input(LFS_RETURN_ADDRESS()))
+            return 0;
+        return o_GetKeyState(vk);
+    }
+
+    BOOL WINAPI hk_GetKeyboardState(PBYTE keys) {
+        void* caller = LFS_RETURN_ADDRESS();
+        BOOL ok = o_GetKeyboardState(keys);
+        if (ok && keys && hold_back_input(caller))
+            for (int i = 0; i < 256; i++)
+                keys[i] &= 0x01; // keep toggle states (Caps Lock), drop "down"
+        return ok;
+    }
+
+    // One detour per XInput DLL (each needs its own trampoline).
+    const wchar_t* const XINPUT_DLLS[] = { L"xinput1_4.dll", L"xinput1_3.dll", L"xinput9_1_0.dll", L"xinput1_2.dll", L"xinput1_1.dll" };
+    PFN_XInputGetState o_XInputGetState[5] = {};
+
+    template <int N>
+    DWORD WINAPI hk_XInputGetState(DWORD index, XINPUT_STATE* st) {
+        void* caller = LFS_RETURN_ADDRESS();
+        DWORD rc = o_XInputGetState[N](index, st);
+        if (rc == ERROR_SUCCESS && st && hold_back_input(caller))
+            ZeroMemory(&st->Gamepad, sizeof(st->Gamepad));
+        return rc;
+    }
+    void* const XINPUT_DETOURS[5] = { (void*)&hk_XInputGetState<0>, (void*)&hk_XInputGetState<1>, (void*)&hk_XInputGetState<2>,
+        (void*)&hk_XInputGetState<3>, (void*)&hk_XInputGetState<4> };
+
+    void install_input_hooks() {
+        auto hook = [](void* target, void* detour, void** orig, const char* what) {
+            if (!target)
+                return;
+            if (MH_CreateHook(target, detour, orig) == MH_OK && MH_EnableHook(target) == MH_OK)
+                return;
+            lf_log("In-game menu: couldn't hook %s; the game may react to buttons pressed in the menu", what);
+        };
+        HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        hook((void*)GetProcAddress(user32, "GetAsyncKeyState"), (void*)&hk_GetAsyncKeyState, (void**)&o_GetAsyncKeyState, "GetAsyncKeyState");
+        hook((void*)GetProcAddress(user32, "GetKeyState"), (void*)&hk_GetKeyState, (void**)&o_GetKeyState, "GetKeyState");
+        hook((void*)GetProcAddress(user32, "GetKeyboardState"), (void*)&hk_GetKeyboardState, (void**)&o_GetKeyboardState, "GetKeyboardState");
+        for (int i = 0; i < 5; i++)
+            if (HMODULE h = GetModuleHandleW(XINPUT_DLLS[i]))
+                hook((void*)GetProcAddress(h, "XInputGetState"), XINPUT_DETOURS[i], (void**)&o_XInputGetState[i], "XInputGetState");
+    }
+
+    bool any_key_down() {
+        // The keys the menu reacts to, plus the mouse buttons and the toggle key
+        static const int keys[] = { VK_RETURN, VK_ESCAPE, VK_SPACE, VK_BACK, VK_TAB, VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT,
+            VK_PRIOR, VK_NEXT, VK_F5, 'Q', 'E', VK_LBUTTON, VK_RBUTTON };
+        if (GetAsyncKeyState(g_ov.toggle_key) & 0x8000)
+            return true;
+        for (int k : keys)
+            if (GetAsyncKeyState(k) & 0x8000)
+                return true;
+        return false;
+    }
+
+    void overlay_set_open(bool open) {
+        if (open == g_ov.open)
+            return;
+        g_ov.open = open;
+        if (open) {
+            g_ov.armed = false;
+            g_ov.draining = false;
+            g_block_input = true;
+            if (g_ov.hwnd)
+                PostMessageW(g_ov.hwnd, WM_LFS_CURSOR, 1, 0);
+            QueryPerformanceCounter(&g_ov.qpc_last);
+            lf_log("In-game menu opened");
+        }
+        else {
+            g_ov.draining = true; // g_block_input stays on until everything is let go
+            if (g_ov.hwnd)
+                PostMessageW(g_ov.hwnd, WM_LFS_CURSOR, 0, 0);
+            lf_log("In-game menu closed");
+        }
+    }
+
+    ImVec2 overlay_map_mouse(int x, int y) {
+        float ww = (float)std::max(g_ov.win_w, 1), wh = (float)std::max(g_ov.win_h, 1);
+        if (g_ov.sbs == 0)
+            return ImVec2(x * g_ov.cw / ww, y * g_ov.ch / wh);
+        // Side by side: the menu is in both halves; either one works.
+        float half = ww * 0.5f, fx = (float)x;
+        if (fx >= half)
+            fx -= half;
+        if (g_ov.sbs == 1)
+            return ImVec2(fx * g_ov.cw / half, y * g_ov.ch / wh);
+        // Full SBS: the menu keeps its shape inside its half (window ~ framebuffer size)
+        float lw = (float)std::max(g_ov.lay_w, 1), lh = (float)std::max(g_ov.lay_h, 1);
+        float ox = (half - lw) * 0.5f, oy = (wh - lh) * 0.5f;
+        return ImVec2((fx - ox) * g_ov.cw / lw, (y - oy) * g_ov.ch / lh);
+    }
+
+    // Input for the open menu. True when the message is the menu's (the game doesn't get it).
+    bool overlay_take_message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESULT& result) {
+        OvLock lock;
+        if (!g_ov.open || !g_ov.ui_ready)
+            return false;
+        ImGuiIO& io = ImGui::GetIO();
+        result = 0;
+        switch (msg) {
+        case WM_MOUSEMOVE: {
+            ImVec2 m = overlay_map_mouse((short)LOWORD(lp), (short)HIWORD(lp));
+            io.AddMousePosEvent(m.x, m.y);
+            return true;
+        }
+        case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_RBUTTONDOWN: case WM_RBUTTONUP:
+        case WM_LBUTTONDBLCLK: case WM_RBUTTONDBLCLK: {
+            ImVec2 m = overlay_map_mouse((short)LOWORD(lp), (short)HIWORD(lp));
+            io.AddMousePosEvent(m.x, m.y);
+            bool down = msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_LBUTTONDBLCLK || msg == WM_RBUTTONDBLCLK;
+            bool right = msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP || msg == WM_RBUTTONDBLCLK;
+            io.AddMouseButtonEvent(right ? 1 : 0, down);
+            return true;
+        }
+        case WM_MOUSEWHEEL:
+            io.AddMouseWheelEvent(0.0f, (float)GET_WHEEL_DELTA_WPARAM(wp) / (float)WHEEL_DELTA);
+            return true;
+        case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_XBUTTONDOWN: case WM_XBUTTONUP: case WM_MOUSEHWHEEL:
+            return true;
+        case WM_SYSKEYDOWN:
+            if (wp == VK_F4)
+                return false; // Alt+F4 still closes the game
+            ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
+            return true;
+        case WM_KEYDOWN: case WM_KEYUP: case WM_SYSKEYUP: case WM_CHAR: case WM_SYSCHAR:
+            ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
+            return true;
+        case WM_SETCURSOR:
+            if (LOWORD(lp) == HTCLIENT) {
+                SetCursor(LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW));
+                result = TRUE;
+                return true;
+            }
+            return false;
+        case WM_SETFOCUS: case WM_KILLFOCUS:
+            ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
+            return false; // the game still needs to know
+        }
+        return false;
+    }
+
+    LRESULT CALLBACK overlay_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+        // The toggle key is the menu's own (F10 would also start Windows' menu mode).
+        if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYUP) && (int)wp == g_ov.toggle_key)
+            return 0;
+        if (msg == WM_LFS_CURSOR) {
+            ShowCursor(wp ? TRUE : FALSE);
+            return 0;
+        }
+        LRESULT result = 0;
+        if (overlay_take_message(hwnd, msg, wp, lp, result))
+            return result;
+        return CallWindowProcW(g_ov.game_proc, hwnd, msg, wp, lp);
+    }
+
+    void overlay_ui_init(HWND hwnd) {
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.IniFilename = nullptr;
+        io.LogFilename = nullptr;
+        // Keyboard messages go through the Win32 backend; mouse positions are mapped onto the
+        // menu picture in overlay_wnd_proc, and the frame timing is done in overlay_frame.
+        ImGui_ImplWin32_Init(hwnd);
+        io.BackendRendererName = "lfs_overlay";
+        io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures;
+        Fonts fonts = load_fonts();
+
+        g_ov.paths = make_paths();
+        Host host;
+        host.wine = wine_version();
+        host.in_game = true;
+        host.launch = []() {
+            lf_log("Restarting the game from the in-game menu");
+            launch_game(g_ov.paths);
+        };
+        host.quit = []() { overlay_set_open(false); };
+        host.exit_game = []() {
+            lf_log("Quit from the in-game menu");
+            TerminateProcess(GetCurrentProcess(), EXIT_SUCCESS);
+        };
+        g_ov.app = new App(make_pages(g_ov.paths, true), host, fonts);
+        g_ov.canvas.keep_alpha = true;
+        QueryPerformanceFrequency(&g_ov.qpc_freq);
+        QueryPerformanceCounter(&g_ov.qpc_last);
+        g_ov.ui_ready = true;
+        lf_log("In-game menu ready");
+    }
+
+    // DivaLinux calls this on the game's render thread before every present.
+    void __cdecl overlay_frame(DivaLinuxOverlayFrame* f) {
+        if (!f || f->version < 1)
+            return;
+        if (!g_ov.hwnd && f->hwnd) {
+            g_ov.hwnd = f->hwnd;
+            g_ov.game_proc = (WNDPROC)SetWindowLongPtrW(f->hwnd, GWLP_WNDPROC, (LONG_PTR)&overlay_wnd_proc);
+            lf_log("In-game menu: attached to the game window (F10, or View + Start, opens it)");
+        }
+
+        OvLock lock;
+        // Open/close: the toggle key, or View + Start together on a controller (opening only:
+        // while open, View is the menu's own "Back to game").
+        PadSnapshot pads = read_pads();
+        const WORD combo = XINPUT_GAMEPAD_BACK | XINPUT_GAMEPAD_START;
+        bool key = (GetAsyncKeyState(g_ov.toggle_key) & 0x8000) != 0;
+        bool down = key || (!g_ov.open && (pads.buttons & combo) == combo);
+        if (down && !g_ov.toggle_was_down) {
+            if (!g_ov.open)
+                overlay_set_open(true);
+            else if (key && g_ov.app)
+                g_ov.app->request_close(); // asks about unsaved changes, like View does
+        }
+        g_ov.toggle_was_down = down;
+
+        if (!g_ov.open) {
+            // After closing, keep the game from seeing the buttons that closed the menu.
+            if (g_ov.draining && pads.buttons == 0 && !any_key_down()) {
+                g_ov.draining = false;
+                g_block_input = false;
+            }
+            return;
+        }
+        if (!g_ov.ui_ready)
+            overlay_ui_init(f->hwnd ? f->hwnd : g_ov.hwnd);
+        // The buttons that opened the menu aren't presses inside it.
+        if (!g_ov.armed && pads.buttons == 0 && !any_key_down())
+            g_ov.armed = true;
+
+        // Lay out for the size DivaLinux asks for, drawn at most 1080 pixels tall (it's scaled
+        // up on the GPU; less to draw on the CPU at 1440p and above).
+        g_ov.lay_w = f->width;
+        g_ov.lay_h = f->height;
+        g_ov.sbs = f->sbs;
+        g_ov.win_w = f->window_width > 0 ? f->window_width : f->width;
+        g_ov.win_h = f->window_height > 0 ? f->window_height : f->height;
+        float scale = f->height > 1080 ? 1080.0f / f->height : 1.0f;
+        g_ov.cw = std::max(1, (int)(f->width * scale + 0.5f));
+        g_ov.ch = std::max(1, (int)(f->height * scale + 0.5f));
+
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2((float)g_ov.cw, (float)g_ov.ch);
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        io.DeltaTime = std::max(1e-4f, std::min(0.25f, (float)((double)(now.QuadPart - g_ov.qpc_last.QuadPart) / (double)g_ov.qpc_freq.QuadPart)));
+        g_ov.qpc_last = now;
+        feed_pads(g_ov.armed ? pads : PadSnapshot());
+
+        ImGui::NewFrame();
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
+        g_ov.app->frame(io.DisplaySize.x, io.DisplaySize.y);
+        ImGui::Render();
+        if (!g_ov.open)
+            return; // closed by this frame's input
+
+        ImDrawData* dd = ImGui::GetDrawData();
+        soft_update_textures(dd);
+        g_ov.canvas.resize(g_ov.cw, g_ov.ch);
+        uint64_t h = draw_data_hash(dd);
+        if (h != g_ov.hash || g_ov.serial == 0) {
+            g_ov.hash = h;
+            g_ov.canvas.clear(0x00000000u);
+            soft_render(g_ov.canvas, dd);
+            g_ov.serial++;
+        }
+        f->pixels = g_ov.canvas.px.data();
+        f->image_width = g_ov.canvas.w;
+        f->image_height = g_ov.canvas.h;
+        f->image_stride = g_ov.canvas.w;
+        f->serial = g_ov.serial;
+    }
+
+    // Registers the in-game menu with DivaLinux. False if DivaLinux (with overlay support)
+    // isn't loaded; the launcher then opens as usual.
+    bool overlay_install() {
+        HMODULE dl = GetModuleHandleW(L"DivaLinux.dva");
+        auto set = dl ? (PFN_DivaLinux_SetOverlay)GetProcAddress(dl, "DivaLinux_SetOverlay") : nullptr;
+        if (!set) {
+            lf_log("In-game menu: %s, so the launcher opens before the game instead",
+                dl ? "this DivaLinux.dva is too old to draw it" : "DivaLinux.dva isn't loaded");
+            return false;
+        }
+        InitializeCriticalSection(&g_ov_lock);
+        find_module_range();
+        load_xinput();
+        install_input_hooks();
+        Paths paths = make_paths();
+        int key = (int)GetPrivateProfileIntW(L"launcher", L"overlay_key", VK_F10, paths.config.c_str());
+        if (key > 0 && key < 256)
+            g_ov.toggle_key = key;
+        int32_t version = set(&overlay_frame);
+        lf_log("In-game menu: registered with DivaLinux (interface %d); starting the game directly", (int)version);
+        return true;
+    }
+
     // ------------------------------------------------------------ divaMain hook
 
     typedef int(__cdecl* PFN_divaMain)(int argc, const char** argv, const char** envp);
@@ -989,7 +1406,10 @@ namespace {
         for (int i = 0; i < argc && !launch; i++)
             if (argv[i] && strcmp(argv[i], "--launch") == 0)
                 launch = true;
+        bool overlay = ini_get_int(L"launcher", L"overlay", 0, make_paths().config.c_str()) != 0;
         ini_invalidate();
+        if (overlay && overlay_install())
+            return g_original_main(argc, argv, envp);
         if (launch)
             return g_original_main(argc, argv, envp);
         return run_ui();

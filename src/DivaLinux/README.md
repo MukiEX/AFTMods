@@ -46,6 +46,15 @@ On the first run, if `DivaLinux.ini` doesn't exist yet, it is created from `Diva
 DivaMovie's other options (software/hybrid decoding, interop emulation, debug) are gone: they
 controlled Media Foundation and D3D9 paths that DivaLinux doesn't use.
 
+## In-game menu for the launcher
+
+Launcher.dva can run as a menu over the game instead of a window before it (Options >
+In-game menu). DivaLinux draws it: the launcher registers with `DivaLinux_SetOverlay`
+(`overlay.cpp`), and before each present DivaLinux asks it for the menu's current picture and
+blends it over the frame (`overlay_gl.h`, saving and restoring all GL state like the movie
+converter). In side-by-side 3D a copy goes into each eye's half, so the menu sits on the screen
+plane. See `src/LauncherFS/README.md` for using it.
+
 ## Faster loading and fewer files: `[loading]`
 
 DivaLinux can take over the game's file access in `rom\` and `mdata\` (`vfs.cpp`). This
@@ -191,6 +200,7 @@ Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation la
 | `movie/movie.cpp` | Installs the player on the game's `CreatePlayer` factory |
 | `io_trace.cpp` | The `[debug] io_trace` file I/O trace |
 | `vfs.cpp` | `[loading]`: the lookup cache and archive reading |
+| `overlay.cpp`, `overlay_gl.h` | Draws the launcher's in-game menu over the frame; tested in `src/DivaVK/tests` |
 | `../../tools/divalinux_pack.py` | Makes `rom.zip` and `mdata\<pack>.zip` |
 | `src/DivaVK/core/src/xr.cpp` | OpenXR output (virtual screen), tested against `src/DivaVK/tests/mock_xr_runtime.cpp` |
 

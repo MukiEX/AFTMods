@@ -499,6 +499,7 @@ namespace lfs {
                 make_string(L"command_line", LAUNCHER, CONFIG, L"Command Line:", L"Allows setting command line parameters for the game when using the launcher.\nDisabling the launcher will bypass this.", L"", false),
                 make_bool(L"use_divahook_bat", LAUNCHER, CONFIG, L"Use divahook.bat/start.bat", L"Launches divahook.bat/start.bat intead of diva.exe.", false, false),
                 make_bool(L"skip", LAUNCHER, CONFIG, L"Skip launcher", L"Start the game directly next time. To get the launcher back, set skip=0 in the [launcher] section of plugins\\config.ini.", false, false),
+                make_bool(L"overlay", LAUNCHER, CONFIG, L"In-game menu", L"Start the game directly and open these settings over it with F10, or View and Start together on a controller.\nRestart from the menu to apply changes. Needs DivaLinux.dva; without it, the launcher opens as usual.", false, false),
             };
             pages.push_back(pg);
         }

@@ -214,6 +214,10 @@ static HGLRC WINAPI bridge_wglGetCurrentContext() { return s_current; }
 static HDC WINAPI bridge_wglGetCurrentDC() { return s_current ? s_hdc : nullptr; }
 static BOOL WINAPI bridge_wglShareLists(HGLRC, HGLRC) { return TRUE; }
 
+#ifdef DIVALINUX
+extern "C" void divalinux_overlay_before_swap(HWND hwnd); // src/DivaLinux/overlay.cpp
+#endif
+
 static BOOL WINAPI bridge_SwapBuffers(HDC) {
     if (!s_created)
         return FALSE;
@@ -303,6 +307,9 @@ static BOOL WINAPI bridge_SwapBuffers(HDC) {
             dvk_request_frame_dump(dir);
         }
     }
+#ifdef DIVALINUX
+    divalinux_overlay_before_swap(s_hwnd); // the launcher's in-game menu, if it's open
+#endif
     DWORD t0 = GetTickCount();
     dvk_swap_buffers();
     uint64_t n = ++s_frames_shown;

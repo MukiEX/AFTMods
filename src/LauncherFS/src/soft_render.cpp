@@ -63,6 +63,21 @@ namespace lfs {
             return { p[0] * k, p[1] * k, p[2] * k, p[3] * k };
         }
 
+        // "Over" with the destination's alpha kept (SoftCanvas::keep_alpha).
+        inline void blend_alpha(uint32_t& d, float r, float g, float b, float a) {
+            if (a <= 0.002f)
+                return;
+            const float k = 1.0f / 255.0f;
+            const float da = (d >> 24) * k;
+            const float oa = a + da * (1.0f - a);
+            if (oa <= 0.0f)
+                return;
+            const float wd = da * (1.0f - a) / oa, ws = a / oa;
+            float dr = ((d >> 16) & 0xFF) * k, dg = ((d >> 8) & 0xFF) * k, db = (d & 0xFF) * k;
+            d = ((uint32_t)(oa * 255.0f + 0.5f) << 24) | ((uint32_t)((r * ws + dr * wd) * 255.0f + 0.5f) << 16)
+                | ((uint32_t)((g * ws + dg * wd) * 255.0f + 0.5f) << 8) | (uint32_t)((b * ws + db * wd) * 255.0f + 0.5f);
+        }
+
         inline void blend(uint32_t& d, float r, float g, float b, float a) {
             if (a <= 0.002f)
                 return;
@@ -80,6 +95,13 @@ namespace lfs {
                 | (uint32_t)(db * 255.0f + 0.5f);
         }
 
+        template <bool KeepAlpha>
+        inline void put(uint32_t& d, float r, float g, float b, float a) {
+            if (KeepAlpha) blend_alpha(d, r, g, b, a);
+            else blend(d, r, g, b, a);
+        }
+
+        template <bool KeepAlpha>
         void triangle(SoftCanvas& cv, const ImDrawVert& a, const ImDrawVert& b, const ImDrawVert& c,
                       const ImTextureData* tex, const ImVec4& clip) {
             float minx = std::max({ clip.x, 0.0f, std::floor(std::min({ a.pos.x, b.pos.x, c.pos.x })) });
@@ -117,7 +139,7 @@ namespace lfs {
                     if (w0 < eps || w1 < eps || w2 < eps)
                         continue;
                     if (same_uv && same_col) {
-                        blend(row[x], solid.r, solid.g, solid.b, solid.a);
+                        put<KeepAlpha>(row[x], solid.r, solid.g, solid.b, solid.a);
                         continue;
                     }
                     Rgba k;
@@ -128,11 +150,11 @@ namespace lfs {
                               w0 * ca.b + w1 * cb.b + w2 * cc.b, w0 * ca.a + w1 * cb.a + w2 * cc.a };
                     if (same_uv) {
                         Rgba t = texel(tex, a.uv.x, a.uv.y);
-                        blend(row[x], k.r * t.r, k.g * t.g, k.b * t.b, k.a * t.a);
+                        put<KeepAlpha>(row[x], k.r * t.r, k.g * t.g, k.b * t.b, k.a * t.a);
                     }
                     else {
                         Rgba t = texel(tex, w0 * a.uv.x + w1 * b.uv.x + w2 * c.uv.x, w0 * a.uv.y + w1 * b.uv.y + w2 * c.uv.y);
-                        blend(row[x], k.r * t.r, k.g * t.g, k.b * t.b, k.a * t.a);
+                        put<KeepAlpha>(row[x], k.r * t.r, k.g * t.g, k.b * t.b, k.a * t.a);
                     }
                 }
             }
@@ -156,8 +178,12 @@ namespace lfs {
                 const ImVec4 clip(cmd.ClipRect.x - off.x, cmd.ClipRect.y - off.y, cmd.ClipRect.z - off.x, cmd.ClipRect.w - off.y);
                 const ImDrawVert* v = dl->VtxBuffer.Data + cmd.VtxOffset;
                 const ImDrawIdx* idx = dl->IdxBuffer.Data + cmd.IdxOffset;
-                for (unsigned i = 0; i + 2 < cmd.ElemCount; i += 3)
-                    triangle(cv, v[idx[i]], v[idx[i + 1]], v[idx[i + 2]], tex, clip);
+                for (unsigned i = 0; i + 2 < cmd.ElemCount; i += 3) {
+                    if (cv.keep_alpha)
+                        triangle<true>(cv, v[idx[i]], v[idx[i + 1]], v[idx[i + 2]], tex, clip);
+                    else
+                        triangle<false>(cv, v[idx[i]], v[idx[i + 1]], v[idx[i + 2]], tex, clip);
+                }
             }
         }
     }

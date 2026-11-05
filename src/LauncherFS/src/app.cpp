@@ -260,7 +260,27 @@ namespace lfs {
                 host.launch();
         }
 
+        void reload_all() {
+            ini_invalidate();
+            for (Page& p : pages)
+                for (auto& o : p.options)
+                    o->load();
+        }
+
         void do_close() {
+            if (host.in_game) {
+                if (!any_dirty()) {
+                    if (host.quit)
+                        host.quit();
+                    return;
+                }
+                dialog("Save your changes?", "Settings take effect when the game restarts.", {
+                    { "Save and restart", [this]() { do_launch(); }, true },
+                    { "Save for next time", [this]() { save_all(); show_toast("Settings saved"); if (host.quit) host.quit(); } },
+                    { "Discard changes", [this]() { reload_all(); if (host.quit) host.quit(); } },
+                    { "Cancel", nullptr } }, 3);
+                return;
+            }
             if (!any_dirty()) {
                 if (host.quit)
                     host.quit();
@@ -270,6 +290,12 @@ namespace lfs {
                 { "Save and close", [this]() { save_all(); if (host.quit) host.quit(); }, true },
                 { "Close without saving", [this]() { if (host.quit) host.quit(); } },
                 { "Cancel", nullptr } }, 2);
+        }
+
+        void do_exit_game() {
+            dialog("Quit the game?", any_dirty() ? "Your unsaved changes will be lost." : "The game closes.", {
+                { "Quit", [this]() { if (host.exit_game) host.exit_game(); }, true },
+                { "Cancel", nullptr } }, 1, 1);
         }
 
         // ------------------------------------------------ overlays: open
@@ -545,9 +571,12 @@ namespace lfs {
             if (in.down && home_focus < n - 1) { home_focus++; focus_anim = 0.0f; }
             if (in.accept) {
                 if (home_focus == 0) do_launch();
-                else if (home_focus == 1) { save_all(); show_toast("Settings saved"); }
+                else if (home_focus == 1) { save_all(); show_toast(host.in_game ? "Saved; restart the game to apply" : "Settings saved"); }
+                else if (host.in_game) do_exit_game();
                 else do_close();
             }
+            else if (in.back && host.in_game)
+                do_close();
         }
 
         void list_input(const Input& in) {
@@ -752,14 +781,15 @@ namespace lfs {
         if (f0)
             dl->AddRect(ImVec2(play.Min.x - px(5), play.Min.y - px(5)), ImVec2(play.Max.x + px(5), play.Max.y + px(5)),
                 alpha(col::ink, 0.55f + 0.45f * focus_anim), px(24), 0, px(2.5f));
-        ImVec2 ps = measure(fonts.bold, 44, "Play");
-        text(dl, fonts.bold, 44, ImVec2(play.Min.x + px(36), play.GetCenter().y - ps.y * 0.5f), col::pink_ink, "Play");
+        const char* play_label = host.in_game ? "Restart" : "Play";
+        ImVec2 ps = measure(fonts.bold, 44, play_label);
+        text(dl, fonts.bold, 44, ImVec2(play.Min.x + px(36), play.GetCenter().y - ps.y * 0.5f), col::pink_ink, play_label);
         // note ring motif inside the button
         dl->AddCircle(ImVec2(play.Max.x - px(64), play.GetCenter().y), px(26), alpha(col::pink_ink, 0.85f), 40, px(4));
         dl->AddCircleFilled(ImVec2(play.Max.x - px(64), play.GetCenter().y), px(7), col::pink_ink, 20);
         y = play.Max.y + px(30);
 
-        const char* rows[2] = { "Save settings", "Close launcher" };
+        const char* rows[2] = { "Save settings", host.in_game ? "Quit game" : "Close launcher" };
         ImRect hits[3] = { play };
         for (int i = 0; i < 2; i++) {
             ImRect r(ImVec2(x0, y), ImVec2(x0 + col_w, y + px(52)));
@@ -779,7 +809,8 @@ namespace lfs {
                 if (in.click) {
                     home_focus = i;
                     if (i == 0) do_launch();
-                    else if (i == 1) { save_all(); show_toast("Settings saved"); }
+                    else if (i == 1) { save_all(); show_toast(host.in_game ? "Saved; restart the game to apply" : "Settings saved"); }
+                    else if (host.in_game) do_exit_game();
                     else do_close();
                 }
             }
@@ -789,7 +820,12 @@ namespace lfs {
             "Writes your changes to the PD Loader config files without starting the game.",
             "Closes the launcher. You'll be asked about unsaved changes.",
         };
-        help = helps[home_focus];
+        static const char* helps_in_game[3] = {
+            "Saves your settings and restarts the game with them.",
+            "Writes your changes to the PD Loader config files. They take effect the next time the game starts.",
+            "Closes the game.",
+        };
+        help = (host.in_game ? helps_in_game : helps)[home_focus];
 
         // Setup summary
         float sx = x0 + col_w + px(72);
@@ -1030,11 +1066,13 @@ namespace lfs {
             }
             // right side
             float rx = W - m;
-            ImVec2 a = measure(fonts.regular, 17, "Close");
-            ImVec2 b = measure(fonts.regular, 17, "Play");
+            const char* close_label = host.in_game ? "Back to game" : "Close";
+            const char* play_label = host.in_game ? "Restart" : "Play";
+            ImVec2 a = measure(fonts.regular, 17, close_label);
+            ImVec2 b = measure(fonts.regular, 17, play_label);
             float w_close = px(64) + a.x, w_play = px(64) + b.x + px(26);
-            prompt(dl, rx - w_close, cy, Btn::View, "Close");
-            prompt(dl, rx - w_close - w_play, cy, Btn::Start, "Play");
+            prompt(dl, rx - w_close, cy, Btn::View, close_label);
+            prompt(dl, rx - w_close - w_play, cy, Btn::Start, play_label);
         }
         else if (overlay == Overlay::Picker) {
             x = prompt(dl, x, cy, Btn::A, "Choose");
@@ -1271,7 +1309,10 @@ namespace lfs {
         }
 
         ImDrawList* dl = ImGui::GetBackgroundDrawList();
-        dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(W, H), col::bg_top, col::bg_top, col::bg_bot, col::bg_bot);
+        // Over the game, the background lets a little of it show through.
+        const float bg_alpha = host.in_game ? 0.9f : 1.0f;
+        dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(W, H), alpha(col::bg_top, bg_alpha), alpha(col::bg_top, bg_alpha),
+            alpha(col::bg_bot, bg_alpha), alpha(col::bg_bot, bg_alpha));
 
         float top_h = px(76);
         float bar_h = px(60);

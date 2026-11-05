@@ -66,6 +66,8 @@ void dvk_swap_buffers(void);
 
 /* Resizes the default framebuffer (and swapchain). */
 void dvk_resize(int32_t width, int32_t height);
+/* Size of the default framebuffer (what dvk_resize last set); 0 x 0 before dvk_create. */
+void dvk_get_framebuffer_size(int32_t* width, int32_t* height);
 
 void dvk_set_vsync(bool vsync);
 
