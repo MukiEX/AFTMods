@@ -272,6 +272,11 @@ static void draw_hud_layer() {
     rend_data_ctx.state.begin_event("hud_layer");
     hud_layer_rt->begin_render(rend_data_ctx.state);
     rend_data_ctx.state.set_viewport(0, 0, w, h);
+    // Whatever earlier passes left behind must not limit the clear: everything outside the
+    // HUD's sprites has to be fully transparent, or the headset shows it over the PV.
+    rend_data_ctx.state.disable_scissor_test();
+    rend_data_ctx.state.disable_stencil_test();
+    rend_data_ctx.state.set_color_mask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     rend_data_ctx.state.clear_color(0.0f, 0.0f, 0.0f, 0.0f);
     rend_data_ctx.state.clear(GL_COLOR_BUFFER_BIT);
     if (sprite_manager_get_reqlist_count(0)) {
