@@ -590,8 +590,6 @@ static EffectRipple* (FASTCALL* effect_ripple_data_get)() = (EffectRipple * (FAS
 static void (FASTCALL* snow_particle_data_init)() = (void (FASTCALL*)())0x000000014035C930;
 static void (FASTCALL* snow_particle_data_free)() = (void (FASTCALL*)())0x000000014035DB90;
 
-extern render_context* rctx;
-
 static void TaskEffectAuth3D__SetVisibility(size_t This, bool value);
 
 static void draw_fog_particle(render_data_context& rend_data_ctx,

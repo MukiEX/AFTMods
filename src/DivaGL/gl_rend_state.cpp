@@ -317,14 +317,21 @@ struct gl_rend_state {
     void write_shader_storage_buffer(GLuint buffer, GLintptr offset, GLsizeiptr size, const void* data);
 };
 
-gl_rend_state gl_rend_state_data[GL_REND_STATE_COUNT] = {
+// [0..3] the game thread's, [4..7] a PV render thread's (gl_rend_state_thread_base)
+gl_rend_state gl_rend_state_data[GL_REND_STATE_COUNT * 2] = {
+    { GL_REND_STATE_PRE_3D  },
+    { GL_REND_STATE_3D      },
+    { GL_REND_STATE_2D      },
+    { GL_REND_STATE_POST_2D },
     { GL_REND_STATE_PRE_3D  },
     { GL_REND_STATE_3D      },
     { GL_REND_STATE_2D      },
     { GL_REND_STATE_POST_2D },
 };
+thread_local int32_t gl_rend_state_thread_base;
 
-p_gl_rend_state::p_gl_rend_state(gl_rend_state_index index) : ptr(gl_rend_state_data[index]) {
+p_gl_rend_state::p_gl_rend_state(gl_rend_state_index index)
+    : ptr(gl_rend_state_data[index + gl_rend_state_thread_base]) {
 
 }
 

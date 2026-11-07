@@ -21,16 +21,14 @@
 #include "static_var.hpp"
 #include "../AFTModsShared/rob/rob.hpp"
 
-extern render_context* rctx;
-
-float_t sprite_stereo_offset[4] = {};
+thread_local float_t sprite_stereo_offset[4] = {};   // per thread: the HUD and a PV render thread
 
 // Heap-allocated so no GL/texture release runs from a static destructor at process exit.
 static RenderTexture* stereo_buffer = 0;
 static int32_t stereo_buffer_width = 0;
 static int32_t stereo_buffer_height = 0;
 
-static int32_t stereo_current_eye = 0;
+static thread_local int32_t stereo_current_eye = 0;
 
 // Updated once per frame from the center camera
 static float_t stereo_half_sep = 0.0f;     // half the eye separation in use, world units

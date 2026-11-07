@@ -18,8 +18,6 @@
 
 extern bool task_stage_is_modern;
 
-extern render_context* rctx;
-
 rndr::Render* (FASTCALL* render_get)() = (rndr::Render * (FASTCALL*)())0x00000001404AE8A0;
 
 #define MLAA_MAX_EDGE_DETECTION_LEN (3)
@@ -204,7 +202,8 @@ namespace rndr {
         for (int32_t i = 0; i < 8; i++)
             rend_data_ctx.state.bind_sampler(i, 0);
 
-        if (!stereo_in_eye_pass())
+        // (the PV render thread's picture goes to its slot, never to the window)
+        if (!stereo_in_eye_pass() && !pv_render_thread_flag)
             fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), 0,
                 0, 0, rctx->screen_width, rctx->screen_height,
                 0, 0, rctx->screen_width, rctx->screen_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);

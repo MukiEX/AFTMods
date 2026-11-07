@@ -436,6 +436,15 @@ namespace dvk {
         }
 
         create_frames();
+        if (sh->has_timeline) {
+            // signalled with each frame's serial, so a shared context can order its work after ours
+            VkSemaphoreTypeCreateInfoKHR stci = { VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO_KHR };
+            stci.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE_KHR;
+            VkSemaphoreCreateInfo sci = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+            sci.pNext = &stci;
+            if (vkCreateSemaphore(device, &sci, nullptr, &timeline) != VK_SUCCESS)
+                timeline = VK_NULL_HANDLE;
+        }
 
         program_global_init();
 
@@ -611,6 +620,8 @@ namespace dvk {
         vmaDestroyBuffer(vma, null_vertex_buffer, null_vertex_alloc);
         vmaDestroyBuffer(vma, dummy_buffer, dummy_buffer_alloc);
         vkDestroyPipelineCache(device, pipeline_cache, nullptr);
+        if (timeline)
+            vkDestroySemaphore(device, timeline, nullptr);
         vmaDestroyAllocator(vma);
         vkDestroyDevice(device, nullptr);
         if (surface)

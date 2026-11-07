@@ -16,6 +16,10 @@ enum gl_rend_state_index {
     GL_REND_STATE_COUNT,
 };
 
+// 0 on the game thread, GL_REND_STATE_COUNT on a PV render thread: each thread has its
+// own set of cached render states (it draws with its own GL context).
+extern thread_local int32_t gl_rend_state_thread_base;
+
 struct gl_rend_state_rect {
     GLint x;
     GLint y;

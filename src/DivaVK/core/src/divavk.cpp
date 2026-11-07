@@ -254,3 +254,12 @@ extern "C" double dvk_context_take_gpu_ms(dvk_context ctx, uint32_t* frames) {
         *frames = n;
     return ms;
 }
+
+extern "C" dvk_context dvk_main_context(void) {
+    return (dvk_context)g_ctx;
+}
+
+extern "C" uint64_t dvk_last_ticket(dvk_context ctx) {
+    Context* c = ctx ? (Context*)ctx : current_ctx();
+    return c ? c->last_submitted.load() : 0;
+}

@@ -32,6 +32,10 @@
 #include <divavk/divavk.h>
 #endif
 #include <cstdlib>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
 #include <cstring>
 
 struct light_data_color {
@@ -39,8 +43,6 @@ struct light_data_color {
     vec4 diffuse;
     vec4 specular;
 };
-
-extern render_context* rctx;
 
 RenderTexture* litproj_shadow = (RenderTexture*)0x0000000141194DA0;
 RenderTexture* litproj_texture = (RenderTexture*)0x0000000141194E00;
@@ -101,9 +103,10 @@ static RenderTexture* pv_cache[2][2] = {};    // [slot][eye]: eye 0 mono or left
 static bool pv_cache_valid[2][2] = {};
 static int32_t pv_front = 0;                  // slot put back under the HUD
 static int32_t pv_save_slot = 0;              // slot a finished PV picture goes to (the other one in async mode)
-static int32_t pv_cache_width = 0;
-static int32_t pv_cache_height = 0;
+static int32_t pv_cache_w[2] = {};           // per slot (written by whoever draws into it)
+static int32_t pv_cache_h[2] = {};
 static bool pv_skip = false;                  // this frame reuses the kept PV picture
+static bool pv_threaded_was = false;          // threaded PV (pv_threaded_frame) was on last frame
 static int32_t pv_since_full = 0;             // frames since the PV was last drawn
 
 /* frame timing, for auto mode and the perf log */
@@ -130,6 +133,7 @@ struct pv_sync_struct {
     volatile uint32_t pv_done;      // us: PV pictures finished
     volatile uint32_t async_ok;     // us: async PV supported
     volatile uint32_t period_us;    // host: the display's frame time
+    volatile uint32_t pv_drawing;   // us: the PV thread is drawing right now (CPU side)
 };
 static pv_sync_struct* pv_sync = 0;
 static bool pv_sync_checked = false;
@@ -185,7 +189,7 @@ static void pv_frame_begin() {
     const bool sb = rctx->screen_buffer.m_txhd_color != 0;
     const int32_t w = sb ? rctx->screen_buffer.get_width() : 0;
     const int32_t h = sb ? rctx->screen_buffer.get_height() : 0;
-    if (w != pv_cache_width || h != pv_cache_height)
+    if (!pv_threaded_was && (w != pv_cache_w[pv_front] || h != pv_cache_h[pv_front]))
         memset(pv_cache_valid, 0, sizeof(pv_cache_valid));
 
     if (!pv_sync_checked) {
@@ -230,23 +234,23 @@ static void pv_cache_save(render_data_context& rend_data_ctx, int32_t eye) {
     const int32_t h = rctx->screen_buffer.get_height();
     if (w <= 0 || h <= 0)
         return;
-    if (w != pv_cache_width || h != pv_cache_height) {
-        for (RenderTexture** slot : pv_cache)
-            for (int32_t i = 0; i < 2; i++)
-                if (slot[i])
-                    slot[i]->destroy();
-        memset(pv_cache_valid, 0, sizeof(pv_cache_valid));
-        pv_cache_width = w;
-        pv_cache_height = h;
+    const int32_t slot = pv_save_slot;
+    if (w != pv_cache_w[slot] || h != pv_cache_h[slot]) {
+        for (RenderTexture* i : pv_cache[slot])
+            if (i)
+                i->destroy();
+        pv_cache_valid[slot][0] = pv_cache_valid[slot][1] = false;
+        pv_cache_w[slot] = w;
+        pv_cache_h[slot] = h;
     }
-    RenderTexture*& rt = pv_cache[pv_save_slot][eye];
+    RenderTexture*& rt = pv_cache[slot][eye];
     if (!rt)
         rt = new RenderTexture;
     if (!rt->m_txhd_color)
         rt->create_texture(w, h, 0, GL_RGBA8, 0);
     fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), rt->get_fb(),
         0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    pv_cache_valid[pv_save_slot][eye] = true;
+    pv_cache_valid[slot][eye] = true;
 }
 
 /* HUD layer ([vr] hud_layer): in a headset, the HUD (sprite list 0) isn't drawn into the
@@ -296,7 +300,7 @@ static void draw_hud_layer() {
     rend_data_ctx.state.set_color_mask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     rend_data_ctx.state.clear_color(0.0f, 0.0f, 0.0f, 0.0f);
     rend_data_ctx.state.clear(GL_COLOR_BUFFER_BIT);
-    if (sprite_manager_get_reqlist_count(0)) {
+    if (sprite_manager_reqlist_count(0)) {
         rend_data_ctx.state.disable_depth_test();
         rend_data_ctx.state.enable_blend();
         rend_data_ctx.state.disable_cull_face();
@@ -319,77 +323,69 @@ static void draw_hud_layer() {
 }
 
 static void pv_cache_restore(render_data_context& rend_data_ctx, int32_t eye) {
+    const int32_t w = pv_cache_w[pv_front], h = pv_cache_h[pv_front];
+    const int32_t sw = rctx->screen_width, sh = rctx->screen_height;
     fbo_blit(rend_data_ctx.state, pv_cache[pv_front][eye]->get_fb(), rctx->screen_buffer.get_fb(),
-        0, 0, pv_cache_width, pv_cache_height, 0, 0, pv_cache_width, pv_cache_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        0, 0, w, h, 0, 0, sw, sh, GL_COLOR_BUFFER_BIT, w == sw && h == sh ? GL_NEAREST : GL_LINEAR);
 }
 
-/* Async PV (a host with schedule version 2: the DivaRecomp runtime on Quest).
-   The HUD is drawn every frame over the newest finished PV picture; the PV picture is
-   drawn in steps spread over as many frames as it takes, into the other of two picture
-   slots (A and B), and becomes the one shown when its last step is done:
+/* Threaded PV (a host with schedule version 2: the DivaRecomp runtime on Quest).
+   The PV picture is drawn by a thread of its own, with a GL context of its own (DivaVK's
+   shared context, submitting to a second, lower-priority GPU queue when there is one). The
+   game thread draws only the HUD, every frame, over the newest *finished* PV picture, and
+   never waits for the PV thread or its GPU work:
 
-     frame 1  HUD drawn over A   PV picture 2: shadow, SSS      (into B)
-     frame 2  HUD drawn over A   PV picture 2: 3D
-     frame 3  HUD drawn over A   PV picture 2: post-process -> finished, B shown from now
-     frame 4  HUD drawn over B   PV picture 3: shadow ...       (into A)
+     game thread   HUD over A | HUD over A | HUD over A | HUD over B | HUD over B ...
+     PV thread     [ drawing picture into B .......... ]  [ drawing into A ...
+                                          finished on the GPU ^ (checked, never waited for)
 
-   Nothing in a frame waits for the PV: each frame runs only the steps that fit in what
-   is left of the frame time (a budget that shrinks when frames run late and grows
-   back when they don't). The host only updates the PV's tasks (animation, physics,
-   stage, effects) and rebuilds its draw lists on the frame after a picture is
-   finished (disp_seq); while a picture is in progress its draw lists are kept, and the
-   game's per-frame refresh of them is held (pv_async_refresh_hold). The camera and
-   the post-process state the picture started with are put back for each step. */
+   Handoff (game thread, only while the PV thread is idle, on the frame the runtime updated
+   the PV's tasks and rebuilt their draw lists): the draw lists and their arena, the screen
+   and reflection lists, the PV's sprite lists (1 and 2) and the scene pointers of the
+   particle managers move to the PV thread's own copies, and the camera is copied. The game's
+   lists are then refreshed and filled as usual. The PV thread has its own render context
+   (buffers, targets, cached GL state), draws shadows, reflections, 3D and post-process per
+   eye, keeps the result in its slot, submits and publishes the ticket. The game thread shows
+   the slot once the ticket is done on the GPU; the next picture is handed off after that.
+   The PV thread's GPU work is ordered after the game frames that last showed the slot it
+   overwrites (a GPU-side wait of the PV queue on the game's queue, never the reverse). */
 namespace {
-    enum { PV_STEP_MAX = 2 * 9 };
-    struct pv_step { int8_t eye; int8_t pass; };
-
-    struct pv_job_t {
-        bool active;
-        uint32_t seq_seen;
-        uint32_t number;                // picture number (1, 2, ...)
-        int32_t n, next;
-        pv_step steps[PV_STEP_MAX];
+    struct pv_thread_t {
+        std::thread thread;
+        std::mutex m;
+        std::condition_variable cv;
+        bool job = false;                       // under m
+        bool quit = false;                      // under m
+        bool tried = false;                     // game thread: creation attempted
+        dvk_context ctx = nullptr;
+        mdl::DispManager* dm = nullptr;
+        std::atomic<render_context*> rctx{ nullptr };
+        std::atomic<bool> ready{ false };
+        // the job, written by the game thread before it's posted
+        int32_t slot = 0;
+        int32_t eyes = 1;
+        uint64_t after_main = 0;
+        uint32_t number = 0;
         cam_data cam;
-        int32_t composite_back;
-        GLuint lens_flare_texture;
-        int32_t exposure_history_counter, exposure_query_index, lens_flare_query_index;
-        size_t obj_count[mdl::OBJ_TYPE_MAX];
-        size_t screen_count[mdl::OBJ_TYPE_SCREEN_MAX];
-        size_t reflect_count[mdl::OBJ_TYPE_REFLECT_MAX];
-        int32_t buff_offset;
-        int32_t frames;                 // frames this picture has taken so far
-        int32_t idle_frames;            // frames in a row with no step run
+        // results, published by the PV thread
+        std::atomic<uint64_t> ticket{ 0 };      // the picture's ticket once submitted
+        std::atomic<uint32_t> recorded{ 0 };    // number of the picture last submitted
+        std::atomic<double> cpu_ms{ 0.0 };      // its thread time for the last picture
     };
-    pv_job_t pv_job = {};
-    bool pv_async_was = false;
-    double_t pv_step_est[rndr::RND_PASSID_NUM] = {};
-    double_t pv_budget_ms = 4.0;
+    pv_thread_t* pvt = nullptr;
+    bool pv_job_out = false;                    // game thread: handed off, not shown yet
+    uint32_t pv_shown_number = 0;
     uint32_t pv_frame_no = 0;
-    int32_t pv_trace_left = 0;          // frames still to log one line each
+    int32_t pv_trace_left = 0;
+    LARGE_INTEGER pv_handoff_time = {};
     struct {
-        int32_t frames, late, pictures, steps, forced, held, pic_frames_max;
-        double_t worst_ms, pic_frames_sum, step_ms, budget_sum;
+        int32_t frames, late, pictures;
+        double_t worst_ms, sum_ms, pic_ms_sum, pic_ms_max, pv_cpu_ms, handoff_ms;
         LARGE_INTEGER start;
-    } pv_as = {};
-
-    const char* pv_pass_name(int32_t pass) {
-        switch (pass) {
-        case rndr::RND_PASSID_SHADOW: return "shadow";
-        case rndr::RND_PASSID_SS_SSS: return "sss";
-        case rndr::RND_PASSID_REFLECT: return "reflect";
-        case rndr::RND_PASSID_REFRACT: return "refract";
-        case rndr::RND_PASSID_PRE_PROCESS: return "pre-process";
-        case rndr::RND_PASSID_CLEAR: return "clear";
-        case rndr::RND_PASSID_PRE_SPRITE: return "background sprites";
-        case rndr::RND_PASSID_3D: return "3D";
-        case rndr::RND_PASSID_POST_PROCESS: return "post-process";
-        }
-        return "?";
-    }
+    } pv_ts = {};
 }
 
-static bool pv_async_on() {
+static bool pv_threaded_on() {
     return pv_sync && pv_sync->version >= 2 && pv_sync->async;
 }
 
@@ -397,254 +393,305 @@ static bool pv_front_valid() {
     return pv_cache_valid[pv_front][0] && (!stereo_enabled() || pv_cache_valid[pv_front][1]);
 }
 
-static void pv_job_abandon() {
-    if (!pv_job.active)
-        return;
-    pv_job.active = false;
-    pv_save_slot = pv_front;
-    if (pv_sync)
-        pv_sync->pv_busy = 0;
-}
-
-static void pv_job_start() {
-    pv_job_t& j = pv_job;
+static void pv_thread_draw() {
+    pv_thread_t& t = *pvt;
+    LARGE_INTEGER t0;
+    QueryPerformanceCounter(&t0);
+    render_context* r = rctx;   // this thread's
     rndr::Render* rend = render_manager.render;
-    j.active = true;
-    j.number++;
-    j.next = 0;
-    j.n = 0;
-    j.frames = 0;
-    j.idle_frames = 0;
-    static const int8_t passes[] = { rndr::RND_PASSID_SHADOW, rndr::RND_PASSID_SS_SSS, rndr::RND_PASSID_REFLECT,
-        rndr::RND_PASSID_REFRACT, rndr::RND_PASSID_PRE_PROCESS, rndr::RND_PASSID_CLEAR,
-        rndr::RND_PASSID_PRE_SPRITE, rndr::RND_PASSID_3D, rndr::RND_PASSID_POST_PROCESS };
-    const int32_t eyes = stereo_enabled() ? 2 : 1;
-    for (int32_t e = 0; e < eyes; e++)
-        for (int8_t p : passes)
-            if (render_manager.pass_sw[p])
-                j.steps[j.n++] = { (int8_t)e, p };
-            else if (p == rndr::RND_PASSID_POST_PROCESS)
-                j.steps[j.n++] = { (int8_t)e, p };   // always: it ends with keeping the picture
-    j.cam = rctx->render_manager_cam;
-    j.composite_back = rend->composite_back;
-    j.lens_flare_texture = rend->lens_flare_texture;
-    j.exposure_history_counter = rend->exposure_history_counter;
-    j.exposure_query_index = rend->exposure_query_index;
-    j.lens_flare_query_index = rend->lens_flare_query_index;
-    for (int32_t i = 0; i < mdl::OBJ_TYPE_MAX; i++)
-        j.obj_count[i] = disp_manager->obj[i].size();
-    for (int32_t i = 0; i < mdl::OBJ_TYPE_SCREEN_MAX; i++)
-        j.screen_count[i] = rctx->obj_screen[i].size();
-    for (int32_t i = 0; i < mdl::OBJ_TYPE_REFLECT_MAX; i++)
-        j.reflect_count[i] = rctx->obj_reflect[i].size();
-    j.buff_offset = disp_manager->buff_offset;
-    pv_save_slot = pv_front_valid() ? pv_front ^ 1 : pv_front;
-    pv_cache_valid[pv_save_slot][0] = pv_cache_valid[pv_save_slot][1] = false;
-    pv_sync->pv_busy = 1;
-}
 
-/* The game's per-frame refresh of the draw lists, while a PV picture is in progress:
-   keep the lists the picture started with (drop anything added since). */
-bool pv_async_refresh_hold() {
-    if (!pv_job.active)
-        return false;
-    mdl::DispManager* dm = disp_manager;
-    for (int32_t i = 0; i < mdl::OBJ_TYPE_MAX; i++)
-        while (dm->obj[i].size() > pv_job.obj_count[i])
-            dm->obj[i].pop_back();
-    for (int32_t i = 0; i < mdl::OBJ_TYPE_SCREEN_MAX; i++)
-        while (rctx->obj_screen[i].size() > pv_job.screen_count[i])
-            rctx->obj_screen[i].pop_back();
-    for (int32_t i = 0; i < mdl::OBJ_TYPE_REFLECT_MAX; i++)
-        while (rctx->obj_reflect[i].size() > pv_job.reflect_count[i])
-            rctx->obj_reflect[i].pop_back();
-    dm->buff_offset = pv_job.buff_offset;
-    // the per-entry state a refresh resets
-    dm->obj_flags = (mdl::ObjFlags)0;
-    dm->field_8 = 0;
-    dm->field_C = 0;
-    dm->texture_pattern_count = 0;
-    memset(dm->texture_pattern_array, 0, sizeof(dm->texture_pattern_array));
-    dm->texture_transform_count = 0;
-    memset(dm->texture_transform_array, 0, sizeof(dm->texture_transform_array));
-    dm->texture_color_coefficients = 1.0f;
-    dm->texture_color_offset = 0.0f;
-    dm->texture_specular_coefficients = 1.0f;
-    dm->texture_specular_offset = 0.0f;
-    pv_as.held++;
-    return true;
-}
+    // its GPU work goes after the game frames that last showed the slot it overwrites
+    dvk_ticket_use(dvk_main_context(), t.after_main);
+    r->ctrl();
+    r->render_manager_cam = t.cam;
 
-static void pv_job_run_step(const pv_step& st) {
-    pv_job_t& j = pv_job;
-    rndr::Render* rend = render_manager.render;
-    const bool stereo = stereo_enabled();
-    const cam_data cam_now = rctx->render_manager_cam;
+    {
+        // what the game thread's rndpass_pre_proc did for the PV, now for this picture only
+        render_data_context rend_data_ctx(GL_REND_STATE_PRE_3D);
+        rend_data_ctx.state.get();
+        rend_data_ctx.state.begin_event("PV thread: pre_proc");
+        rend->pre_proc(rend_data_ctx);
+        Glitter::glt_particle_manager->CalcDisp();
+        if (Glitter::glt_particle_manager_x)
+            Glitter::glt_particle_manager_x->CalcDisp();
+        r->pre_proc();
+        rend_data_ctx.state.end_event();
+    }
+    sprite_manager_pre_draw();
+    mdl::etc_obj_manager->pre_draw();
+
+    const bool stereo = t.eyes == 2;
+    const cam_data center_cam = r->render_manager_cam;
     const int32_t taa = rend->taa;
     const float_t taa_blend = rend->taa_blend;
-    const int32_t composite_back = rend->composite_back;
-    const GLuint lens_flare_texture = rend->lens_flare_texture;
-
-    rend->composite_back = j.composite_back;
-    rend->lens_flare_texture = j.lens_flare_texture;
+    const int32_t exposure_history_counter = rend->exposure_history_counter;
+    const int32_t exposure_query_index = rend->exposure_query_index;
+    const int32_t lens_flare_query_index = rend->lens_flare_query_index;
     if (stereo) {
-        // as render_all_stereo: no TAA, and the per-frame ring counters advance once per picture
         rend->taa = 0;
         rend->taa_blend = 1.0f;
-        if (st.eye == 1 && j.next > 0 && j.steps[j.next - 1].eye == 0) {
-            rend->exposure_history_counter = j.exposure_history_counter;
-            rend->exposure_query_index = j.exposure_query_index;
-            rend->lens_flare_query_index = j.lens_flare_query_index;
-        }
-        const int32_t sign = st.eye ? 1 : -1;
-        stereo_make_eye_cam(j.cam, rctx->render_manager_cam, sign);
-        stereo_eye_begin(sign);
     }
-    else
-        rctx->render_manager_cam = j.cam;
+    for (int32_t eye = 0; eye < t.eyes; eye++) {
+        if (stereo) {
+            const int32_t sign = eye ? 1 : -1;
+            if (eye) {
+                rend->exposure_history_counter = exposure_history_counter;
+                rend->exposure_query_index = exposure_query_index;
+                rend->lens_flare_query_index = lens_flare_query_index;
+            }
+            stereo_make_eye_cam(center_cam, r->render_manager_cam, sign);
+            stereo_eye_begin(sign);
+        }
+        {
+            render_data_context rend_data_ctx(GL_REND_STATE_PRE_3D);
+            rend_data_ctx.state.get();
+            rend_data_ctx.state.begin_event("PV thread: pre3d");
+            for (int32_t i = rndr::RND_PASSID_SHADOW; i <= rndr::RND_PASSID_CLEAR; i++)
+                render_manager.render_single_pass(rend_data_ctx, (rndr::RenderPassID)i);
+            rend_data_ctx.state.end_event();
+            rend_data_ctx.state.finish();
+        }
+        dvk_flush();   // submitted in pieces, so the GPU can fit the HUD's frames in between
+        {
+            render_data_context rend_data_ctx(GL_REND_STATE_3D);
+            rend_data_ctx.state.get();
+            rend_data_ctx.state.begin_event("PV thread: 3d");
+            for (int32_t i = rndr::RND_PASSID_PRE_SPRITE; i <= rndr::RND_PASSID_3D; i++)
+                render_manager.render_single_pass(rend_data_ctx, (rndr::RenderPassID)i);
+            rend_data_ctx.state.end_event();
+            rend_data_ctx.state.finish();
+        }
+        dvk_flush();
+        {
+            render_data_context rend_data_ctx(GL_REND_STATE_2D);
+            rend_data_ctx.state.get();
+            rend_data_ctx.state.begin_event("PV thread: post-process");
+            render_manager.render_single_pass(rend_data_ctx, rndr::RND_PASSID_POST_PROCESS);
+            pv_cache_save(rend_data_ctx, eye);
+            rend_data_ctx.state.end_event();
+            rend_data_ctx.state.finish();
+        }
+        stereo_eye_reset();
+    }
+    r->render_manager_cam = center_cam;
+    rend->taa = taa;
+    rend->taa_blend = taa_blend;
 
-    const rndr::RenderPassID pass = (rndr::RenderPassID)st.pass;
-    gl_rend_state_index state = pass <= rndr::RND_PASSID_CLEAR ? GL_REND_STATE_PRE_3D
-        : pass <= rndr::RND_PASSID_3D ? GL_REND_STATE_3D : GL_REND_STATE_2D;
+    // what the game thread's rndpass_post_proc did for the PV
+    rend->post_proc();
+    r->post_proc();
+    mdl::etc_obj_manager->post_draw();
+    sprite_manager_post_draw();
+    sprite_manager_thread_clear_lists();
     {
-        render_data_context rend_data_ctx(state);
-        rend_data_ctx.state.get();
-        rend_data_ctx.state.begin_event("async PV step");
-        render_manager.render_single_pass(rend_data_ctx, pass);
-        if (pass == rndr::RND_PASSID_POST_PROCESS)
-            pv_cache_save(rend_data_ctx, st.eye);
-        rend_data_ctx.state.end_event();
+        render_data_context rend_data_ctx(GL_REND_STATE_POST_2D);
         rend_data_ctx.state.finish();
     }
 
-    j.composite_back = rend->composite_back;
-    j.lens_flare_texture = rend->lens_flare_texture;
-    rend->composite_back = composite_back;
-    rend->lens_flare_texture = lens_flare_texture;
-    rend->taa = taa;
-    rend->taa_blend = taa_blend;
-    rctx->render_manager_cam = cam_now;
-    stereo_eye_reset();
+    const uint64_t ticket = dvk_flush();
+    t.cpu_ms.store(pv_ms_since(t0));
+    t.ticket.store(ticket);
+    t.recorded.store(t.number);
 }
 
-static void pv_async_log(double_t elapsed_s) {
-    if (pv_as.frames <= 0)
+static void pv_thread_main() {
+    pv_thread_t& t = *pvt;
+    dvk_make_current(t.ctx);
+    pv_render_thread_flag = true;
+    static gl_state_struct pv_gl_state = {};
+    gl_state_thread = &pv_gl_state;
+    gl_rend_state_thread_base = GL_REND_STATE_COUNT;
+    gl_state.get();
+    render_context* r = new render_context;    // its own buffers and vertex arrays, on its context
+    rctx_thread = r;
+    r->init_pv_thread(rctx_main);
+    disp_manager_thread = t.dm;
+    sprite_manager_thread_init();
+    sprite_manager_thread_register();
+    Glitter::UsePvScenes(true);
+    dvk_flush();
+    t.rctx.store(r);
+    t.ready.store(true);
+    OutputDebugStringA("[DivaLinux] PV thread ready: the PV is drawn on its own thread and GL context\n");
+
+    for (;;) {
+        {
+            std::unique_lock<std::mutex> lock(t.m);
+            t.cv.wait(lock, [&] { return t.job || t.quit; });
+            if (t.quit)
+                break;
+        }
+        if (pv_sync)
+            pv_sync->pv_drawing = 1;
+        pv_thread_draw();
+        {
+            std::lock_guard<std::mutex> lock(t.m);
+            t.job = false;
+        }
+        if (pv_sync)
+            pv_sync->pv_drawing = 0;
+    }
+
+    sprite_manager_thread_free();
+    r->free_pv_thread();
+    dvk_flush();
+    rctx_thread = 0;
+    gl_state_thread = 0;
+    dvk_make_current(nullptr);
+}
+
+static bool pv_thread_start() {
+    if (pvt)
+        return pvt->ready.load();
+    static bool tried = false;
+    if (tried)
+        return false;
+    tried = true;
+    dvk_context ctx = dvk_context_create_shared();
+    if (!ctx) {
+        OutputDebugStringA("[DivaLinux] PV thread: not possible here (no second GL context); the PV stays on the game thread\n");
+        return false;
+    }
+    pvt = new pv_thread_t;
+    pvt->ctx = ctx;
+    pvt->dm = disp_manager_thread_create();
+    // the PV thread's GL work may use what the game thread made so far
+    dvk_flush();
+    pvt->thread = std::thread(pv_thread_main);
+    return false;   // ready on a later frame
+}
+
+void pv_thread_stop() {
+    if (!pvt)
         return;
-    char buf[512];
+    {
+        std::lock_guard<std::mutex> lock(pvt->m);
+        pvt->quit = true;
+    }
+    pvt->cv.notify_one();
+    if (pvt->thread.joinable())
+        pvt->thread.join();
+    dvk_context_destroy(pvt->ctx);
+    pvt = nullptr;   // (the thread's draw-list copy stays: its arena may be the game's by now)
+}
+
+static void pv_threaded_log(double_t elapsed_s) {
+    if (pv_ts.frames <= 0)
+        return;
+    uint32_t gpu_frames = 0;
+    const double_t gpu_ms = pvt ? dvk_context_take_gpu_ms(pvt->ctx, &gpu_frames) : 0.0;
+    uint32_t hud_gpu_frames = 0;
+    const double_t hud_gpu_ms = dvk_context_take_gpu_ms(nullptr, &hud_gpu_frames);
+    char buf[640];
     snprintf(buf, sizeof(buf),
-        "[DivaLinux] async PV: HUD drawn every frame, %.1f fps (worst %.1f ms, %d frames over the display time); "
-        "PV %.1f pictures/s, %.1f frames each (longest %d); %.2f PV steps per frame (avg budget %.1f ms, %.1f ms used), "
-        "%d steps forced; the HUD never waited for a PV picture (%d draw-list refreshes held)\n",
-        pv_as.frames / elapsed_s, pv_as.worst_ms, pv_as.late, pv_as.pictures / elapsed_s,
-        pv_as.pictures ? pv_as.pic_frames_sum / pv_as.pictures : 0.0, pv_as.pic_frames_max,
-        (double_t)pv_as.steps / pv_as.frames, pv_as.budget_sum / pv_as.frames, pv_as.step_ms / pv_as.frames,
-        pv_as.forced, pv_as.held);
+        "[DivaLinux] threaded PV: HUD %.1f fps (avg %.1f ms, worst %.1f ms, %d frames over the display time); "
+        "the game thread waited for the PV 0 times (handoffs %.2f ms each). PV %.1f pictures/s, %.1f ms each "
+        "from handoff to shown (longest %.1f), PV thread %.1f ms per picture. GPU: HUD queue %.1f ms per frame, "
+        "PV queue %.1f ms per picture\n",
+        pv_ts.frames / elapsed_s, pv_ts.sum_ms / pv_ts.frames, pv_ts.worst_ms, pv_ts.late,
+        pv_ts.pictures ? pv_ts.handoff_ms / pv_ts.pictures : 0.0,
+        pv_ts.pictures / elapsed_s, pv_ts.pictures ? pv_ts.pic_ms_sum / pv_ts.pictures : 0.0, pv_ts.pic_ms_max,
+        pv_ts.pictures ? pv_ts.pv_cpu_ms / pv_ts.pictures : 0.0,
+        hud_gpu_frames ? hud_gpu_ms / hud_gpu_frames : 0.0, gpu_frames ? gpu_ms / gpu_frames : 0.0);
     OutputDebugStringA(buf);
 }
 
-/* Once per frame in async mode, before the HUD is drawn: run the PV steps that fit. */
-static void pv_async_frame() {
-    pv_job_t& j = pv_job;
+/* Game thread, once per frame in threaded mode, before the HUD is drawn: show a finished
+   picture, hand off the next one. Never waits. */
+static void pv_threaded_frame() {
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     pv_frame_no++;
-    if (!pv_async_was) {
-        pv_async_was = true;
+    if (!pv_threaded_was) {
+        pv_threaded_was = true;
         pv_trace_left = 15;
-        OutputDebugStringA("[DivaLinux] async PV on: HUD every frame over the newest finished PV picture, "
-            "the PV drawn in steps over as many frames as it takes (two picture slots, A and B)\n");
+        OutputDebugStringA("[DivaLinux] threaded PV on: the HUD every frame over the newest finished PV picture "
+            "(slots A and B), the PV on its own thread at whatever rate it manages\n");
     }
-
-    const double_t period = pv_sync->period_us ? pv_sync->period_us / 1000.0 : pv_vsync_ms > 0.0 ? pv_vsync_ms : 13.9;
-    if (pv_frame_ms > period * 1.10)
-        pv_budget_ms = max_def(0.5, pv_budget_ms * 0.7);
-    else if (pv_frame_ms > 0.0 && pv_frame_ms < period * 1.03)
-        pv_budget_ms = min_def(period * 0.8, pv_budget_ms + 0.25);
-
-    if (!pv_as.start.QuadPart)
-        pv_as.start = now;
-    pv_as.frames++;
-    pv_as.budget_sum += pv_budget_ms;
-    if (pv_frame_ms > pv_as.worst_ms)
-        pv_as.worst_ms = pv_frame_ms;
-    if (pv_frame_ms > period * 1.10)
-        pv_as.late++;
-    const double_t elapsed = (double_t)(now.QuadPart - pv_as.start.QuadPart) / (double_t)pv_qpf.QuadPart;
+    const double_t period = pv_sync->period_us ? pv_sync->period_us / 1000.0 : 13.9;
+    if (!pv_ts.start.QuadPart)
+        pv_ts.start = now;
+    if (pv_frame_ms > 0.0) {
+        pv_ts.frames++;
+        pv_ts.sum_ms += pv_frame_ms;
+        pv_ts.worst_ms = max_def(pv_ts.worst_ms, pv_frame_ms);
+        if (pv_frame_ms > period * 1.10)
+            pv_ts.late++;
+    }
+    const double_t elapsed = (double_t)(now.QuadPart - pv_ts.start.QuadPart) / (double_t)pv_qpf.QuadPart;
     if (elapsed >= 10.0) {
-        pv_async_log(elapsed);
-        pv_as = {};
-        pv_as.start = now;
+        pv_threaded_log(elapsed);
+        pv_ts = {};
+        pv_ts.start = now;
         pv_trace_left = 10;
     }
 
-    if (!j.active && pv_sync->disp_seq != j.seq_seen) {
-        j.seq_seen = pv_sync->disp_seq;
-        pv_job_start();
+    char trace[256] = "";
+    const bool ready = pv_thread_start();
+
+    // a picture finished on the GPU: show it from this frame
+    if (ready && pv_job_out && pvt->recorded.load() == pvt->number
+        && dvk_ticket_done(pvt->ctx, pvt->ticket.load())) {
+        dvk_ticket_use(pvt->ctx, pvt->ticket.load());   // (finished: no GPU wait)
+        pv_front = pvt->slot;
+        pv_job_out = false;
+        pv_shown_number = pvt->number;
+        const double_t ms = pv_ms_since(pv_handoff_time);
+        pv_ts.pictures++;
+        pv_ts.pic_ms_sum += ms;
+        pv_ts.pic_ms_max = max_def(pv_ts.pic_ms_max, ms);
+        pv_ts.pv_cpu_ms += pvt->cpu_ms.load();
+        pv_stat.full++;
+        pv_sync->pv_busy = 0;
+        pv_sync->pv_done++;
+        snprintf(trace, sizeof(trace), "picture %u finished (%.1f ms after its handoff, PV thread %.1f ms) -> %c shown from now; ",
+            pv_shown_number, ms, pvt->cpu_ms.load(), pv_front ? 'B' : 'A');
     }
 
-    const int32_t shown = pv_front;
-    const uint32_t shown_number = j.active ? j.number - 1 : j.number;
-    const bool force_all = !pv_front_valid();   // nothing to show yet: draw this one whole
-    int32_t ran = 0, first = j.next;
-    bool finished = false;
-    double_t spent = 0.0;
-    char done[160] = "";
-    while (j.active) {
-        const pv_step& st = j.steps[j.next];
-        double_t& est = pv_step_est[st.pass];
-        if (!force_all && spent + est > pv_budget_ms) {
-            if (ran || j.idle_frames < 2)
-                break;
-            pv_as.forced++;   // a step bigger than any budget: run it, or the PV would never move
+    // the PV's tasks rebuilt their lists this frame: hand them to the PV thread
+    static uint32_t seq_seen = 0;
+    if (ready && !pv_job_out && pv_sync->disp_seq != seq_seen) {
+        seq_seen = pv_sync->disp_seq;
+        LARGE_INTEGER h0;
+        QueryPerformanceCounter(&h0);
+        pv_thread_t& t = *pvt;
+        t.number++;
+        t.slot = pv_front_valid() ? pv_front ^ 1 : pv_front;
+        pv_cache_valid[t.slot][0] = pv_cache_valid[t.slot][1] = false;
+        pv_save_slot = t.slot;
+        t.eyes = stereo_enabled() ? 2 : 1;
+        t.cam = rctx_main->render_manager_cam;
+        t.after_main = dvk_last_ticket(dvk_main_context());
+        disp_manager_handoff(t.dm, t.rctx.load());
+        sprite_manager_handoff_pv_lists();
+        Glitter::SnapshotScenesForPv();
+        {
+            std::lock_guard<std::mutex> lock(t.m);
+            t.job = true;
         }
-        LARGE_INTEGER t0;
-        QueryPerformanceCounter(&t0);
-        pv_job_run_step(st);
-        const double_t dt = pv_ms_since(t0);
-        est = est > 0.0 ? est * 0.8 + dt * 0.2 : dt;
-        spent += dt;
-        if (pv_trace_left > 0 && strlen(done) < sizeof(done) - 40)
-            snprintf(done + strlen(done), sizeof(done) - strlen(done), "%s%s%s",
-                ran ? ", " : "", pv_pass_name(st.pass), stereo_enabled() ? (st.eye ? " R" : " L") : "");
-        ran++;
-        if (++j.next >= j.n) {
-            pv_front = pv_save_slot;
-            pv_save_slot = pv_front ^ 1;
-            j.active = false;
-            pv_sync->pv_busy = 0;
-            pv_sync->pv_done++;
-            finished = true;
-            pv_as.pictures++;
-            pv_as.pic_frames_sum += j.frames + 1;
-            pv_as.pic_frames_max = max_def(pv_as.pic_frames_max, j.frames + 1);
-        }
+        t.cv.notify_one();
+        pv_job_out = true;
+        pv_sync->pv_busy = 1;
+        QueryPerformanceCounter(&pv_handoff_time);
+        pv_ts.handoff_ms += pv_ms_since(h0);
+        snprintf(trace + strlen(trace), sizeof(trace) - strlen(trace), "picture %u handed to the PV thread (into %c); ",
+            t.number, t.slot ? 'B' : 'A');
     }
-    if (j.active) {
-        j.frames++;
-        j.idle_frames = ran ? 0 : j.idle_frames + 1;
-    }
-    pv_as.steps += ran;
-    pv_as.step_ms += spent;
-    pv_stat.pv_ms += spent;
-    if (finished)
-        pv_stat.full++;
 
     if (pv_trace_left > 0) {
         pv_trace_left--;
         char buf[512];
-        if (ran)
-            snprintf(buf, sizeof(buf), "[DivaLinux] async PV frame %u (%.1f ms): HUD drawn over %c (picture %u); "
-                "PV picture %u: steps %d-%d of %d (%s, %.1f ms of a %.1f ms budget)%s\n",
-                pv_frame_no, pv_frame_ms, shown ? 'B' : 'A', shown_number, j.number,
-                first + 1, first + ran, j.n, done, spent, pv_budget_ms,
-                finished ? (pv_front ? " -> finished, B shown from the next frame" : " -> finished, A shown from the next frame") : ", still drawing");
-        else
-            snprintf(buf, sizeof(buf), "[DivaLinux] async PV frame %u (%.1f ms): HUD drawn over %c (picture %u); "
-                "PV picture %u: no step this frame (next: %s, about %.1f ms, budget %.1f ms), still drawing\n",
-                pv_frame_no, pv_frame_ms, shown ? 'B' : 'A', shown_number, j.number,
-                j.active ? pv_pass_name(j.steps[j.next].pass) : "-", j.active ? pv_step_est[j.steps[j.next].pass] : 0.0, pv_budget_ms);
+        snprintf(buf, sizeof(buf), "[DivaLinux] threaded PV frame %u (%.1f ms): HUD drawn over %c (picture %u), "
+            "waited for the PV 0 ms; %s%s\n", pv_frame_no, pv_frame_ms, pv_front ? 'B' : 'A', pv_shown_number, trace,
+            pv_job_out ? "PV thread drawing" : (ready ? "PV thread idle" : "PV thread starting"));
         OutputDebugStringA(buf);
     }
+}
+
+/* The game thread's share of the per-frame render pre/post-process: in threaded mode the PV
+   thread does the PV's part (hook.cpp). */
+bool pv_threaded_active() {
+    return pvt && pvt->ready.load() && pv_threaded_on();
 }
 
 namespace rndr {
@@ -828,7 +875,9 @@ namespace rndr {
         LARGE_INTEGER render_start;
         QueryPerformanceCounter(&render_start);
         sprite_manager_pre_draw();
-        mdl::etc_obj_manager->pre_draw();
+        const bool pv_on_thread = pv_threaded_active();   // then the PV thread does the PV's part
+        if (!pv_on_thread)
+            mdl::etc_obj_manager->pre_draw();
 
         {
             render_data_context rend_data_ctx(GL_REND_STATE_PRE_3D);
@@ -841,14 +890,24 @@ namespace rndr {
             rend_data_ctx.state.set_depth_mask(GL_TRUE);
         }
 
-        // Async PV: the PV's steps that fit this frame, then the HUD over the newest picture
-        if (pv_async_on()) {
-            pv_async_frame();
-            pv_skip = pv_front_valid();
+        // Threaded PV: show a finished picture, hand off the next; the HUD over the newest
+        const bool threaded = pv_threaded_on();
+        if (threaded) {
+            pv_threaded_frame();
+            pv_skip = true;   // never the PV here: the HUD over the newest picture (or black)
         }
-        else if (pv_async_was) {
-            pv_job_abandon();
-            pv_async_was = false;
+        else if (pv_threaded_was) {
+            // Leaving a song: the PV thread may still be drawing the last picture with the
+            // shared post-process state and objects; the game thread draws the PV itself from
+            // now on, so let that finish first (not during play: this is the song's end).
+            if (pvt && pv_job_out)
+                while (pvt->recorded.load() != pvt->number)
+                    Sleep(0);
+            pv_threaded_was = false;
+            pv_job_out = false;
+            pv_save_slot = pv_front;
+            if (pv_sync)
+                pv_sync->pv_busy = 0;
         }
 
         if (stereo_enabled())
@@ -865,7 +924,8 @@ namespace rndr {
 #endif
         hud_layer_was = hud_layer_active;
 
-        mdl::etc_obj_manager->post_draw();
+        if (!pv_on_thread)
+            mdl::etc_obj_manager->post_draw();
         sprite_manager_post_draw();
         {
             LARGE_INTEGER render_end;
@@ -891,12 +951,22 @@ namespace rndr {
         const int32_t eye = stereo_eye_index();
         LARGE_INTEGER pass_start;
         QueryPerformanceCounter(&pass_start);
-        if (pv_skip && pv_cache[pv_front][eye] && pv_cache_valid[pv_front][eye]) {
-            // PV frame skip: the kept PV picture, then a fresh HUD on top
+        const bool have_picture = pv_cache[pv_front][eye] && pv_cache_valid[pv_front][eye];
+        if (pv_skip && (have_picture || pv_threaded_was)) {
+            // PV frame skip / threaded PV: the kept PV picture (black before the first one),
+            // then a fresh HUD on top
             render_data_context rend_data_ctx(GL_REND_STATE_2D);
             rend_data_ctx.state.get();
             rend_data_ctx.state.begin_event("rndpass_render_all_pass::Caller::execute_2d (PV reused)");
-            pv_cache_restore(rend_data_ctx, eye);
+            if (have_picture)
+                pv_cache_restore(rend_data_ctx, eye);
+            else {
+                rctx->screen_buffer.begin_render(rend_data_ctx.state);
+                rend_data_ctx.state.set_color_mask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+                rend_data_ctx.state.clear_color(0.0f, 0.0f, 0.0f, 1.0f);
+                rend_data_ctx.state.clear(GL_COLOR_BUFFER_BIT);
+                rctx->screen_buffer.end_render(rend_data_ctx.state);
+            }
             for (int32_t i = RND_PASSID_SHOW_VECTOR; i <= RND_PASSID_12; i++)
                 if (i != RND_PASSID_POST_PROCESS)
                     RenderManager::render_single_pass(rend_data_ctx, (RenderPassID)i);
@@ -952,10 +1022,14 @@ namespace rndr {
 
         // TAA history would blend the two eyes together, so it's off for stereo frames.
         // The camera's TAA jitter is already suppressed in init_projection_matrix.
+        // (Threaded PV: the HUD only; the post-process state is the PV thread's, left alone.)
+        const bool touch_rend = !pv_threaded_was;
         const int32_t taa = rend->taa;
         const float_t taa_blend = rend->taa_blend;
-        rend->taa = 0;
-        rend->taa_blend = 1.0f;
+        if (touch_rend) {
+            rend->taa = 0;
+            rend->taa_blend = 1.0f;
+        }
 
         // Per-frame ring buffers that must advance once per frame, not once per eye.
         const int32_t exposure_history_counter = rend->exposure_history_counter;
@@ -964,7 +1038,7 @@ namespace rndr {
 
         for (int32_t i = 0; i < 2; i++) {
             const int32_t eye_sign = i ? 1 : -1;
-            if (i) {
+            if (i && touch_rend) {
                 rend->exposure_history_counter = exposure_history_counter;
                 rend->exposure_query_index = exposure_query_index;
                 rend->lens_flare_query_index = lens_flare_query_index;
@@ -989,8 +1063,10 @@ namespace rndr {
         stereo_present();
 
         rctx->render_manager_cam = center_cam;
-        rend->taa = taa;
-        rend->taa_blend = taa_blend;
+        if (touch_rend) {
+            rend->taa = taa;
+            rend->taa_blend = taa_blend;
+        }
     }
 
     void RenderManager::render_single_pass(render_data_context& rend_data_ctx, RenderPassID id) {
@@ -1409,7 +1485,7 @@ namespace rndr {
         rndr::Render* rend = render;
         if (!sss_data_get()->enable || !sss_data_get()->downsample) {
             rend->begin_render(rend_data_ctx.state);
-            if (sprite_manager_get_reqlist_count(2)) {
+            if (sprite_manager_reqlist_count(2)) {
                 rend_data_ctx.state.clear_color(0.0f, 0.0f, 0.0f, 0.0f);
                 rend_data_ctx.state.clear_depth(1.0f);
                 rend_data_ctx.state.clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1425,7 +1501,7 @@ namespace rndr {
             rend->end_render(rend_data_ctx.state);
         }
         else {
-            if (sprite_manager_get_reqlist_count(2)) {
+            if (sprite_manager_reqlist_count(2)) {
                 rend->begin_render(rend_data_ctx.state);
                 rend_data_ctx.state.clear_color(0.0f, 0.0f, 0.0f, 0.0f);
                 rend_data_ctx.state.clear(GL_COLOR_BUFFER_BIT);
@@ -1444,7 +1520,7 @@ namespace rndr {
     }
 
     void RenderManager::pass_pre_sprite(render_data_context& rend_data_ctx) {
-        if (!sprite_manager_get_reqlist_count(2))
+        if (!sprite_manager_reqlist_count(2))
             return;
 
         rend_data_ctx.state.begin_event("pass_pre_sprite");
@@ -1693,7 +1769,7 @@ namespace rndr {
     void RenderManager::pass_sprite(render_data_context& rend_data_ctx) {
         rend_data_ctx.state.begin_event("pass_sprite");
         // With the HUD layer on, the HUD goes to its own target after the passes (draw_hud_layer)
-        if (!hud_layer_active && sprite_manager_get_reqlist_count(0)) {
+        if (!hud_layer_active && sprite_manager_reqlist_count(0)) {
             rend_data_ctx.state.set_viewport(0, 0, render->screen_width, render->screen_height);
 
             if (multisample && multisample_framebuffer) {
@@ -1798,7 +1874,7 @@ namespace rndr {
     }
 
     void RenderManager::pass_sprite_surf(render_data_context& rend_data_ctx) {
-        if (!sprite_manager_get_reqlist_count(1))
+        if (!sprite_manager_reqlist_count(1))
             return;
 
         rndr::Render* rend = render;

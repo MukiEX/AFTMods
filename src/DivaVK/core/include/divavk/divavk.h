@@ -107,6 +107,10 @@ void dvk_make_current(dvk_context ctx);
 uint64_t dvk_flush(void);
 bool dvk_ticket_done(dvk_context ctx, uint64_t ticket);
 void dvk_ticket_use(dvk_context ctx, uint64_t ticket);
+/* The first (game thread's) context, and the ticket of a context's latest submit (NULL = the
+   current context): another context can order its work after it with dvk_ticket_use. */
+dvk_context dvk_main_context(void);
+uint64_t dvk_last_ticket(dvk_context ctx);
 /* GPU time a context's frames took since the last call (NULL = the first context). */
 double dvk_context_take_gpu_ms(dvk_context ctx, uint32_t* frames);
 

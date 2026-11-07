@@ -13,7 +13,10 @@
 
 draw_state_struct& draw_state = *(draw_state_struct*)0x00000001411A32B0;
 
-render_context* rctx;
+thread_local bool pv_render_thread_flag;
+render_context* rctx_main;
+thread_local render_context* rctx_thread;
+render_context_ref rctx;
 
 uint32_t render_context::max_uniform_block_size = 0;
 uint32_t render_context::max_storage_block_size = 0;
@@ -1257,6 +1260,37 @@ void render_context::free() {
 
     texture_release(empty_texture_cube_map);
     texture_release(empty_texture_2d);
+}
+
+// The PV render thread's context: its own buffers (made by the constructor on that thread)
+// and targets, the main context's empty textures.
+void render_context::init_pv_thread(render_context* main) {
+    empty_texture_2d = main->empty_texture_2d;
+    empty_texture_cube_map = main->empty_texture_cube_map;
+    ctrl(false);
+
+    auto init_copy_buffer = [&](RenderTexture& src, RenderTexture& dst) {
+        if (!src.m_txhd_color)
+            return;
+        dst.create_texture(src.get_width(),
+            src.get_height(), 0, src.m_txhd_color->internal_format,
+            src.m_txhd_depth ? src.m_txhd_depth->internal_format : GL_ZERO);
+    };
+    init_copy_buffer(main->reflect_buffer, this->reflect_buffer);
+    init_copy_buffer(main->render_buffer, this->render_buffer);
+    init_copy_buffer(main->shadow_buffer, this->shadow_buffer);
+    screen_buffer.create_texture(screen_width, screen_height, 0, GL_RGBA8, 0);
+    screen_overlay_buffer.create_texture(screen_width, screen_height, 0, GL_RGBA8, 0);
+}
+
+void render_context::free_pv_thread() {
+    shadow_buffer.destroy();
+    screen_overlay_buffer.destroy();
+    screen_buffer.destroy();
+    render_buffer.destroy();
+    reflect_buffer.destroy();
+    empty_texture_cube_map = 0;
+    empty_texture_2d = 0;
 }
 
 void render_context::init() {

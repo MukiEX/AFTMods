@@ -20,5 +20,11 @@ extern void sprite_manager_post_draw();
 extern void sprite_manager_pre_draw();
 extern void sprite_manager_set_res(double_t aspect, int32_t width, int32_t height);
 extern void sprite_manager_free();
+extern size_t sprite_manager_reqlist_count(int32_t index);
+extern void sprite_manager_thread_init();
+extern void sprite_manager_thread_free();
+extern void sprite_manager_thread_register();
+extern void sprite_manager_handoff_pv_lists();
+extern void sprite_manager_thread_clear_lists();
 
 extern void sprite_patch();

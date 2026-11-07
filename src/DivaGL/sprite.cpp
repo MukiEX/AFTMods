@@ -155,11 +155,18 @@ namespace spr {
     static void draw_sprite_scale(spr::SprArgs* args);
 }
 
-spr::SpriteManager* sprite_manager = (spr::SpriteManager*)0x000000014CC611C0;
+// The game's sprite manager, or on a PV render thread its own copy that the PV's sprite
+// lists (1: surface, 2: before the 3D) are handed to (sprite_manager_handoff_pv_lists).
+static spr::SpriteManager* sprite_manager_main = (spr::SpriteManager*)0x000000014CC611C0;
+static thread_local spr::SpriteManager* sprite_manager_thread;
+#define sprite_manager (sprite_manager_thread ? sprite_manager_thread : sprite_manager_main)
 
 extern bool sprite_break_sprite_vertex_limit;
 
-static spr::SpriteManager::RenderData* sprite_manager_render_data;
+static spr::SpriteManager::RenderData* sprite_manager_render_data_main;
+static thread_local spr::SpriteManager::RenderData* sprite_manager_render_data_thread;
+#define sprite_manager_render_data \
+    (sprite_manager_render_data_thread ? sprite_manager_render_data_thread : sprite_manager_render_data_main)
 
 // Set while sprites are drawn into the HUD layer (a transparent target shown over the PV by
 // the headset's compositor): alpha has to build up as coverage, so the result is premultiplied.
@@ -1404,8 +1411,75 @@ namespace spr {
 }
 
 void sprite_manager_init() {
-    if (!sprite_manager_render_data)
-        sprite_manager_render_data = new spr::SpriteManager::RenderData;
+    if (!sprite_manager_render_data_main)
+        sprite_manager_render_data_main = new spr::SpriteManager::RenderData;
+}
+
+// Requests in one list (all screens, all priorities) of the calling thread's manager.
+size_t sprite_manager_reqlist_count(int32_t index) {
+    if (index < 0 || index >= 4)
+        return 0;
+    size_t count = 0;
+    for (int32_t i = 0; i < 2; i++)
+        for (int32_t j = 0; j < spr::SPR_PRIO_MAX; j++)
+            count += sprite_manager->reqlist[index][i][j].size();
+    return count;
+}
+
+// PV render thread: its own manager and vertex buffers (GL objects of its own context).
+void sprite_manager_thread_init() {
+    if (!sprite_manager_thread)
+        sprite_manager_thread = new spr::SpriteManager();
+    if (!sprite_manager_render_data_thread)
+        sprite_manager_render_data_thread = new spr::SpriteManager::RenderData;
+}
+
+void sprite_manager_thread_free() {
+    delete sprite_manager_render_data_thread;
+    sprite_manager_render_data_thread = 0;
+    delete sprite_manager_thread;
+    sprite_manager_thread = 0;
+}
+
+static spr::SpriteManager* sprite_manager_pv = 0;   // the PV thread's, for the handoff
+
+void sprite_manager_thread_register() {
+    sprite_manager_pv = sprite_manager_thread;
+}
+
+// Game thread, while the PV thread is idle: the PV's lists move to the PV thread's manager
+// (swapped: the game's are left with the PV thread's emptied lists), with the settings the
+// draw uses. The game keeps filling its own lists every frame.
+void sprite_manager_handoff_pv_lists() {
+    spr::SpriteManager* g = sprite_manager_main;
+    spr::SpriteManager* p = sprite_manager_pv;
+    if (!p)
+        return;
+    for (int32_t index = 1; index <= 2; index++)
+        for (int32_t i = 0; i < 2; i++)
+            for (int32_t j = 0; j < spr::SPR_PRIO_MAX; j++) {
+                p->reqlist[index][i][j].clear();
+                p->reqlist[index][i][j].swap(g->reqlist[index][i][j]);
+            }
+    for (int32_t i = 0; i < 2; i++) {
+        p->aspect[i] = g->aspect[i];
+        p->field_1018[i] = g->field_1018[i];
+    }
+    p->index = g->index;
+    p->view_projection = g->view_projection;
+    p->mat = g->mat;
+    p->resolution_mode = g->resolution_mode;
+}
+
+// PV render thread, after drawing: its lists are done with.
+void sprite_manager_thread_clear_lists() {
+    spr::SpriteManager* p = sprite_manager_thread;
+    if (!p)
+        return;
+    for (int32_t index = 0; index < 4; index++)
+        for (int32_t i = 0; i < 2; i++)
+            for (int32_t j = 0; j < spr::SPR_PRIO_MAX; j++)
+                p->reqlist[index][i][j].clear();
 }
 
 void sprite_manager_draw(render_data_context& rend_data_ctx,
@@ -1429,9 +1503,9 @@ void sprite_manager_set_res(double_t aspect, int32_t width, int32_t height) {
 }
 
 void sprite_manager_free() {
-    if (sprite_manager_render_data) {
-        delete sprite_manager_render_data;
-        sprite_manager_render_data = 0;
+    if (sprite_manager_render_data_main) {
+        delete sprite_manager_render_data_main;
+        sprite_manager_render_data_main = 0;
     }
 }
 

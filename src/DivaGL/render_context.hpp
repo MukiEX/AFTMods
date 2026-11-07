@@ -598,6 +598,8 @@ struct render_context {
     void ctrl(bool change_res = true);
     void free();
     void init();
+    void init_pv_thread(render_context* main);   // a PV render thread's own: shares main's textures
+    void free_pv_thread();
 
     void add_shared_storage_uniform_buffer_data(size_t index,
         const void* data, size_t size, size_t max_size, bool storage = false);
@@ -611,4 +613,16 @@ struct render_context {
 
 extern draw_state_struct& draw_state;
 
-extern render_context* rctx;
+// The render context of the calling thread: the game thread's, or a PV render thread's own
+// (pv_thread.cpp), which has its own targets, buffers and draw lists.
+extern thread_local bool pv_render_thread_flag;   // true on the PV render thread
+extern render_context* rctx_main;
+extern thread_local render_context* rctx_thread;
+struct render_context_ref {
+    render_context* get() const { render_context* t = rctx_thread; return t ? t : rctx_main; }
+    render_context* operator->() const { return get(); }
+    render_context& operator*() const { return *get(); }
+    operator render_context*() const { return get(); }
+    render_context_ref& operator=(render_context* p) { rctx_main = p; return *this; }
+};
+extern render_context_ref rctx;

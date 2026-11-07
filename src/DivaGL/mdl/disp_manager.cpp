@@ -22,8 +22,11 @@
 #include "../wrap.hpp"
 #include "draw_object.hpp"
 #include <Helpers.h>
+#include <shared_mutex>
 
-mdl::DispManager* disp_manager = (mdl::DispManager*)0x00000001411A27F0;
+mdl::DispManager* disp_manager_main = (mdl::DispManager*)0x00000001411A27F0;
+thread_local mdl::DispManager* disp_manager_thread;
+disp_manager_ref disp_manager;
 
 static mat4* matrix_buffer = (mat4*)0x000000014CC587D0;
 static BOOL* matrix_buffer_init = (BOOL*)0x000000014CC5D7D0;
@@ -62,12 +65,13 @@ material_list_struct::material_list_struct(uint64_t hash, vec4& blend_color,
 
 }
 
-bool pv_async_refresh_hold();   // render_manager.cpp
-
 namespace mdl {
     mdl::EtcObjManager* etc_obj_manager;
 
     prj::vector<DispManager::vertex_array> vertex_array_cache;
+    // Lookups (the PV render thread's draws) share it; adding and removing (the game thread's
+    // entries and unloads) take it alone: only for the moment of the change.
+    static std::shared_mutex vertex_array_cache_mutex;
 
     int32_t material_list_count;
     material_list_struct material_list_array[MATERIAL_LIST_COUNT];
@@ -1075,6 +1079,7 @@ namespace mdl {
         GLsizei size_vertex = (GLsizei)mesh->size_vertex;
         obj_vertex_format vertex_format = mesh->vertex_format;
 
+        std::unique_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);
         for (DispManager::vertex_array& i : vertex_array_cache)
             if (i.vb == vb && i.vb_offset == vb_offset
                 && i.morph_vb == morph_vb && i.morph_vb_offset == morph_vb_offset
@@ -3269,6 +3274,7 @@ namespace mdl {
         GLsizei size_vertex = (GLsizei)mesh->size_vertex;
         obj_vertex_format vertex_format = mesh->vertex_format;
 
+        std::shared_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);
         for (DispManager::vertex_array& i : vertex_array_cache)
             if (i.vb == vb && i.vb_offset == vb_offset
                 && i.morph_vb == morph_vb && i.morph_vb_offset == morph_vb_offset
@@ -3399,6 +3405,7 @@ namespace mdl {
     }
 
     void DispManager::remove_index_buffer(GLuint ib) {
+        std::unique_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);
         auto i_begin = vertex_array_cache.begin();
         auto i_end = vertex_array_cache.end();
         for (auto i = i_begin; i != i_end;)
@@ -3412,6 +3419,7 @@ namespace mdl {
     }
 
     void DispManager::remove_vertex_buffer(GLuint vb) {
+        std::unique_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);
         auto i_begin = vertex_array_cache.begin();
         auto i_end = vertex_array_cache.end();
         for (auto i = i_begin; i != i_end;)
@@ -3595,6 +3603,7 @@ namespace mdl {
     }
 
     HOOK(void, FASTCALL, disp_manager_free, 0x00000001404371C0) {
+        std::unique_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);
         for (DispManager::vertex_array& i : vertex_array_cache)
             glDeleteVertexArrays(1, &i.vertex_array);
         vertex_array_cache.clear();
@@ -3634,9 +3643,7 @@ namespace mdl {
     }
 
     HOOK(void, FASTCALL, disp_manager_refresh, 0x0000000140439D20) {
-        // async PV (render_manager.cpp): a PV picture in progress keeps its draw lists
-        if (!pv_async_refresh_hold())
-            disp_manager->refresh();
+        disp_manager->refresh();
     }
 
     HOOK(void, FASTCALL, sub_1404BCC60, 0x00000001404BCC60, vec3* pos, float_t width, float_t height) {
@@ -4244,4 +4251,52 @@ static void sub_140436760(const cam_data& cam) {
             view_z = vec4::dot(t ^ vec4(-0.0f, -0.0f, -0.0f, 0.0f), mat.row2);
         i->view_z = view_z;
     }
+}
+
+/* PV render thread (render_manager.cpp): its own draw lists. At each handoff the game's lists
+   and the arena their entries live in are swapped with the thread's (both arenas come from the
+   game's heap, so either can end up as the game's), along with the screen and reflection lists
+   kept in the render context. The game then refreshes and fills its own lists as usual. */
+mdl::DispManager* disp_manager_thread_create() {
+    mdl::DispManager* dm = new mdl::DispManager();
+    mdl::DispManager* g = disp_manager_main;
+    dm->buff_size = g->buff_size;
+    dm->buff = (size_t)_operator_new(g->buff_size);
+    dm->buff_offset = 0;
+    dm->buff_max = 0;
+    return dm;
+}
+
+void disp_manager_handoff(mdl::DispManager* pv, render_context* pv_rctx) {
+    mdl::DispManager* g = disp_manager_main;
+    for (int32_t i = 0; i < mdl::OBJ_TYPE_MAX; i++) {
+        pv->obj[i].clear();
+        pv->obj[i].swap(g->obj[i]);
+    }
+    std::swap(pv->buff, g->buff);
+    std::swap(pv->buff_size, g->buff_size);
+    std::swap(pv->buff_offset, g->buff_offset);
+    std::swap(pv->buff_max, g->buff_max);
+    g->buff_offset = 0;
+    render_context* gr = rctx_main;
+    for (int32_t i = 0; i < mdl::OBJ_TYPE_SCREEN_MAX; i++) {
+        pv_rctx->obj_screen[i].clear();
+        pv_rctx->obj_screen[i].swap(gr->obj_screen[i]);
+    }
+    for (int32_t i = 0; i < mdl::OBJ_TYPE_REFLECT_MAX; i++) {
+        pv_rctx->obj_reflect[i].clear();
+        pv_rctx->obj_reflect[i].swap(gr->obj_reflect[i]);
+    }
+    // what the draw reads
+    pv->obj_flags = g->obj_flags;
+    pv->shadow_group = g->shadow_group;
+    pv->culling = g->culling;
+    pv->put_index = g->put_index;
+    pv->show_alpha_center = g->show_alpha_center;
+    pv->show_mat_center = g->show_mat_center;
+    pv->object_culling = g->object_culling;
+    pv->object_sort = g->object_sort;
+    pv->chara_color = g->chara_color;
+    pv->culling_func = g->culling_func;
+    pv->wet_param = g->wet_param;
 }

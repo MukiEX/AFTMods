@@ -6,7 +6,8 @@
 #include "gl_state.hpp"
 #include "shared.hpp"
 
-gl_state_struct gl_state;
+gl_state_struct gl_state_main;
+thread_local gl_state_struct* gl_state_thread;
 
 void gl_state_struct::bind_framebuffer(GLuint framebuffer, bool force) {
     if (force || read_framebuffer_binding != framebuffer

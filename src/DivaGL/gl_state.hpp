@@ -68,4 +68,9 @@ struct gl_state_struct {
     }
 };
 
-extern gl_state_struct gl_state;
+// The calling thread's GL state cache: the game thread's, or a PV render thread's own
+// (each thread draws with its own GL context).
+extern gl_state_struct gl_state_main;
+extern thread_local gl_state_struct* gl_state_thread;
+inline gl_state_struct& gl_state_get() { gl_state_struct* t = gl_state_thread; return t ? *t : gl_state_main; }
+#define gl_state (gl_state_get())

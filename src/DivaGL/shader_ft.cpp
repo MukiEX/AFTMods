@@ -1546,8 +1546,6 @@ static void glass_eye_set(p_gl_rend_state& p_gl_rend_st, glass_eye_struct* glass
         = vec2::rcp(*(vec2*)&glass_eye->tex_model_param * *(vec2*)&glass_eye->iris_radius);
     glass_eye_batch.g_tex_scale.z = glass_eye->trsmit_coef * 1.442695f;
     glass_eye_batch.g_tex_scale.w = glass_eye->lens_depth;
-
-    extern render_context* rctx;
     p_gl_rend_st.write_uniform_buffer(rctx->glass_eye_batch_ubo, glass_eye_batch);
     p_gl_rend_st.bind_uniform_buffer_base(3, rctx->glass_eye_batch_ubo);
 }

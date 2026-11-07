@@ -18,7 +18,7 @@ struct cam_data;
 
 // Per-sprite-list horizontal offset in NDC, applied by SpriteManager::Draw.
 // Indices match sprite_manager_draw's index (0 = HUD, 1 = surface, 2 = pre-3D/background).
-extern float_t sprite_stereo_offset[4];
+extern thread_local float_t sprite_stereo_offset[4];
 
 // True when the user has stereo enabled (regardless of whether a frame is being rendered).
 extern bool stereo_enabled();

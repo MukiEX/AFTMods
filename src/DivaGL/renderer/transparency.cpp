@@ -11,8 +11,6 @@
 #include "../render_texture.hpp"
 #include "../shader_ft.hpp"
 
-extern render_context* rctx;
-
 namespace renderer {
     // 0x1404A88F0
     Transparency::Transparency(GLuint color_tex, GLuint depth_tex,

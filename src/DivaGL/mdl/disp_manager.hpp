@@ -552,4 +552,16 @@ namespace mdl {
     extern void disp_manager_patch();
 }
 
-extern mdl::DispManager* disp_manager;
+// The calling thread's draw lists: the game's (at its fixed address), or a PV render
+// thread's own copy that the lists are handed to (pv_thread.cpp).
+extern mdl::DispManager* disp_manager_main;
+extern thread_local mdl::DispManager* disp_manager_thread;
+struct disp_manager_ref {
+    mdl::DispManager* get() const { mdl::DispManager* t = disp_manager_thread; return t ? t : disp_manager_main; }
+    mdl::DispManager* operator->() const { return get(); }
+    mdl::DispManager& operator*() const { return *get(); }
+    operator mdl::DispManager*() const { return get(); }
+};
+extern disp_manager_ref disp_manager;
+extern mdl::DispManager* disp_manager_thread_create();
+extern void disp_manager_handoff(mdl::DispManager* pv, struct render_context* pv_rctx);

@@ -79,8 +79,6 @@ HOOK(void, FASTCALL, ctrl_camera, 0x00000001401F8970) {
     camera_info.data.discontinuity3 = camera_info.data.discontinuity2;
     camera_info.data.discontinuity2 = camera_info.data.discontinuity;
     camera_info.data.discontinuity = false;
-
-    extern render_context* rctx;
     rctx->render_manager_cam.get();
     stereo_update_camera(rctx->render_manager_cam);
 }
