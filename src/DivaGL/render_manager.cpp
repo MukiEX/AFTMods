@@ -81,6 +81,121 @@ static void render_manager_init_render_textures(int32_t multisample);
 
 static void set_reflect_mat(render_data_context& rend_data_ctx, cam_data& cam);
 
+/* PV frame skip ([performance] pv_frame_skip in DivaLinux.ini).
+   The game's logic, note timing and judging run every frame no matter what; this only
+   decides how often the PV picture itself (shadows, reflections, 3D, post-process) is
+   drawn. After post-process the finished PV picture is kept; on a skipped frame those
+   passes don't run, the kept picture is put back and only the HUD is drawn fresh on top.
+     0  off
+     1  auto: when a frame with the PV drawn ran late, the next frame reuses it
+        (never two in a row), so the HUD keeps the display's rate under load
+     2-4  draw the PV every 2nd/3rd/4th frame
+   Everything drawn into the PV picture freezes with it on skipped frames, including 2D
+   backgrounds and movie PVs (cheap, so auto mode rarely skips those). */
+static RenderTexture* pv_cache[2] = {};       // [eye]: 0 mono or left, 1 right
+static bool pv_cache_valid[2] = {};
+static int32_t pv_cache_width = 0;
+static int32_t pv_cache_height = 0;
+static bool pv_skip = false;                  // this frame reuses the kept PV picture
+static int32_t pv_since_full = 0;             // frames since the PV was last drawn
+
+/* frame timing, for auto mode and the perf log */
+static LARGE_INTEGER pv_qpf = {};
+static LARGE_INTEGER pv_last = {};
+static double_t pv_frame_ms = 0.0;            // last frame's duration (start to start)
+static double_t pv_vsync_ms = 0.0;            // shortest recent frame: about the display's frame time
+static bool pv_last_was_full = false;
+static struct { int32_t frames, full; double_t sum_ms, worst_ms, render_ms, pv_ms, hud_ms; LARGE_INTEGER start; } pv_stat = {};
+
+static void pv_log_stats(double_t elapsed_s) {
+    if (!sv_perf_log || pv_stat.frames <= 0)
+        return;
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+        "[DivaLinux] perf: %.1f fps, frame avg %.1f ms worst %.1f ms (display %.1f ms), PV drawn %d%% of frames"
+        " (%s), render CPU avg %.1f ms (PV %.1f, HUD %.1f)\n",
+        pv_stat.frames / elapsed_s, pv_stat.sum_ms / pv_stat.frames, pv_stat.worst_ms, pv_vsync_ms,
+        pv_stat.full * 100 / pv_stat.frames,
+        sv_pv_frame_skip == 0 ? "frame skip off" : sv_pv_frame_skip == 1 ? "auto" : "fixed",
+        pv_stat.render_ms / pv_stat.frames, pv_stat.full ? pv_stat.pv_ms / pv_stat.full : 0.0,
+        pv_stat.hud_ms / pv_stat.frames);
+    OutputDebugStringA(buf);
+}
+
+/* once per frame, before anything is drawn */
+static void pv_frame_begin() {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    if (!pv_qpf.QuadPart)
+        QueryPerformanceFrequency(&pv_qpf);
+    pv_frame_ms = pv_last.QuadPart ? (double_t)(now.QuadPart - pv_last.QuadPart) * 1000.0 / (double_t)pv_qpf.QuadPart : 0.0;
+    pv_last = now;
+    if (pv_frame_ms > 0.5) {
+        if (pv_vsync_ms <= 0.0 || pv_frame_ms < pv_vsync_ms)
+            pv_vsync_ms = pv_frame_ms;
+        else
+            pv_vsync_ms += (pv_frame_ms - pv_vsync_ms) * 0.001;   // drift up slowly if the display rate drops
+        pv_stat.frames++;
+        pv_stat.sum_ms += pv_frame_ms;
+        if (pv_frame_ms > pv_stat.worst_ms)
+            pv_stat.worst_ms = pv_frame_ms;
+    }
+    if (!pv_stat.start.QuadPart)
+        pv_stat.start = now;
+    const double_t elapsed = (double_t)(now.QuadPart - pv_stat.start.QuadPart) / (double_t)pv_qpf.QuadPart;
+    if (elapsed >= 10.0) {
+        pv_log_stats(elapsed);
+        pv_stat = {};
+        pv_stat.start = now;
+    }
+
+    const bool sb = rctx->screen_buffer.m_txhd_color != 0;
+    const int32_t w = sb ? rctx->screen_buffer.get_width() : 0;
+    const int32_t h = sb ? rctx->screen_buffer.get_height() : 0;
+    if (w != pv_cache_width || h != pv_cache_height)
+        pv_cache_valid[0] = pv_cache_valid[1] = false;
+
+    const bool have = pv_cache_valid[0] && (!stereo_enabled() || pv_cache_valid[1]);
+    bool skip = false;
+    if (sv_pv_frame_skip == 1)
+        skip = have && pv_last_was_full && pv_vsync_ms > 0.0 && pv_frame_ms > pv_vsync_ms * 1.3;
+    else if (sv_pv_frame_skip >= 2)
+        skip = have && pv_since_full + 1 < sv_pv_frame_skip;
+    pv_skip = skip;
+    pv_last_was_full = !skip;
+    pv_since_full = skip ? pv_since_full + 1 : 0;
+    if (!skip)
+        pv_stat.full++;
+}
+
+static void pv_cache_save(render_data_context& rend_data_ctx, int32_t eye) {
+    if (!sv_pv_frame_skip || !rctx->screen_buffer.m_txhd_color)
+        return;
+    const int32_t w = rctx->screen_buffer.get_width();
+    const int32_t h = rctx->screen_buffer.get_height();
+    if (w <= 0 || h <= 0)
+        return;
+    if (w != pv_cache_width || h != pv_cache_height) {
+        for (RenderTexture*& i : pv_cache)
+            if (i)
+                i->destroy();
+        pv_cache_width = w;
+        pv_cache_height = h;
+    }
+    if (!pv_cache[eye])
+        pv_cache[eye] = new RenderTexture;
+    if (!pv_cache[eye]->m_txhd_color)
+        pv_cache[eye]->create_texture(w, h, 0, GL_RGBA8, 0);
+    fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), pv_cache[eye]->get_fb(),
+        0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    pv_cache_valid[eye] = true;
+}
+
+static void pv_cache_restore(render_data_context& rend_data_ctx, int32_t eye) {
+    fbo_blit(rend_data_ctx.state, pv_cache[eye]->get_fb(), rctx->screen_buffer.get_fb(),
+        0, 0, pv_cache_width, pv_cache_height, 0, 0, pv_cache_width, pv_cache_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+}
+
 namespace rndr {
     struct RenderTextureData {
         GLenum type;
@@ -257,6 +372,9 @@ namespace rndr {
             return;
 
         gl_state.get();
+        pv_frame_begin();
+        LARGE_INTEGER render_start;
+        QueryPerformanceCounter(&render_start);
         sprite_manager_pre_draw();
         mdl::etc_obj_manager->pre_draw();
 
@@ -278,6 +396,11 @@ namespace rndr {
 
         mdl::etc_obj_manager->post_draw();
         sprite_manager_post_draw();
+        {
+            LARGE_INTEGER render_end;
+            QueryPerformanceCounter(&render_end);
+            pv_stat.render_ms += (double_t)(render_end.QuadPart - render_start.QuadPart) * 1000.0 / (double_t)pv_qpf.QuadPart;
+        }
 
         render_data_context rend_data_ctx(GL_REND_STATE_POST_2D);
         rend_data_ctx.state.get();
@@ -294,6 +417,23 @@ namespace rndr {
     }
 
     void RenderManager::render_all_passes() {
+        const int32_t eye = stereo_eye_index();
+        if (pv_skip && pv_cache[eye] && pv_cache_valid[eye]) {
+            // PV frame skip: the kept PV picture, then a fresh HUD on top
+            render_data_context rend_data_ctx(GL_REND_STATE_2D);
+            rend_data_ctx.state.get();
+            rend_data_ctx.state.begin_event("rndpass_render_all_pass::Caller::execute_2d (PV reused)");
+            pv_cache_restore(rend_data_ctx, eye);
+            for (int32_t i = RND_PASSID_SHOW_VECTOR; i <= RND_PASSID_12; i++)
+                if (i != RND_PASSID_POST_PROCESS) {
+                    RenderManager::render_single_pass(rend_data_ctx, (RenderPassID)i);
+                    pv_stat.hud_ms += cpu_time[i];
+                }
+            rend_data_ctx.state.end_event();
+            rend_data_ctx.state.finish();
+            return;
+        }
+
         {
             render_data_context rend_data_ctx(GL_REND_STATE_PRE_3D);
             rend_data_ctx.state.begin_event("rndpass_render_all_pass::Caller::execute_pre3d");
@@ -317,8 +457,15 @@ namespace rndr {
             render_data_context rend_data_ctx(GL_REND_STATE_2D);
             rend_data_ctx.state.get();
             rend_data_ctx.state.begin_event("rndpass_render_all_pass::Caller::execute_2d");
-            for (int32_t i = RND_PASSID_SHOW_VECTOR; i <= RND_PASSID_12; i++)
+            for (int32_t i = RND_PASSID_SHOW_VECTOR; i <= RND_PASSID_12; i++) {
                 RenderManager::render_single_pass(rend_data_ctx, (RenderPassID)i);
+                if (i == RND_PASSID_POST_PROCESS)
+                    pv_cache_save(rend_data_ctx, eye);   // the finished PV picture, before the HUD
+                if (i >= RND_PASSID_SPRITE)
+                    pv_stat.hud_ms += cpu_time[i];
+            }
+            for (int32_t i = RND_PASSID_SHADOW; i <= RND_PASSID_POST_PROCESS; i++)
+                pv_stat.pv_ms += cpu_time[i];
             rend_data_ctx.state.end_event();
             rend_data_ctx.state.finish();
         }

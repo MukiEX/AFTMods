@@ -36,6 +36,11 @@ Same sections and keys as `DivaGL.ini` (`[general]`, `[experimentals]`, `[stereo
 | `fast_decode` | 0 | Skip the H.264/HEVC deblocking filter and use FFmpeg's "fast" shortcuts from the start. Slightly blockier, noticeably cheaper on slow CPUs (Quest/phones through FEX). Without it, the player only does this while it's behind. |
 | `decode_threads` | 0 | Threads for video decoding; 0 lets FFmpeg use one per CPU. |
 
+| `[performance]` key | Default | What it does |
+| --- | --- | --- |
+| `pv_frame_skip` | 1 | Draw the PV (shadows, reflections, 3D, post-process) less often than the HUD. The game's logic, notes and judging still run every frame. After post-process the finished PV picture is kept, and a skipped frame puts it back and draws only a fresh HUD on top. **0** off. **1** auto: when a frame with the PV drawn runs late, the next frame reuses the PV picture (never two in a row), so the HUD keeps the display's rate under load. **2-4**: draw the PV every 2nd/3rd/4th frame. Anything drawn into the PV picture freezes with it on skipped frames, 2D backgrounds and movie PVs included. |
+| `perf_log` | 1 | Every 10 seconds, log a line with fps, average and worst frame time, how often the PV was drawn, and render CPU time split into PV and HUD. If a slow PV's frames are long but render CPU is small, the time goes to the game's own work (animation, effects), which frame skipping can't remove. |
+
 A movie that can't be opened (missing, or not a format FFmpeg reads) is logged and played as
 an empty movie that ends at once. The game otherwise waits for it forever, and the song
 hangs.

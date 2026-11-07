@@ -47,6 +47,10 @@ bool stereo_in_eye_pass() {
     return stereo_current_eye != 0;
 }
 
+int32_t stereo_eye_index() {
+    return stereo_current_eye > 0 ? 1 : 0;
+}
+
 // The right eye renders second (render_all_stereo: -1, then +1).
 bool stereo_reuse_shadow_maps() {
     return sv_stereo_shadow_once && stereo_current_eye > 0;

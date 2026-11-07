@@ -163,6 +163,10 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
             L"stereo_max_parallax", 20, CONFIG_FILE), 0, 200);
         sv_stereo_content_aspect = clamp_def((int32_t)GetPrivateProfileIntW(L"stereo",
             L"stereo_content_aspect", 1778, CONFIG_FILE), 0, 10000);
+        sv_pv_frame_skip = clamp_def((int32_t)GetPrivateProfileIntW(L"performance",
+            L"pv_frame_skip", 1, CONFIG_FILE), 0, 4);
+        sv_perf_log = GetPrivateProfileIntW(L"performance",
+            L"perf_log", 1, CONFIG_FILE) > 0 ? true : false;
 
 #ifdef DIVAVK
         // No WGL_NV_DX_interop2 under Vulkan: always use the CPU upload path for videos.

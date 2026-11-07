@@ -26,6 +26,9 @@ extern bool stereo_enabled();
 // True while one of the two eye passes is being rendered.
 extern bool stereo_in_eye_pass();
 
+// 0 outside stereo and for the left eye, 1 for the right eye.
+extern int32_t stereo_eye_index();
+
 // True during the second eye when its shadow maps can be the first eye's (stereo_shadow_once).
 extern bool stereo_reuse_shadow_maps();
 
