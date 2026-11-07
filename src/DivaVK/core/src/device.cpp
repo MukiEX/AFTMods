@@ -6,6 +6,8 @@
 #define VMA_STATIC_VULKAN_FUNCTIONS 0
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
 #include <cstring>
+#include <string>
+#include <vector>
 #include <chrono>
 #include "context.hpp"
 #include "xr.hpp"
@@ -234,6 +236,29 @@ namespace dvk {
             vkGetPhysicalDeviceQueueFamilyProperties(phys, &qcount, qprops.data());
             if (queue_family < qcount && qprops[queue_family].timestampValidBits && props.limits.timestampPeriod > 0.0f)
                 timestamp_ns = props.limits.timestampPeriod;
+            // For a HUD drawn apart from the PV: can a second queue with a higher priority exist?
+            uint32_t ecount = 0;
+            vkEnumerateDeviceExtensionProperties(phys, nullptr, &ecount, nullptr);
+            std::vector<VkExtensionProperties> exts(ecount);
+            vkEnumerateDeviceExtensionProperties(phys, nullptr, &ecount, exts.data());
+            bool gp_ext = false, gp_khr = false;
+            for (const VkExtensionProperties& e : exts) {
+                gp_ext |= !strcmp(e.extensionName, "VK_EXT_global_priority");
+                gp_khr |= !strcmp(e.extensionName, "VK_KHR_global_priority");
+            }
+            std::string fams;
+            for (uint32_t q = 0; q < qcount; q++) {
+                char b[96];
+                snprintf(b, sizeof(b), "%s%u: %u queue%s%s%s%s", q ? "; " : "", q, qprops[q].queueCount,
+                    qprops[q].queueCount == 1 ? "" : "s",
+                    (qprops[q].queueFlags & VK_QUEUE_GRAPHICS_BIT) ? " graphics" : "",
+                    (qprops[q].queueFlags & VK_QUEUE_COMPUTE_BIT) ? " compute" : "",
+                    (qprops[q].queueFlags & VK_QUEUE_TRANSFER_BIT) ? " transfer" : "");
+                fams += b;
+            }
+            log("Queues: family %u in use (%s); global priority: %s; timestamps %s", queue_family, fams.c_str(),
+                gp_khr ? "VK_KHR_global_priority" : gp_ext ? "VK_EXT_global_priority" : "not offered",
+                timestamp_ns > 0.0 ? "yes" : "no");
         }
         VkPhysicalDeviceFeatures avail;
         vkGetPhysicalDeviceFeatures(phys, &avail);
