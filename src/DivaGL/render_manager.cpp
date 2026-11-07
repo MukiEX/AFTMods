@@ -28,6 +28,7 @@
 #include "stereo.hpp"
 #include "texture.hpp"
 #include <Helpers.h>
+#include <cstdlib>
 
 struct light_data_color {
     vec4 ambient;
@@ -107,16 +108,35 @@ static double_t pv_vsync_ms = 0.0;            // shortest recent frame: about th
 static bool pv_last_was_full = false;
 static struct { int32_t frames, full; double_t sum_ms, worst_ms, render_ms, pv_ms, hud_ms; LARGE_INTEGER start; } pv_stat = {};
 
+/* A host that also throttles the PV's game-side work (the DivaRecomp runtime: PV tasks'
+   updates and draw lists split over two frames) decides the schedule, so draw lists and
+   the picture agree: its shared struct's address is in DIVARECOMP_PV_SYNC. */
+struct pv_sync_struct {
+    volatile uint32_t magic;        // 'PVSY'
+    volatile uint32_t version;      // 1
+    volatile uint32_t skip;         // host: this frame, reuse the kept PV picture
+    volatile uint32_t cache_ready;  // us: a kept picture exists for every eye
+    volatile uint32_t frames_seen;  // us: frames we followed the host's schedule
+};
+static pv_sync_struct* pv_sync = 0;
+static bool pv_sync_checked = false;
+
+static double_t pv_ms_since(const LARGE_INTEGER& t0) {
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return pv_qpf.QuadPart ? (double_t)(t.QuadPart - t0.QuadPart) * 1000.0 / (double_t)pv_qpf.QuadPart : 0.0;
+}
+
 static void pv_log_stats(double_t elapsed_s) {
     if (!sv_perf_log || pv_stat.frames <= 0)
         return;
     char buf[256];
     snprintf(buf, sizeof(buf),
         "[DivaLinux] perf: %.1f fps, frame avg %.1f ms worst %.1f ms (display %.1f ms), PV drawn %d%% of frames"
-        " (%s), render CPU avg %.1f ms (PV %.1f, HUD %.1f)\n",
+        " (%s), render CPU avg %.1f ms (PV %.1f per drawn frame, HUD %.1f)\n",
         pv_stat.frames / elapsed_s, pv_stat.sum_ms / pv_stat.frames, pv_stat.worst_ms, pv_vsync_ms,
         pv_stat.full * 100 / pv_stat.frames,
-        sv_pv_frame_skip == 0 ? "frame skip off" : sv_pv_frame_skip == 1 ? "auto" : "fixed",
+        pv_sync ? "following the host's schedule" : sv_pv_frame_skip == 0 ? "frame skip off" : sv_pv_frame_skip == 1 ? "auto" : "fixed",
         pv_stat.render_ms / pv_stat.frames, pv_stat.full ? pv_stat.pv_ms / pv_stat.full : 0.0,
         pv_stat.hud_ms / pv_stat.frames);
     OutputDebugStringA(buf);
@@ -155,9 +175,27 @@ static void pv_frame_begin() {
     if (w != pv_cache_width || h != pv_cache_height)
         pv_cache_valid[0] = pv_cache_valid[1] = false;
 
+    if (!pv_sync_checked) {
+        pv_sync_checked = true;
+        char buf[32];
+        const DWORD n = GetEnvironmentVariableA("DIVARECOMP_PV_SYNC", buf, sizeof(buf));
+        if (n && n < sizeof(buf)) {
+            pv_sync_struct* s = (pv_sync_struct*)(uintptr_t)strtoull(buf, 0, 16);
+            if (s && s->magic == 0x59535650u && s->version >= 1) {
+                pv_sync = s;
+                OutputDebugStringA("[DivaLinux] PV frame skip: following the host's PV schedule\n");
+            }
+        }
+    }
+
     const bool have = pv_cache_valid[0] && (!stereo_enabled() || pv_cache_valid[1]);
     bool skip = false;
-    if (sv_pv_frame_skip == 1)
+    if (pv_sync) {
+        skip = have && pv_sync->skip;
+        pv_sync->cache_ready = have ? 1 : 0;
+        pv_sync->frames_seen++;
+    }
+    else if (sv_pv_frame_skip == 1)
         skip = have && pv_last_was_full && pv_vsync_ms > 0.0 && pv_frame_ms > pv_vsync_ms * 1.3;
     else if (sv_pv_frame_skip >= 2)
         skip = have && pv_since_full + 1 < sv_pv_frame_skip;
@@ -169,7 +207,7 @@ static void pv_frame_begin() {
 }
 
 static void pv_cache_save(render_data_context& rend_data_ctx, int32_t eye) {
-    if (!sv_pv_frame_skip || !rctx->screen_buffer.m_txhd_color)
+    if ((!sv_pv_frame_skip && !pv_sync) || !rctx->screen_buffer.m_txhd_color)
         return;
     const int32_t w = rctx->screen_buffer.get_width();
     const int32_t h = rctx->screen_buffer.get_height();
@@ -418,6 +456,8 @@ namespace rndr {
 
     void RenderManager::render_all_passes() {
         const int32_t eye = stereo_eye_index();
+        LARGE_INTEGER pass_start;
+        QueryPerformanceCounter(&pass_start);
         if (pv_skip && pv_cache[eye] && pv_cache_valid[eye]) {
             // PV frame skip: the kept PV picture, then a fresh HUD on top
             render_data_context rend_data_ctx(GL_REND_STATE_2D);
@@ -425,12 +465,11 @@ namespace rndr {
             rend_data_ctx.state.begin_event("rndpass_render_all_pass::Caller::execute_2d (PV reused)");
             pv_cache_restore(rend_data_ctx, eye);
             for (int32_t i = RND_PASSID_SHOW_VECTOR; i <= RND_PASSID_12; i++)
-                if (i != RND_PASSID_POST_PROCESS) {
+                if (i != RND_PASSID_POST_PROCESS)
                     RenderManager::render_single_pass(rend_data_ctx, (RenderPassID)i);
-                    pv_stat.hud_ms += cpu_time[i];
-                }
             rend_data_ctx.state.end_event();
             rend_data_ctx.state.finish();
+            pv_stat.hud_ms += pv_ms_since(pass_start);
             return;
         }
 
@@ -457,15 +496,17 @@ namespace rndr {
             render_data_context rend_data_ctx(GL_REND_STATE_2D);
             rend_data_ctx.state.get();
             rend_data_ctx.state.begin_event("rndpass_render_all_pass::Caller::execute_2d");
+            LARGE_INTEGER hud_start = {};
             for (int32_t i = RND_PASSID_SHOW_VECTOR; i <= RND_PASSID_12; i++) {
                 RenderManager::render_single_pass(rend_data_ctx, (RenderPassID)i);
-                if (i == RND_PASSID_POST_PROCESS)
+                if (i == RND_PASSID_POST_PROCESS) {
                     pv_cache_save(rend_data_ctx, eye);   // the finished PV picture, before the HUD
-                if (i >= RND_PASSID_SPRITE)
-                    pv_stat.hud_ms += cpu_time[i];
+                    pv_stat.pv_ms += pv_ms_since(pass_start);
+                    QueryPerformanceCounter(&hud_start);
+                }
             }
-            for (int32_t i = RND_PASSID_SHADOW; i <= RND_PASSID_POST_PROCESS; i++)
-                pv_stat.pv_ms += cpu_time[i];
+            if (hud_start.QuadPart)
+                pv_stat.hud_ms += pv_ms_since(hud_start);
             rend_data_ctx.state.end_event();
             rend_data_ctx.state.finish();
         }
