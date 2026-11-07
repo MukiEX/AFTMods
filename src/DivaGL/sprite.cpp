@@ -161,6 +161,12 @@ extern bool sprite_break_sprite_vertex_limit;
 
 static spr::SpriteManager::RenderData* sprite_manager_render_data;
 
+// Set while sprites are drawn into the HUD layer (a transparent target shown over the PV by
+// the headset's compositor): alpha has to build up as coverage, so the result is premultiplied.
+// Normal and screen-like blends accumulate alpha; additive leaves it (light just adds over the
+// PV). Multiply and overlay need the picture underneath and can't be exact on a separate layer.
+bool sprite_hud_layer_blend = false;
+
 static const GLenum spr_blend_param[6][4] = {
     { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE  },
     { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_COLOR, GL_ZERO, GL_ONE  },
@@ -1209,9 +1215,18 @@ namespace spr {
                 combiner = draw_param.attrib.m.blend == 3 ? 1 : 0;
 
             const GLenum* blend = spr_blend_param[draw_param.attrib.m.blend];
+            GLenum alpha_src = blend[2];
+            GLenum alpha_dst = blend[3];
+            if (sprite_hud_layer_blend) {
+                const int32_t mode = draw_param.attrib.m.blend;
+                if (mode == 0 || mode == 1 || mode == 5) {
+                    alpha_src = GL_ONE;
+                    alpha_dst = GL_ONE_MINUS_SRC_ALPHA;
+                }
+            }
 
             rend_data_ctx.state.enable_blend();
-            rend_data_ctx.state.set_blend_func_separate(blend[0], blend[1], blend[2], blend[3]);
+            rend_data_ctx.state.set_blend_func_separate(blend[0], blend[1], alpha_src, alpha_dst);
         }
         else
             rend_data_ctx.state.disable_blend();

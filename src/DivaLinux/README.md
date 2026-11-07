@@ -173,6 +173,7 @@ The monitor/window keeps showing the game too.
 | `screen_distance_cm` | 250 | How far in front of you it floats. |
 | `screen_height_cm` | 0 | Raise (or lower, negative) the screen from eye level. |
 | `runtime_json` | (empty) | A runtime manifest to use instead of the prefix's active runtime. |
+| `hud_layer` | 1 | Show the HUD (notes, gauges, text) as its own layer just in front of the picture, so it stands out from the 3D. The HUD is drawn once into a transparent target with premultiplied alpha, not per eye into the picture. Normal and additive blends come out the same; multiply and overlay blends need the picture underneath and lose their effect on the HUD layer. `DIVAVK_HUD_DEPTH_CM` sets the distance in front of the picture (default 10). The mouse pointer and launcher menu stay in the picture for now. |
 
 3D comes from DivaGL's SBS stereo: set `[stereo] stereo_mode` to 2 (full SBS) and the left half
 of each frame goes to your left eye, the right half to your right eye. Full SBS on a 32:9

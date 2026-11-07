@@ -33,4 +33,5 @@ extern bool sv_stereo_bg_infinity;
 extern bool sv_stereo_shadow_once;
 extern int32_t sv_stereo_max_parallax;
 extern int32_t sv_pv_frame_skip;
+extern bool sv_vr_hud_layer;
 extern bool sv_perf_log;

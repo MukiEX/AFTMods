@@ -167,6 +167,8 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
             L"pv_frame_skip", 1, CONFIG_FILE), 0, 4);
         sv_perf_log = GetPrivateProfileIntW(L"performance",
             L"perf_log", 1, CONFIG_FILE) > 0 ? true : false;
+        sv_vr_hud_layer = GetPrivateProfileIntW(L"vr",
+            L"hud_layer", 1, CONFIG_FILE) > 0 ? true : false;
 
 #ifdef DIVAVK
         // No WGL_NV_DX_interop2 under Vulkan: always use the CPU upload path for videos.

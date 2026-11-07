@@ -28,6 +28,9 @@
 #include "stereo.hpp"
 #include "texture.hpp"
 #include <Helpers.h>
+#ifdef DIVAVK
+#include <divavk/divavk.h>
+#endif
 #include <cstdlib>
 
 struct light_data_color {
@@ -229,6 +232,70 @@ static void pv_cache_save(render_data_context& rend_data_ctx, int32_t eye) {
     pv_cache_valid[eye] = true;
 }
 
+/* HUD layer ([vr] hud_layer): in a headset, the HUD (sprite list 0) isn't drawn into the
+   picture but once per frame into a transparent target of its own, which DivaVK shows as a
+   separate layer just in front of the PV. The PV picture (both eyes with SBS stereo) goes to
+   the window/headset without it, so the HUD stands out from the 3D, and it can later update
+   on its own. */
+static RenderTexture* hud_layer_rt = 0;
+static bool hud_layer_active = false;   // this frame
+static bool hud_layer_was = false;
+extern bool sprite_hud_layer_blend;
+
+static bool hud_layer_wanted() {
+#ifdef DIVAVK
+    return sv_vr_hud_layer && dvk_xr_active();
+#else
+    return false;
+#endif
+}
+
+static void draw_hud_layer() {
+#ifdef DIVAVK
+    // The HUD layer is shown at the picture's shape: with SBS stereo the window can be 32:9
+    // (two 16:9 eyes), but the HUD is one 16:9 picture over both.
+    const int32_t h = rctx->screen_height;
+    int32_t w = rctx->screen_width;
+    if (stereo_enabled() && sv_stereo_content_aspect > 0 && h > 0)
+        w = (int32_t)(h * (sv_stereo_content_aspect / 1000.0) + 0.5);
+    if (w <= 0 || h <= 0)
+        return;
+    if (!hud_layer_rt)
+        hud_layer_rt = new RenderTexture;
+    if (hud_layer_rt->m_txhd_color && (hud_layer_rt->get_width() != w || hud_layer_rt->get_height() != h))
+        hud_layer_rt->destroy();
+    if (!hud_layer_rt->m_txhd_color)
+        hud_layer_rt->create_texture(w, h, 0, GL_RGBA8, 0);
+
+    render_data_context rend_data_ctx(GL_REND_STATE_2D);
+    rend_data_ctx.state.get();
+    rend_data_ctx.state.begin_event("hud_layer");
+    hud_layer_rt->begin_render(rend_data_ctx.state);
+    rend_data_ctx.state.set_viewport(0, 0, w, h);
+    rend_data_ctx.state.clear_color(0.0f, 0.0f, 0.0f, 0.0f);
+    rend_data_ctx.state.clear(GL_COLOR_BUFFER_BIT);
+    if (sprite_manager_get_reqlist_count(0)) {
+        rend_data_ctx.state.disable_depth_test();
+        rend_data_ctx.state.enable_blend();
+        rend_data_ctx.state.disable_cull_face();
+        sprite_manager_set_res((double_t)w / (double_t)h, w, h);
+        sprite_hud_layer_blend = true;
+        sprite_manager_draw(rend_data_ctx, 0, true,
+            rctx->screen_overlay_buffer.get_texture(), set_projection_matrix_2d(false));
+        sprite_hud_layer_blend = false;
+        rend_data_ctx.state.enable_cull_face();
+        rend_data_ctx.state.disable_blend();
+        rend_data_ctx.state.enable_depth_test();
+        shader::unbind(rend_data_ctx.state);
+    }
+    hud_layer_rt->end_render(rend_data_ctx.state);
+    rend_data_ctx.state.bind_framebuffer(0);
+    rend_data_ctx.state.end_event();
+    rend_data_ctx.state.finish();
+    dvk_xr_set_hud_texture(hud_layer_rt->get_texture_glid());
+#endif
+}
+
 static void pv_cache_restore(render_data_context& rend_data_ctx, int32_t eye) {
     fbo_blit(rend_data_ctx.state, pv_cache[eye]->get_fb(), rctx->screen_buffer.get_fb(),
         0, 0, pv_cache_width, pv_cache_height, 0, 0, pv_cache_width, pv_cache_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -411,6 +478,7 @@ namespace rndr {
 
         gl_state.get();
         pv_frame_begin();
+        hud_layer_active = hud_layer_wanted();
         LARGE_INTEGER render_start;
         QueryPerformanceCounter(&render_start);
         sprite_manager_pre_draw();
@@ -431,6 +499,15 @@ namespace rndr {
             render_all_stereo();
         else
             render_all_passes();
+
+        // The HUD once, outside the eye passes, into its own layer
+        if (hud_layer_active)
+            draw_hud_layer();
+#ifdef DIVAVK
+        else if (hud_layer_was)
+            dvk_xr_set_hud_texture(0);
+#endif
+        hud_layer_was = hud_layer_active;
 
         mdl::etc_obj_manager->post_draw();
         sprite_manager_post_draw();
@@ -1259,7 +1336,8 @@ namespace rndr {
 
     void RenderManager::pass_sprite(render_data_context& rend_data_ctx) {
         rend_data_ctx.state.begin_event("pass_sprite");
-        if (sprite_manager_get_reqlist_count(0)) {
+        // With the HUD layer on, the HUD goes to its own target after the passes (draw_hud_layer)
+        if (!hud_layer_active && sprite_manager_get_reqlist_count(0)) {
             rend_data_ctx.state.set_viewport(0, 0, render->screen_width, render->screen_height);
 
             if (multisample && multisample_framebuffer) {
