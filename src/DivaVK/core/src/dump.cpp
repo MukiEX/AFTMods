@@ -53,7 +53,7 @@ namespace dvk {
         dump_pending = false;
         dump_active = true;
         dump_index = 0;
-        std::string idx = dump_dir + "/index.txt";
+        std::string idx = dump_dir + "/" + dump_prefix + "index.txt";
         dump_file = fopen(idx.c_str(), "w");
         if (dump_file)
             fprintf(dump_file, "# n  what  texture  size  format  min(r g b a)  max(r g b a)  mean(r g b a)\n");
@@ -64,7 +64,7 @@ namespace dvk {
         if (!dump_active)
             return;
         PassTarget t;
-        if (resolve_target(0, t, true) && t.color[0])
+        if (is_main() && resolve_target(0, t, true) && t.color[0])
             dump_texture(t.color[0], t.color_level[0], t.color_layer[0], "final");
         dump_active = false;
         if (dump_file) {
@@ -129,7 +129,7 @@ namespace dvk {
             }
         }
         char name[512];
-        snprintf(name, sizeof(name), "%s/%03d_%s_tex%u_%dx%d_%s.png", dump_dir.c_str(), dump_index, what,
+        snprintf(name, sizeof(name), "%s/%s%03d_%s_tex%u_%dx%d_%s.png", dump_dir.c_str(), dump_prefix.c_str(), dump_index, what,
             t->name, w, h, vk_format_name(t->format->vk));
         stbi_write_png(name, ow, oh, 4, out.data(), ow * 4);
         if (dump_file) {
@@ -148,6 +148,37 @@ namespace dvk {
 }
 
 extern "C" void dvk_request_frame_dump(const char* dir) {
-    if (dvk::g_ctx)
-        dvk::g_ctx->request_frame_dump(dir ? dir : ".");
+    if (!dvk::g_ctx)
+        return;
+    const std::string d = dir ? dir : ".";
+    dvk::g_ctx->request_frame_dump(d);
+    // shared contexts (a PV render thread): their next picture too (dvk_dump_begin/end), as pv_*
+    std::lock_guard<std::mutex> l(dvk::g_ctx->sh->contexts_mutex);
+    for (dvk::Context* c : dvk::g_ctx->sh->contexts)
+        if (c != dvk::g_ctx) {
+            std::lock_guard<std::mutex> r(c->dump_req_mutex);
+            c->dump_req_dir = d;
+        }
+}
+
+extern "C" void dvk_dump_begin(void) {
+    dvk::Context* c = dvk::current_ctx();
+    if (!c || c->is_main())
+        return;
+    std::string d;
+    {
+        std::lock_guard<std::mutex> r(c->dump_req_mutex);
+        d.swap(c->dump_req_dir);
+    }
+    if (d.empty())
+        return;
+    c->dump_prefix = "pv_";
+    c->request_frame_dump(d);
+    c->dump_frame_begin();
+}
+
+extern "C" void dvk_dump_end(void) {
+    dvk::Context* c = dvk::current_ctx();
+    if (c && !c->is_main())
+        c->dump_frame_end();
 }

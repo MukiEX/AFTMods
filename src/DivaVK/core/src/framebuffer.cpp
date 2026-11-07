@@ -130,10 +130,15 @@ namespace dvk {
     VkRenderPass Context::get_render_pass(const PassKey& key) {
         uint64_t h = hash_bytes(&key, sizeof(key));
         {
+            auto lit = local_render_passes.find(h);
+            if (lit != local_render_passes.end())
+                return lit->second;
             std::lock_guard<std::mutex> l(sh->cache_mutex);
             auto it = render_passes.find(h);
-            if (it != render_passes.end())
+            if (it != render_passes.end()) {
+                local_render_passes[h] = it->second;
                 return it->second;
+            }
         }
 
         VkAttachmentDescription atts[MAX_COLOR_ATTACHMENTS + 1];

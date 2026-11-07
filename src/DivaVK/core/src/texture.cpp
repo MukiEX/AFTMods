@@ -457,6 +457,8 @@ namespace dvk {
     VkImageView Context::texture_view(TextureObj* t) {
         if (!t->image)
             return VK_NULL_HANDLE;
+        if (t->view && !t->view_dirty)   // the usual case, without the lock
+            return t->view;
         std::lock_guard<std::mutex> view_lock(sh->view_mutex);
         if (t->view && !t->view_dirty)
             return t->view;
@@ -593,10 +595,15 @@ namespace dvk {
         uint64_t h = s.hash();
         hash_combine(h, linear_ok ? 1 : 0);
         {
+            auto lit = local_samplers.find(h);
+            if (lit != local_samplers.end())
+                return lit->second;
             std::lock_guard<std::mutex> l(sh->cache_mutex);
             auto it = vk_samplers.find(h);
-            if (it != vk_samplers.end())
+            if (it != vk_samplers.end()) {
+                local_samplers[h] = it->second;
                 return it->second;
+            }
         }
 
         auto is_linear = [](GLenum f) {

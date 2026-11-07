@@ -266,6 +266,28 @@ namespace dvk {
         std::unordered_map<GLuint, std::unique_ptr<T>> objects;
         GLuint next = 1;
         mutable std::shared_mutex mtx;
+        // Lookups of names below FAST_MAX take no lock at all: a two-level table of atomic
+        // pointers kept in step with the map (written under the exclusive lock).
+        enum : uint32_t { FAST_CHUNK = 256, FAST_MAX = 65536 };
+        std::atomic<std::atomic<T*>*> fast[FAST_MAX / FAST_CHUNK] = {};
+
+        ~NameTable() {
+            for (auto& c : fast)
+                delete[] c.load();
+        }
+
+        void fast_set(GLuint n, T* p) {
+            if (n >= FAST_MAX)
+                return;
+            std::atomic<T*>* c = fast[n / FAST_CHUNK].load(std::memory_order_acquire);
+            if (!c) {
+                if (!p)
+                    return;
+                c = new std::atomic<T*>[FAST_CHUNK]();
+                fast[n / FAST_CHUNK].store(c, std::memory_order_release);
+            }
+            c[n % FAST_CHUNK].store(p, std::memory_order_release);
+        }
 
         GLuint gen() {
             std::unique_lock<std::shared_mutex> lock(mtx);
@@ -274,10 +296,15 @@ namespace dvk {
             GLuint n = next++;
             objects[n] = std::make_unique<T>();
             objects[n]->name = n;
+            fast_set(n, objects[n].get());
             return n;
         }
 
         T* get(GLuint n) {
+            if (n < FAST_MAX) {
+                std::atomic<T*>* c = fast[n / FAST_CHUNK].load(std::memory_order_acquire);
+                return c ? c[n % FAST_CHUNK].load(std::memory_order_acquire) : nullptr;
+            }
             std::shared_lock<std::shared_mutex> lock(mtx);
             auto it = objects.find(n);
             return it != objects.end() ? it->second.get() : nullptr;
@@ -287,17 +314,14 @@ namespace dvk {
         T* get_or_create(GLuint n) {
             if (!n)
                 return nullptr;
-            {
-                std::shared_lock<std::shared_mutex> lock(mtx);
-                auto it = objects.find(n);
-                if (it != objects.end() && it->second)
-                    return it->second.get();
-            }
+            if (T* t = get(n))
+                return t;
             std::unique_lock<std::shared_mutex> lock(mtx);
             auto& p = objects[n];
             if (!p) {
                 p = std::make_unique<T>();
                 p->name = n;
+                fast_set(n, p.get());
             }
             return p.get();
         }
@@ -307,6 +331,7 @@ namespace dvk {
             auto it = objects.find(n);
             if (it == objects.end())
                 return nullptr;
+            fast_set(n, nullptr);
             std::unique_ptr<T> p = std::move(it->second);
             objects.erase(it);
             return p;
@@ -585,6 +610,10 @@ namespace dvk {
         std::unordered_map<uint64_t, VkFramebuffer>& vk_framebuffers = sh->vk_framebuffers;
         std::unordered_map<uint64_t, VkPipeline>& pipelines = sh->pipelines;
         std::unordered_map<uint64_t, VkSampler>& vk_samplers = sh->vk_samplers;
+        // this context's copies of the shared caches' entries it has used: looked up without a lock
+        std::unordered_map<uint64_t, VkPipeline> local_pipelines;
+        std::unordered_map<uint64_t, VkRenderPass> local_render_passes;
+        std::unordered_map<uint64_t, VkSampler> local_samplers;
 
         std::vector<GLStateSnapshot> state_stack; // dvk_push_gl_state
 
@@ -702,6 +731,9 @@ namespace dvk {
 
         // ------------------------------------------------ dump.cpp (one-frame render target dump)
         std::string dump_dir;
+        std::string dump_prefix;             // "pv_" for a shared context's picture
+        std::mutex dump_req_mutex;           // a dump asked for from another thread
+        std::string dump_req_dir;
         bool dump_pending = false, dump_active = false;
         int dump_index = 0;
         FILE* dump_file = nullptr;

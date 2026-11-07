@@ -263,3 +263,18 @@ extern "C" uint64_t dvk_last_ticket(dvk_context ctx) {
     Context* c = ctx ? (Context*)ctx : current_ctx();
     return c ? c->last_submitted.load() : 0;
 }
+
+extern "C" void dvk_context_get_stats(dvk_context ctx, dvk_stats* out) {
+    Context* c = ctx ? (Context*)ctx : g_ctx;
+    if (!c || !out)
+        return;
+    const Context::Stats& s = c->stats;
+    out->frames = c->serial;
+    out->programs_linked = s.programs_linked;
+    out->draws = s.draws;
+    out->render_passes = s.passes;
+    out->render_pass_breaks = s.pass_breaks;
+    out->pipelines_created = s.pipelines_created;
+    out->hoisted_uploads = s.hoisted_uploads;
+    out->inline_uploads = s.inline_uploads;
+}

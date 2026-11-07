@@ -18,7 +18,8 @@
 extern "C" {
 #endif
 
-typedef struct VkSurfaceKHR_T* dvk_surface;   /* VkSurfaceKHR */
+typedef struct VkSurfaceKHR_T* dvk_surface;
+typedef struct dvk_context_t* dvk_context;   /* a shared context (dvk_context_create_shared) */   /* VkSurfaceKHR */
 typedef struct VkInstance_T* dvk_instance;     /* VkInstance */
 
 typedef void (*dvk_log_func)(const char* message, void* user);
@@ -76,7 +77,13 @@ void dvk_save_pipeline_cache(void);
 
 // Debugging: writes every render target of the next frame to dir (PNG + index.txt).
 void dvk_request_frame_dump(const char* dir);
+/* On a shared context's thread, around one picture: dumps it too (as pv_*) when a frame dump
+   was requested. */
+void dvk_dump_begin(void);
+void dvk_dump_end(void);
 void dvk_get_stats(dvk_stats* out);
+/* One context's counters (NULL = the first context). */
+void dvk_context_get_stats(dvk_context ctx, dvk_stats* out);
 /* What DivaVK is doing right now (e.g. waiting for the window, compiling a pipeline), for a
    watchdog that reports where a frame is stuck. Safe to call from any thread. */
 const char* dvk_debug_stage(void);
@@ -97,7 +104,6 @@ void dvk_pop_gl_state(void);
    submits and returns a ticket; dvk_ticket_done (any thread, never waits) says when the GPU
    has finished it; dvk_ticket_use on the other thread, once it's done, makes that thread's
    next submit see its results (the GPU doesn't wait: the work is finished). */
-typedef struct dvk_context_t* dvk_context;
 /* NULL when not possible (needs timeline semaphores) */
 dvk_context dvk_context_create_shared(void);
 void dvk_context_destroy(dvk_context ctx);

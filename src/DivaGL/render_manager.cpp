@@ -157,6 +157,14 @@ static void pv_log_stats(double_t elapsed_s) {
         pv_stat.render_ms / pv_stat.frames, pv_stat.full ? pv_stat.pv_ms / pv_stat.full : 0.0,
         pv_stat.hud_ms / pv_stat.frames);
     OutputDebugStringA(buf);
+    {
+        // for comparing with the PV thread's pictures: what the game thread's lists hold now
+        size_t objs = 0;
+        for (int32_t i = 0; i < mdl::OBJ_TYPE_MAX; i++)
+            objs += disp_manager_main->obj[i].size();
+        snprintf(buf, sizeof(buf), "[DivaLinux] game thread's draw lists at this frame's render: %zu entries (opaque %zu)\n", objs, disp_manager_main->obj[mdl::OBJ_TYPE_OPAQUE].size());
+        OutputDebugStringA(buf);
+    }
 }
 
 /* once per frame, before anything is drawn */
@@ -373,6 +381,7 @@ namespace {
         std::atomic<double> cpu_ms{ 0.0 };      // its thread time for the last picture
     };
     pv_thread_t* pvt = nullptr;
+    std::atomic<uint32_t> pv_song_first{ 1 };   // the song's first picture number, for the log
     bool pv_job_out = false;                    // game thread: handed off, not shown yet
     uint32_t pv_shown_number = 0;
     uint32_t pv_frame_no = 0;
@@ -402,6 +411,20 @@ static void pv_thread_draw() {
 
     // its GPU work goes after the game frames that last showed the slot it overwrites
     dvk_ticket_use(dvk_main_context(), t.after_main);
+    dvk_dump_begin();   // a frame dump asked for (DivaLinux_dump_request): this picture too
+
+    // what this picture has to draw, for the log
+    size_t objs = 0, obj_opaque = 0, obj_transp = 0, obj_transl = 0, obj_screen = 0;
+    for (int32_t i = 0; i < mdl::OBJ_TYPE_MAX; i++)
+        objs += disp_manager->obj[i].size();
+    obj_opaque = disp_manager->obj[mdl::OBJ_TYPE_OPAQUE].size();
+    obj_transp = disp_manager->obj[mdl::OBJ_TYPE_TRANSPARENT].size();
+    obj_transl = disp_manager->obj[mdl::OBJ_TYPE_TRANSLUCENT].size();
+    for (int32_t i = 0; i < mdl::OBJ_TYPE_SCREEN_MAX; i++)
+        obj_screen += r->obj_screen[i].size();
+    const size_t spr1 = sprite_manager_reqlist_count(1), spr2 = sprite_manager_reqlist_count(2);
+    dvk_stats st0 = {};
+    dvk_context_get_stats(t.ctx, &st0);
     r->ctrl();
     r->render_manager_cam = t.cam;
 
@@ -488,8 +511,28 @@ static void pv_thread_draw() {
         rend_data_ctx.state.finish();
     }
 
+    dvk_dump_end();
     const uint64_t ticket = dvk_flush();
     t.cpu_ms.store(pv_ms_since(t0));
+    {
+        // the first pictures of each song, then one every 10 seconds
+        static LARGE_INTEGER last_log = {};
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        const bool first = t.number < pv_song_first.load() + 5;
+        if (first || (double_t)(now.QuadPart - last_log.QuadPart) / (double_t)pv_qpf.QuadPart >= 10.0) {
+            last_log = now;
+            dvk_stats st1 = {};
+            dvk_context_get_stats(t.ctx, &st1);
+            char buf[512];
+            snprintf(buf, sizeof(buf), "[DivaLinux] PV thread picture %u: %zu draw-list entries (opaque %zu, transparent %zu, "
+                "translucent %zu, screen %zu), sprites: surface %zu, background %zu; %llu draws in %llu render passes, "
+                "%d eye(s), %.1f ms\n", t.number, objs, obj_opaque, obj_transp, obj_transl, obj_screen, spr1, spr2,
+                (unsigned long long)(st1.draws - st0.draws), (unsigned long long)(st1.render_passes - st0.render_passes),
+                t.eyes, t.cpu_ms.load());
+            OutputDebugStringA(buf);
+        }
+    }
     t.ticket.store(ticket);
     t.recorded.store(t.number);
 }
@@ -607,6 +650,7 @@ static void pv_threaded_frame() {
         pv_trace_left = 15;
         // nothing from before this song: black until the first picture is done
         memset(pv_cache_valid, 0, sizeof(pv_cache_valid));
+        pv_song_first = pvt ? pvt->number + 1 : 1;
         OutputDebugStringA("[DivaLinux] threaded PV on: the HUD every frame over the newest finished PV picture "
             "(slots A and B), the PV on its own thread at whatever rate it manages\n");
     }

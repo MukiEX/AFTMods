@@ -226,10 +226,15 @@ namespace dvk {
 
         uint64_t h = hash_bytes(&k, sizeof(k));
         {
+            auto lit = local_pipelines.find(h);
+            if (lit != local_pipelines.end())
+                return lit->second;
             std::lock_guard<std::mutex> l(sh->cache_mutex);
             auto it = pipelines.find(h);
-            if (it != pipelines.end())
+            if (it != pipelines.end()) {
+                local_pipelines[h] = it->second;
                 return it->second;
+            }
         }
 
         VkPipelineShaderStageCreateInfo stages[2] = {};
@@ -344,6 +349,7 @@ namespace dvk {
             }
             pipelines[h] = pipe;
         }
+        local_pipelines[h] = pipe;
         stats.pipelines_created++;
         return pipe;
     }
