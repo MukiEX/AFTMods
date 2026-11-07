@@ -457,6 +457,7 @@ namespace dvk {
     VkImageView Context::texture_view(TextureObj* t) {
         if (!t->image)
             return VK_NULL_HANDLE;
+        std::lock_guard<std::mutex> view_lock(sh->view_mutex);
         if (t->view && !t->view_dirty)
             return t->view;
         if (t->view) {
@@ -507,6 +508,7 @@ namespace dvk {
 
     VkImageView Context::texture_attach_view(TextureObj* t, uint32_t level, uint32_t layer) {
         uint32_t key = (level << 8) | layer;
+        std::lock_guard<std::mutex> view_lock(sh->view_mutex);
         auto it = t->attach_views.find(key);
         if (it != t->attach_views.end())
             return it->second;
@@ -590,9 +592,12 @@ namespace dvk {
 
         uint64_t h = s.hash();
         hash_combine(h, linear_ok ? 1 : 0);
-        auto it = vk_samplers.find(h);
-        if (it != vk_samplers.end())
-            return it->second;
+        {
+            std::lock_guard<std::mutex> l(sh->cache_mutex);
+            auto it = vk_samplers.find(h);
+            if (it != vk_samplers.end())
+                return it->second;
+        }
 
         auto is_linear = [](GLenum f) {
             return f == GL_LINEAR || f == GL_LINEAR_MIPMAP_NEAREST || f == GL_LINEAR_MIPMAP_LINEAR;
@@ -626,6 +631,12 @@ namespace dvk {
 
         VkSampler smp = VK_NULL_HANDLE;
         DVK_CHECK(vkCreateSampler(device, &sci, nullptr, &smp));
+        std::lock_guard<std::mutex> l(sh->cache_mutex);
+        auto it = vk_samplers.find(h);
+        if (it != vk_samplers.end()) {
+            vkDestroySampler(device, smp, nullptr);
+            return it->second;
+        }
         vk_samplers[h] = smp;
         return smp;
     }

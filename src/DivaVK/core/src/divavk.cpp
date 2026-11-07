@@ -28,9 +28,9 @@ extern "C" void dvk_destroy(void) {
 }
 
 extern "C" void dvk_swap_buffers(void) {
-    if (!g_ctx)
+    if (!current_ctx())
         return;
-    Context& c = *g_ctx;
+    Context& c = *current_ctx();
     if (c.recording && c.debug_depth) {
         // Labels can't stay open across command buffers
         while (c.debug_depth) {
@@ -73,9 +73,9 @@ extern "C" void dvk_set_vsync(bool vsync) {
 }
 
 extern "C" void dvk_push_gl_state(void) {
-    if (!g_ctx)
+    if (!current_ctx())
         return;
-    Context& c = *g_ctx;
+    Context& c = *current_ctx();
     GLStateSnapshot st;
     st.active_texture = c.active_texture;
     memcpy(st.tex_2d, c.tex_2d, sizeof(st.tex_2d));
@@ -109,9 +109,9 @@ extern "C" void dvk_push_gl_state(void) {
 }
 
 extern "C" void dvk_pop_gl_state(void) {
-    if (!g_ctx || g_ctx->state_stack.empty())
+    if (!current_ctx() || current_ctx()->state_stack.empty())
         return;
-    Context& c = *g_ctx;
+    Context& c = *current_ctx();
     const GLStateSnapshot st = c.state_stack.back();
     c.state_stack.pop_back();
     c.active_texture = st.active_texture;
@@ -172,4 +172,85 @@ extern "C" const char* dvk_device_name(void) {
 extern "C" void dvk_save_pipeline_cache(void) {
     if (g_ctx)
         g_ctx->save_pipeline_cache();
+}
+
+/* ---------------------------------------------------------------- shared contexts */
+
+extern "C" dvk_context dvk_context_create_shared(void) {
+    if (!g_ctx)
+        return nullptr;
+    Context* c = new Context(g_ctx->sh, g_ctx->sh->queues[1] ? 1 : 0);
+    if (!c->init_shared()) {
+        log("A second context (for another drawing thread) isn't possible here: no timeline semaphores");
+        delete c;
+        return nullptr;
+    }
+    log("Second context created: its own GL state and frames, %s",
+        c->queue_slot ? "on the second, lower-priority queue" : "on the game's queue (only one queue)");
+    return (dvk_context)c;
+}
+
+extern "C" void dvk_context_destroy(dvk_context ctx) {
+    Context* c = (Context*)ctx;
+    if (!c || c == g_ctx)
+        return;
+    if (t_ctx == c)
+        t_ctx = nullptr;
+    c->shutdown();
+    delete c;
+}
+
+extern "C" void dvk_make_current(dvk_context ctx) {
+    t_ctx = (Context*)ctx;
+}
+
+extern "C" uint64_t dvk_flush(void) {
+    Context* c = current_ctx();
+    if (!c)
+        return 0;
+    if (c->recording) {
+        if (c->debug_depth) {
+            while (c->debug_depth) {
+                if (vkCmdEndDebugUtilsLabelEXT)
+                    vkCmdEndDebugUtilsLabelEXT(c->frame().cmd);
+                c->debug_depth--;
+            }
+        }
+        c->submit_frame(false);
+    }
+    return c->last_submitted.load();
+}
+
+extern "C" bool dvk_ticket_done(dvk_context ctx, uint64_t ticket) {
+    Context* c = (Context*)ctx;
+    if (!c || !c->timeline || !ticket)
+        return true;
+    uint64_t v = 0;
+    if (vkGetSemaphoreCounterValueKHR(c->device, c->timeline, &v) != VK_SUCCESS)
+        return false;
+    return v >= ticket;
+}
+
+extern "C" void dvk_ticket_use(dvk_context ctx, uint64_t ticket) {
+    Context* from = (Context*)ctx;
+    Context* c = current_ctx();
+    if (!from || !c || from == c || !from->timeline || !ticket)
+        return;
+    for (auto& w : c->submit_waits)
+        if (w.first == from->timeline) {
+            w.second = std::max(w.second, ticket);
+            return;
+        }
+    c->submit_waits.push_back({ from->timeline, ticket });
+}
+
+extern "C" double dvk_context_take_gpu_ms(dvk_context ctx, uint32_t* frames) {
+    Context* c = ctx ? (Context*)ctx : g_ctx;
+    if (!c)
+        return 0.0;
+    double ms = c->gpu_ms_shared.exchange(0.0);
+    uint32_t n = c->gpu_frames_shared.exchange(0);
+    if (frames)
+        *frames = n;
+    return ms;
 }

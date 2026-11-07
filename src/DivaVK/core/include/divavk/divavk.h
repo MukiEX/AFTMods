@@ -88,6 +88,28 @@ const char* dvk_debug_stage(void);
 void dvk_push_gl_state(void);
 void dvk_pop_gl_state(void);
 
+/* ---------------------------------------------------------------- a second drawing thread
+   A shared context has its own GL state and command buffers and shares every GL object
+   (textures, buffers, programs, framebuffers, vertex arrays) with the first one. When the
+   device has a second queue in the family, it submits there, at a lower priority than the
+   game's queue. Two threads can draw at the same time, one per context, as long as they
+   don't write the same objects. Its work is handed over by ticket: dvk_flush on its thread
+   submits and returns a ticket; dvk_ticket_done (any thread, never waits) says when the GPU
+   has finished it; dvk_ticket_use on the other thread, once it's done, makes that thread's
+   next submit see its results (the GPU doesn't wait: the work is finished). */
+typedef struct dvk_context_t* dvk_context;
+/* NULL when not possible (needs timeline semaphores) */
+dvk_context dvk_context_create_shared(void);
+void dvk_context_destroy(dvk_context ctx);
+/* The calling thread draws with ctx from now on; NULL = the first context again. */
+void dvk_make_current(dvk_context ctx);
+/* Submits what the current context has recorded. Returns its ticket (0 = nothing yet). */
+uint64_t dvk_flush(void);
+bool dvk_ticket_done(dvk_context ctx, uint64_t ticket);
+void dvk_ticket_use(dvk_context ctx, uint64_t ticket);
+/* GPU time a context's frames took since the last call (NULL = the first context). */
+double dvk_context_take_gpu_ms(dvk_context ctx, uint32_t* frames);
+
 /* Name of the Vulkan device in use (for logs/overlays). */
 const char* dvk_device_name(void);
 

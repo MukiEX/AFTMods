@@ -21,6 +21,7 @@ extern "C" bool dvk_xr_active(void);
 
 namespace dvk {
     Context* g_ctx = nullptr;
+    thread_local Context* t_ctx = nullptr;
 
     void program_global_init();
     void program_global_shutdown();
@@ -330,13 +331,40 @@ namespace dvk {
         if (surface)
             dexts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
-        float prio = 1.0f;
+        // A second queue in the same family, at a lower priority, for a second context (a PV
+        // render thread), and timeline semaphores so the game thread can tell when that
+        // context's work is done without waiting for it.
+        uint32_t family_queues = 1;
+        {
+            uint32_t qn = 0;
+            vkGetPhysicalDeviceQueueFamilyProperties(phys, &qn, nullptr);
+            std::vector<VkQueueFamilyProperties> qf(qn);
+            vkGetPhysicalDeviceQueueFamilyProperties(phys, &qn, qf.data());
+            if (queue_family < qn)
+                family_queues = qf[queue_family].queueCount;
+        }
+        VkPhysicalDeviceTimelineSemaphoreFeaturesKHR tsf = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR };
+        if (has_extension(dev_exts, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)) {
+            VkPhysicalDeviceFeatures2 f2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+            VkPhysicalDeviceTimelineSemaphoreFeaturesKHR q = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR };
+            f2.pNext = &q;
+            vkGetPhysicalDeviceFeatures2(phys, &f2);
+            if (q.timelineSemaphore) {
+                dexts.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+                tsf.timelineSemaphore = VK_TRUE;
+                sh->has_timeline = true;
+            }
+        }
+
+        const float prios[2] = { 1.0f, 0.0f };
         VkDeviceQueueCreateInfo qci = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
         qci.queueFamilyIndex = queue_family;
-        qci.queueCount = 1;
-        qci.pQueuePriorities = &prio;
+        qci.queueCount = family_queues >= 2 ? 2 : 1;
+        qci.pQueuePriorities = prios;
 
         VkDeviceCreateInfo dci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+        if (sh->has_timeline)
+            dci.pNext = &tsf;
         dci.queueCreateInfoCount = 1;
         dci.pQueueCreateInfos = &qci;
         dci.enabledExtensionCount = (uint32_t)dexts.size();
@@ -347,7 +375,15 @@ namespace dvk {
             return false;
         }
         volkLoadDevice(device);
-        vkGetDeviceQueue(device, queue_family, 0, &queue);
+        vkGetDeviceQueue(device, queue_family, 0, &sh->queues[0]);
+        if (qci.queueCount >= 2)
+            vkGetDeviceQueue(device, queue_family, 1, &sh->queues[1]);
+        log("Second queue for a PV render thread: %s; timeline semaphores: %s",
+            sh->queues[1] ? "yes (lower priority)" : "no (it shares the game's queue)", sh->has_timeline ? "yes" : "no");
+        {
+            std::lock_guard<std::mutex> l(sh->contexts_mutex);
+            sh->contexts.push_back(this);
+        }
 
         VmaVulkanFunctions vf = {};
         vf.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
@@ -399,33 +435,7 @@ namespace dvk {
             vkCreatePipelineCache(device, &pcci, nullptr, &pipeline_cache);
         }
 
-        for (Frame& f : frames) {
-            VkCommandPoolCreateInfo cpci = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
-            cpci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-            cpci.queueFamilyIndex = queue_family;
-            DVK_CHECK(vkCreateCommandPool(device, &cpci, nullptr, &f.pool));
-            VkCommandBuffer cbs[2];
-            VkCommandBufferAllocateInfo cbai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-            cbai.commandPool = f.pool;
-            cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-            cbai.commandBufferCount = 2;
-            DVK_CHECK(vkAllocateCommandBuffers(device, &cbai, cbs));
-            f.upload_cmd = cbs[0];
-            f.cmd = cbs[1];
-            VkFenceCreateInfo fci = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-            DVK_CHECK(vkCreateFence(device, &fci, nullptr, &f.fence));
-            VkQueryPoolCreateInfo qpci = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
-            qpci.queryType = VK_QUERY_TYPE_OCCLUSION;
-            qpci.queryCount = 1024;
-            DVK_CHECK(vkCreateQueryPool(device, &qpci, nullptr, &f.query_pool));
-            if (timestamp_ns > 0.0) {
-                VkQueryPoolCreateInfo tci = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
-                tci.queryType = VK_QUERY_TYPE_TIMESTAMP;
-                tci.queryCount = 2;
-                if (vkCreateQueryPool(device, &tci, nullptr, &f.ts_pool) != VK_SUCCESS)
-                    f.ts_pool = VK_NULL_HANDLE;
-            }
-        }
+        create_frames();
 
         program_global_init();
 
@@ -473,6 +483,60 @@ namespace dvk {
         return true;
     }
 
+    void Context::create_frames() {
+        for (Frame& f : frames) {
+            VkCommandPoolCreateInfo cpci = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+            cpci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+            cpci.queueFamilyIndex = queue_family;
+            DVK_CHECK(vkCreateCommandPool(device, &cpci, nullptr, &f.pool));
+            VkCommandBuffer cbs[2];
+            VkCommandBufferAllocateInfo cbai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+            cbai.commandPool = f.pool;
+            cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            cbai.commandBufferCount = 2;
+            DVK_CHECK(vkAllocateCommandBuffers(device, &cbai, cbs));
+            f.upload_cmd = cbs[0];
+            f.cmd = cbs[1];
+            VkFenceCreateInfo fci = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+            DVK_CHECK(vkCreateFence(device, &fci, nullptr, &f.fence));
+            VkQueryPoolCreateInfo qpci = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+            qpci.queryType = VK_QUERY_TYPE_OCCLUSION;
+            qpci.queryCount = 1024;
+            DVK_CHECK(vkCreateQueryPool(device, &qpci, nullptr, &f.query_pool));
+            if (timestamp_ns > 0.0) {
+                VkQueryPoolCreateInfo tci = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+                tci.queryType = VK_QUERY_TYPE_TIMESTAMP;
+                tci.queryCount = 2;
+                if (vkCreateQueryPool(device, &tci, nullptr, &f.ts_pool) != VK_SUCCESS)
+                    f.ts_pool = VK_NULL_HANDLE;
+            }
+        }
+
+    }
+
+    // A second context sharing this one's device and objects (dvk_context_create_shared).
+    bool Context::init_shared() {
+        if (!sh->has_timeline || !device)
+            return false;
+        VkSemaphoreTypeCreateInfoKHR stci = { VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO_KHR };
+        stci.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE_KHR;
+        stci.initialValue = 0;
+        VkSemaphoreCreateInfo sci = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+        sci.pNext = &stci;
+        if (vkCreateSemaphore(device, &sci, nullptr, &timeline) != VK_SUCCESS)
+            return false;
+        create_frames();
+        serial = sh->next_serial.fetch_add(1);
+        default_fbo.name = 0;
+        rs.viewport[2] = rs.scissor[2] = default_color->width;
+        rs.viewport[3] = rs.scissor[3] = default_color->height;
+        {
+            std::lock_guard<std::mutex> l(sh->contexts_mutex);
+            sh->contexts.push_back(this);
+        }
+        return true;
+    }
+
     void Context::save_pipeline_cache() {
         if (!pipeline_cache || !info.pipeline_cache_path)
             return;
@@ -487,7 +551,28 @@ namespace dvk {
         pipelines_at_last_save = stats.pipelines_created;
     }
 
+    static void run_garbage(Shared* sh, bool all = false);
+
     void Context::shutdown() {
+        if (!is_main()) {
+            // a shared context: only what's its own
+            if (!device)
+                return;
+            if (recording)
+                submit_frame(false);
+            for (Frame& f : frames)
+                wait_frame(f);
+            {
+                std::lock_guard<std::mutex> l(sh->contexts_mutex);
+                sh->contexts.erase(std::remove(sh->contexts.begin(), sh->contexts.end(), this), sh->contexts.end());
+            }
+            destroy_frames();
+            if (timeline)
+                vkDestroySemaphore(device, timeline, nullptr);
+            timeline = VK_NULL_HANDLE;
+            run_garbage(sh);
+            return;
+        }
         if (!device) {
             xr_shutdown(*this);
             return;
@@ -522,14 +607,7 @@ namespace dvk {
             vkDestroySampler(device, it.second, nullptr);
 
         destroy_swapchain();
-        for (Frame& f : frames) {
-            f.arena.destroy(*this);
-            for (VkDescriptorPool p : f.desc_pools)
-                vkDestroyDescriptorPool(device, p, nullptr);
-            vkDestroyQueryPool(device, f.query_pool, nullptr);
-            vkDestroyFence(device, f.fence, nullptr);
-            vkDestroyCommandPool(device, f.pool, nullptr);
-        }
+        destroy_frames();
         vmaDestroyBuffer(vma, null_vertex_buffer, null_vertex_alloc);
         vmaDestroyBuffer(vma, dummy_buffer, dummy_buffer_alloc);
         vkDestroyPipelineCache(device, pipeline_cache, nullptr);
@@ -544,24 +622,55 @@ namespace dvk {
         device = VK_NULL_HANDLE;
     }
 
+    void Context::destroy_frames() {
+        for (Frame& f : frames) {
+            f.arena.destroy(*this);
+            for (VkDescriptorPool p : f.desc_pools)
+                vkDestroyDescriptorPool(device, p, nullptr);
+            f.desc_pools.clear();
+            if (f.query_pool)
+                vkDestroyQueryPool(device, f.query_pool, nullptr);
+            if (f.ts_pool)
+                vkDestroyQueryPool(device, f.ts_pool, nullptr);
+            vkDestroyFence(device, f.fence, nullptr);
+            vkDestroyCommandPool(device, f.pool, nullptr);
+            f = Frame();
+        }
+    }
+
     // ------------------------------------------------------------ frames
 
-    struct GarbageEntry {
-        uint64_t serial;
-        std::function<void()> fn;
-    };
-    static std::vector<GarbageEntry> s_garbage;
-    static uint64_t s_completed_serial = 0;
+    // Deferred destruction across contexts: an entry made at serial G runs once no context
+    // still has a frame with a serial below G recording or unfinished on the GPU.
+    void Context::update_unfinished() {
+        uint64_t u = recording ? serial : UINT64_MAX;
+        for (const Frame& f : frames)
+            if (f.pending && f.serial < u)
+                u = f.serial;
+        unfinished.store(u);
+    }
 
-    static void run_garbage() {
-        size_t w = 0;
-        for (size_t i = 0; i < s_garbage.size(); i++) {
-            if (s_garbage[i].serial <= s_completed_serial)
-                s_garbage[i].fn();
-            else
-                s_garbage[w++] = std::move(s_garbage[i]);
+    static void run_garbage(Shared* sh, bool all) {
+        uint64_t safe = UINT64_MAX;
+        if (!all) {
+            std::lock_guard<std::mutex> l(sh->contexts_mutex);
+            for (Context* c : sh->contexts)
+                safe = std::min(safe, c->unfinished.load());
         }
-        s_garbage.resize(w);
+        std::vector<std::function<void()>> run;
+        {
+            std::lock_guard<std::mutex> l(sh->garbage_mutex);
+            size_t w = 0;
+            for (size_t i = 0; i < sh->garbage.size(); i++) {
+                if (all || sh->garbage[i].first <= safe)
+                    run.push_back(std::move(sh->garbage[i].second));
+                else
+                    sh->garbage[w++] = std::move(sh->garbage[i]);
+            }
+            sh->garbage.resize(w);
+        }
+        for (auto& fn : run)
+            fn();
     }
 
     void query_collect_frame(Context& ctx, Frame& f);
@@ -577,12 +686,18 @@ namespace dvk {
             uint64_t ts[2] = {};
             if (vkGetQueryPoolResults(device, f.ts_pool, 0, 2, sizeof(ts), ts, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS
                 && ts[1] > ts[0])
-                gpu_ms_total += (double)(ts[1] - ts[0]) * timestamp_ns / 1e6;
+            {
+                const double ms = (double)(ts[1] - ts[0]) * timestamp_ns / 1e6;
+                gpu_ms_total += ms;
+                double prev = gpu_ms_shared.load();
+                while (!gpu_ms_shared.compare_exchange_weak(prev, prev + ms)) {}
+                gpu_frames_shared++;
+            }
             f.ts_written = false;
         }
         query_collect_frame(*this, f);
-        s_completed_serial = std::max(s_completed_serial, f.serial);
-        run_garbage();
+        update_unfinished();
+        run_garbage(sh);
     }
 
     void Context::wait_idle_all() {
@@ -590,14 +705,16 @@ namespace dvk {
             wait_frame(frames[(frame_index + i) % FRAMES_IN_FLIGHT]);
         {
             std::lock_guard<std::mutex> q(queue_mutex);
-            vkDeviceWaitIdle(device);
+            vkQueueWaitIdle(queue);
         }
-        s_completed_serial = serial;
-        run_garbage();
+        update_unfinished();
+        run_garbage(sh);
     }
 
     void Context::defer_destroy(std::function<void()> fn) {
-        s_garbage.push_back({ serial, std::move(fn) });
+        // after every frame any context has recorded or is recording now
+        std::lock_guard<std::mutex> l(sh->garbage_mutex);
+        sh->garbage.push_back({ sh->next_serial.load(), std::move(fn) });
     }
 
     void Context::begin_frame_if_needed() {
@@ -627,6 +744,7 @@ namespace dvk {
             f.ts_written = true;
         }
         recording = true;
+        update_unfinished();
         bound_pipeline = VK_NULL_HANDLE;
         descriptors_dirty = true;
     }
@@ -694,6 +812,8 @@ namespace dvk {
             if (!window_present)
                 log("Window present: off while OpenXR shows the frames (DIVAVK_WINDOW_PRESENT=0)");
         }
+        if (!is_main())
+            do_present = false;   // a shared context never shows anything itself
         if (do_present && swapchain && (window_present || !dvk_xr_active())) {
             acquire = acquire_sem[frame_index];
             DVK_STAGE("getting a window image (vkAcquireNextImageKHR)");
@@ -784,17 +904,45 @@ namespace dvk {
             cbs[ncb++] = f.upload_cmd;
         cbs[ncb++] = f.cmd;
 
-        VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        // Waits: the window image, and other contexts' work this frame uses (dvk_ticket_use:
+        // only ever work that has already finished, so the GPU doesn't actually wait).
+        std::vector<VkSemaphore> wsems;
+        std::vector<uint64_t> wvals;
+        std::vector<VkPipelineStageFlags> wstages;
+        std::vector<VkSemaphore> ssems;
+        std::vector<uint64_t> svals;
+        if (acquire && image_index != ~0u) {
+            wsems.push_back(acquire);
+            wvals.push_back(0);
+            wstages.push_back(VK_PIPELINE_STAGE_TRANSFER_BIT);
+            ssems.push_back(present_sem[image_index]);
+            svals.push_back(0);
+        }
+        for (auto& w : submit_waits) {
+            wsems.push_back(w.first);
+            wvals.push_back(w.second);
+            wstages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+        }
+        submit_waits.clear();
+        if (timeline) {
+            ssems.push_back(timeline);
+            svals.push_back(serial);
+        }
+        VkTimelineSemaphoreSubmitInfoKHR tsi = { VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR };
+        tsi.waitSemaphoreValueCount = (uint32_t)wvals.size();
+        tsi.pWaitSemaphoreValues = wvals.data();
+        tsi.signalSemaphoreValueCount = (uint32_t)svals.size();
+        tsi.pSignalSemaphoreValues = svals.data();
         VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+        if (sh->has_timeline && (timeline || wvals.size() > (acquire && image_index != ~0u ? 1u : 0u)))
+            si.pNext = &tsi;
         si.commandBufferCount = ncb;
         si.pCommandBuffers = cbs;
-        if (acquire && image_index != ~0u) {
-            si.waitSemaphoreCount = 1;
-            si.pWaitSemaphores = &acquire;
-            si.pWaitDstStageMask = &wait_stage;
-            si.signalSemaphoreCount = 1;
-            si.pSignalSemaphores = &present_sem[image_index];
-        }
+        si.waitSemaphoreCount = (uint32_t)wsems.size();
+        si.pWaitSemaphores = wsems.data();
+        si.pWaitDstStageMask = wstages.data();
+        si.signalSemaphoreCount = (uint32_t)ssems.size();
+        si.pSignalSemaphores = ssems.data();
         DVK_STAGE("submitting the frame (vkQueueSubmit)");
         std::unique_lock<std::mutex> queue_lock(queue_mutex);
         VkResult r = vkQueueSubmit(queue, 1, &si, f.fence);
@@ -820,8 +968,10 @@ namespace dvk {
         if (do_present)
             xr_frame_submitted();
 
+        last_submitted.store(serial);
         frame_index = (frame_index + 1) % FRAMES_IN_FLIGHT;
-        serial++;
+        serial = sh->next_serial.fetch_add(1);
+        update_unfinished();
 
         if (swapchain_dirty) {
             wait_idle_all();

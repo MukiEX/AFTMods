@@ -6,6 +6,9 @@
     Runs on any Vulkan driver, including SwiftShader (VK_ICD_FILENAMES=...).
 */
 
+#include <thread>
+#include <atomic>
+#include <chrono>
 #include <divavk/divavk.h>
 #include <GL/glcorearb.h>
 #include <cstdio>
@@ -34,6 +37,8 @@
 
 #define GLFN(type, name) static type name;
 #define GL_FUNCS(X) \
+    X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers) X(PFNGLDELETETEXTURESPROC, glDeleteTextures) \
+    X(PFNGLDELETEBUFFERSPROC, glDeleteBuffers) X(PFNGLDELETEVERTEXARRAYSPROC, glDeleteVertexArrays) \
     X(PFNGLCLEARCOLORPROC, glClearColor) X(PFNGLCLEARPROC, glClear) X(PFNGLREADPIXELSPROC, glReadPixels) \
     X(PFNGLCREATESHADERPROC, glCreateShader) X(PFNGLSHADERSOURCEPROC, glShaderSource) \
     X(PFNGLCOMPILESHADERPROC, glCompileShader) X(PFNGLGETSHADERIVPROC, glGetShaderiv) \
@@ -1197,6 +1202,133 @@ static void test_overlay() {
     glBindBufferBase(GL_UNIFORM_BUFFER, 7, 0);
 }
 
+
+// A second context on its own thread draws into a texture while the first keeps drawing and
+// presenting frames; the first uses the texture once its ticket is done, never waiting.
+static void test_shared_context_thread() {
+    printf("shared context on a second thread (PV-style handoff)\n");
+    reset_state();
+    dvk_context pv = dvk_context_create_shared();
+    CHECK(pv != nullptr, "dvk_context_create_shared failed");
+    if (!pv)
+        return;
+    // objects made on the main thread, used by the worker
+    GLuint tex[2], fbo[2];
+    glGenTextures(2, tex);
+    glGenFramebuffers(2, fbo);
+    for (int i = 0; i < 2; i++) {
+        glBindTexture(GL_TEXTURE_2D, tex[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo[i]);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex[i], 0);
+    }
+    GLuint w_ubo, w_vao, w_vbo;
+    glGenBuffers(1, &w_ubo);
+    glBindBuffer(GL_UNIFORM_BUFFER, w_ubo);
+    glBufferStorage(GL_UNIFORM_BUFFER, sizeof(Params), nullptr, GL_DYNAMIC_STORAGE_BIT);
+    glGenVertexArrays(1, &w_vao);
+    glBindVertexArray(w_vao);
+    glGenBuffers(1, &w_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, w_vbo);
+    glBufferData(GL_ARRAY_BUFFER, 64 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(g_vao);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glFinish();
+
+    // worker: pictures with a different colour each, each a lot of draws
+    std::atomic<uint64_t> ticket[2] = { {0}, {0} };
+    std::atomic<int> done_pictures{ 0 };
+    std::atomic<bool> stop{ false };
+    std::thread worker([&]() {
+        dvk_make_current(pv);
+        for (int pic = 0; pic < 6 && !stop; pic++) {
+            const int slot = pic & 1;
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo[slot]);
+            glViewport(0, 0, 64, 64);
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_BLEND);
+            glClearColor(0, 0, 0, 1);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glUseProgram(g_prog_color);
+            glBindVertexArray(w_vao);
+            glBindBuffer(GL_ARRAY_BUFFER, w_vbo);
+            const float tri[] = { -1, -1, 3, -1, -1, 3 };
+            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(tri), tri);
+            for (int d = 0; d < 3000; d++) {   // a heavy picture: many draws
+                Params p = { { (float)(pic + 1) / 8.0f, 0.5f, 1.0f - (float)(pic + 1) / 8.0f, 1 }, { 0, 0, 0, 0 } };
+                glBindBuffer(GL_UNIFORM_BUFFER, w_ubo);
+                glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(p), &p);
+                glBindBufferBase(GL_UNIFORM_BUFFER, 0, w_ubo);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+            }
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            ticket[slot] = dvk_flush();
+            done_pictures = pic + 1;
+            // the next picture into the other slot only once this one is shown... a real PV
+            // thread would wait for its own work here; that wait is on this thread only
+            while (!stop && !dvk_ticket_done(pv, ticket[slot]))
+                std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+        dvk_flush();
+        dvk_make_current(nullptr);
+    });
+
+    // main: frames keep coming, each shows the newest finished picture
+    int shown = -1, frames = 0, used = 0;
+    double worst_ms = 0.0;
+    auto t_end = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (std::chrono::steady_clock::now() < t_end) {
+        auto t0 = std::chrono::steady_clock::now();
+        const int n = done_pictures.load();
+        if (n > 0 && n - 1 != shown) {
+            const int slot = (n - 1) & 1;
+            if (dvk_ticket_done(pv, ticket[slot])) {   // never wait: only once it's finished
+                dvk_ticket_use(pv, ticket[slot]);
+                shown = n - 1;
+                used++;
+            }
+        }
+        reset_state();
+        glClearColor(0.2f, 0.2f, 0.2f, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        if (shown >= 0)
+            draw_copy(tex[shown & 1]);
+        const float hud[] = { -1, 0.8f, -0.8f, 0.8f, -1, 1 };   // a "HUD" triangle on top, every frame
+        set_params(1, 1, 0, 1);
+        draw_tris(hud, 3);
+        dvk_swap_buffers();
+        frames++;
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        worst_ms = std::max(worst_ms, ms);
+        if (shown == 5)
+            break;
+    }
+    stop = true;
+    worker.join();
+    printf("  %d main frames while the worker drew %d pictures (%d shown); worst main frame %.1f ms\n",
+        frames, done_pictures.load(), used, worst_ms);
+    CHECK(shown == 5, "the last picture wasn't shown (shown %d)", shown);
+    CHECK(frames > done_pictures.load(), "main frames %d not more than pictures %d", frames, done_pictures.load());
+    // the shown picture is the worker's last colour
+    reset_state();
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    draw_copy(tex[5 & 1]);
+    const int r = (int)(6.0f / 8.0f * 255 + 0.5f), b = (int)((1.0f - 6.0f / 8.0f) * 255 + 0.5f);
+    CHECK_PIXEL(W / 2, H / 2, r, 128, b, 255);
+    dvk_context_destroy(pv);
+    glDeleteFramebuffers(2, fbo);
+    glDeleteTextures(2, tex);
+    glDeleteBuffers(1, &w_ubo);
+    glDeleteBuffers(1, &w_vbo);
+    glDeleteVertexArrays(1, &w_vao);
+    glBindVertexArray(g_vao);
+}
+
 int main(int argc, char** argv) {
     bool validation = argc > 1 && !strcmp(argv[1], "--validate");
     const char* exts[] = { "VK_KHR_surface", "VK_EXT_headless_surface" };
@@ -1246,6 +1378,7 @@ int main(int argc, char** argv) {
     test_movie_yuv();
     test_overlay();
     test_present_loop();
+    test_shared_context_thread();
     test_all_divagl_shaders();
 
     GLenum err = glGetError();

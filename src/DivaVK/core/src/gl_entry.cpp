@@ -21,7 +21,7 @@
 
 using namespace dvk;
 
-#define CTX Context& c = *g_ctx
+#define CTX Context& c = *current_ctx()
 
 namespace dvk {
     bool program_from_spirv(Context& ctx, ProgramObj* p, const std::vector<uint32_t>& vs, const std::vector<uint32_t>& fs);

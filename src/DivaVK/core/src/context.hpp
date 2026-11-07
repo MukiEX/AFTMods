@@ -19,6 +19,7 @@
 
 #include "common.hpp"
 #include <mutex>
+#include <shared_mutex>
 #include "formats.hpp"
 #include "spirv_reflect.hpp"
 #include "../include/divavk/divavk.h"
@@ -62,7 +63,13 @@ namespace dvk {
         void destroy(Context& ctx);
     };
 
+    struct QueryRecord {
+        GLuint name;
+        uint32_t index;
+    };
+
     struct Frame {
+        std::vector<QueryRecord> query_records;   // occlusion queries recorded (query.cpp)
         VkCommandPool pool = VK_NULL_HANDLE;
         VkCommandBuffer upload_cmd = VK_NULL_HANDLE; // copies hoisted ahead of the frame
         VkCommandBuffer cmd = VK_NULL_HANDLE;        // everything else, in GL order
@@ -252,12 +259,16 @@ namespace dvk {
         uint64_t result = 0;
     };
 
+    // Shared between contexts (the game thread's and a PV render thread's): lookups take a
+    // shared lock, creating and deleting names an exclusive one. Objects never move.
     template <typename T>
     struct NameTable {
         std::unordered_map<GLuint, std::unique_ptr<T>> objects;
         GLuint next = 1;
+        mutable std::shared_mutex mtx;
 
         GLuint gen() {
+            std::unique_lock<std::shared_mutex> lock(mtx);
             while (objects.count(next))
                 next++;
             GLuint n = next++;
@@ -267,6 +278,7 @@ namespace dvk {
         }
 
         T* get(GLuint n) {
+            std::shared_lock<std::shared_mutex> lock(mtx);
             auto it = objects.find(n);
             return it != objects.end() ? it->second.get() : nullptr;
         }
@@ -275,6 +287,13 @@ namespace dvk {
         T* get_or_create(GLuint n) {
             if (!n)
                 return nullptr;
+            {
+                std::shared_lock<std::shared_mutex> lock(mtx);
+                auto it = objects.find(n);
+                if (it != objects.end() && it->second)
+                    return it->second.get();
+            }
+            std::unique_lock<std::shared_mutex> lock(mtx);
             auto& p = objects[n];
             if (!p) {
                 p = std::make_unique<T>();
@@ -284,6 +303,7 @@ namespace dvk {
         }
 
         std::unique_ptr<T> take(GLuint n) {
+            std::unique_lock<std::shared_mutex> lock(mtx);
             auto it = objects.find(n);
             if (it == objects.end())
                 return nullptr;
@@ -395,27 +415,105 @@ namespace dvk {
         GLint clear_stencil_value;
     };
 
-    struct Context {
-        // Device
+    struct Context;
+
+    // What every context shares: the device, GL objects (names), caches, deferred destruction.
+    // A second context (dvk_context_create_shared: a PV render thread) shares all of it and has
+    // its own GL state, frames and, when the device has one, its own queue.
+    struct Shared {
         dvk_create_info info = {};
         VkInstance instance = VK_NULL_HANDLE;
         VkPhysicalDevice phys = VK_NULL_HANDLE;
         VkDevice device = VK_NULL_HANDLE;
-        VkQueue queue = VK_NULL_HANDLE;
         uint32_t queue_family = 0;
-        std::mutex queue_mutex;   // the OpenXR frame thread (xr.cpp) submits to the same queue
+        VkQueue queues[2] = {};              // [0] the game thread's, [1] a second one if the family has it
+        std::mutex queue_mutex[2];           // per queue: the OpenXR frame thread submits to queue 0 too
         VmaAllocator vma = VK_NULL_HANDLE;
         VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
         VkPhysicalDeviceProperties props = {};
         VkPhysicalDeviceFeatures features = {};
         VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
         bool has_debug_utils = false;
-        VkFormat depth_stencil_format = VK_FORMAT_UNDEFINED; // best match for D24S8
+        VkFormat depth_stencil_format = VK_FORMAT_UNDEFINED;
+        double timestamp_ns = 0.0;
+        bool has_timeline = false;           // VK_KHR_timeline_semaphore
+
+        NameTable<BufferObj> buffers;
+        NameTable<TextureObj> textures;
+        NameTable<SamplerObj> samplers;
+        NameTable<FramebufferObj> framebuffers;
+        NameTable<VertexArrayObj> vertex_arrays;
+        NameTable<ShaderObj> shaders;
+        NameTable<ProgramObj> programs;
+        NameTable<QueryObj> queries;
+        GLuint next_shader_program_name = 1;
+        uint64_t next_program_uid = 1;
+
+        std::unique_ptr<TextureObj> default_color;
+        std::unique_ptr<TextureObj> default_depth;
+        std::unique_ptr<TextureObj> dummy_2d;
+        std::unique_ptr<TextureObj> dummy_cube;
+        VkBuffer null_vertex_buffer = VK_NULL_HANDLE;
+        VmaAllocation null_vertex_alloc = VK_NULL_HANDLE;
+        VkBuffer dummy_buffer = VK_NULL_HANDLE;
+        VmaAllocation dummy_buffer_alloc = VK_NULL_HANDLE;
+
+        // Caches: lookups and inserts under cache_mutex, never the (slow) creation itself
+        std::mutex cache_mutex;
+        std::mutex view_mutex;               // textures' lazily made image views
+        std::unordered_map<uint64_t, VkRenderPass> render_passes;
+        std::unordered_map<uint64_t, VkFramebuffer> vk_framebuffers;
+        std::unordered_map<uint64_t, VkPipeline> pipelines;
+        std::unordered_map<uint64_t, VkSampler> vk_samplers;
+
+        // Frame serials are unique across contexts; deferred destruction runs once every
+        // context's frames up to the entry's serial have finished.
+        std::atomic<uint64_t> next_serial{ 2 };
+        std::mutex garbage_mutex;
+        std::vector<std::pair<uint64_t, std::function<void()>>> garbage;
+        std::mutex contexts_mutex;
+        std::vector<Context*> contexts;
+    };
+
+    struct Context {
+        Shared* sh;
+        bool owns_shared;
+        int queue_slot;                      // which of sh->queues this context submits to
+
+        explicit Context(Shared* shared = nullptr, int slot = 0)
+            : sh(shared ? shared : new Shared()), owns_shared(!shared), queue_slot(slot) {}
+        ~Context() { if (owns_shared) delete sh; }
+        Context(const Context&) = delete;
+        Context& operator=(const Context&) = delete;
+
+        // Device (shared)
+        dvk_create_info& info = sh->info;
+        VkInstance& instance = sh->instance;
+        VkPhysicalDevice& phys = sh->phys;
+        VkDevice& device = sh->device;
+        VkQueue& queue = sh->queues[queue_slot];
+        uint32_t& queue_family = sh->queue_family;
+        std::mutex& queue_mutex = sh->queue_mutex[queue_slot];
+        VmaAllocator& vma = sh->vma;
+        VkPipelineCache& pipeline_cache = sh->pipeline_cache;
+        VkPhysicalDeviceProperties& props = sh->props;
+        VkPhysicalDeviceFeatures& features = sh->features;
+        VkDebugUtilsMessengerEXT& messenger = sh->messenger;
+        bool& has_debug_utils = sh->has_debug_utils;
+        VkFormat& depth_stencil_format = sh->depth_stencil_format; // best match for D24S8
+
+        // Oldest frame serial this context may still have on the GPU or be recording
+        // (UINT64_MAX: none); read by other contexts for deferred destruction.
+        std::atomic<uint64_t> unfinished{ UINT64_MAX };
+        void update_unfinished();
+        bool is_main() const { return owns_shared; }
 
         Frame frames[FRAMES_IN_FLIGHT];
         // GPU time per presented frame (timestamps around each command buffer), logged every 10 s
-        double timestamp_ns = 0.0;         // ns per tick; 0 = the queue has no timestamps
+        double& timestamp_ns = sh->timestamp_ns; // ns per tick; 0 = the queue has no timestamps
         double gpu_ms_total = 0.0, gpu_ms_worst = 0.0;
+        std::atomic<double> gpu_ms_shared{ 0.0 };       // for dvk_context_take_gpu_ms
+        std::atomic<uint32_t> gpu_frames_shared{ 0 };
         uint32_t gpu_presents = 0;
         uint64_t gpu_log_start_ns = 0;
         // DIVAVK_WINDOW_PRESENT=0: while OpenXR shows the frames, don't present to the window
@@ -425,28 +523,28 @@ namespace dvk {
         bool recording = false;
 
         // Objects
-        NameTable<BufferObj> buffers;
-        NameTable<TextureObj> textures;       // includes renderbuffers
-        NameTable<SamplerObj> samplers;
-        NameTable<FramebufferObj> framebuffers;
-        NameTable<VertexArrayObj> vertex_arrays;
-        NameTable<ShaderObj> shaders;          // shaders and programs share a namespace in GL
-        NameTable<ProgramObj> programs;
-        NameTable<QueryObj> queries;
-        GLuint next_shader_program_name = 1;
-        uint64_t next_program_uid = 1;
+        NameTable<BufferObj>& buffers = sh->buffers;
+        NameTable<TextureObj>& textures = sh->textures;       // includes renderbuffers
+        NameTable<SamplerObj>& samplers = sh->samplers;
+        NameTable<FramebufferObj>& framebuffers = sh->framebuffers;
+        NameTable<VertexArrayObj>& vertex_arrays = sh->vertex_arrays;
+        NameTable<ShaderObj>& shaders = sh->shaders;          // shaders and programs share a namespace in GL
+        NameTable<ProgramObj>& programs = sh->programs;
+        NameTable<QueryObj>& queries = sh->queries;
+        GLuint& next_shader_program_name = sh->next_shader_program_name;
+        uint64_t& next_program_uid = sh->next_program_uid;
 
         // Default objects
         VertexArrayObj default_vao;
         FramebufferObj default_fbo;
-        std::unique_ptr<TextureObj> default_color;
-        std::unique_ptr<TextureObj> default_depth;
-        std::unique_ptr<TextureObj> dummy_2d;
-        std::unique_ptr<TextureObj> dummy_cube;
-        VkBuffer null_vertex_buffer = VK_NULL_HANDLE;
-        VmaAllocation null_vertex_alloc = VK_NULL_HANDLE;
-        VkBuffer dummy_buffer = VK_NULL_HANDLE;       // bound for missing UBO/SSBO bindings
-        VmaAllocation dummy_buffer_alloc = VK_NULL_HANDLE;
+        std::unique_ptr<TextureObj>& default_color = sh->default_color;
+        std::unique_ptr<TextureObj>& default_depth = sh->default_depth;
+        std::unique_ptr<TextureObj>& dummy_2d = sh->dummy_2d;
+        std::unique_ptr<TextureObj>& dummy_cube = sh->dummy_cube;
+        VkBuffer& null_vertex_buffer = sh->null_vertex_buffer;
+        VmaAllocation& null_vertex_alloc = sh->null_vertex_alloc;
+        VkBuffer& dummy_buffer = sh->dummy_buffer;       // bound for missing UBO/SSBO bindings
+        VmaAllocation& dummy_buffer_alloc = sh->dummy_buffer_alloc;
 
         // Bindings
         GLuint active_texture = 0;
@@ -483,16 +581,31 @@ namespace dvk {
         PendingClear pending_clear;
         GLuint pending_clear_fbo = ~0u;
         uint64_t pending_clear_generation = 0;
-        std::unordered_map<uint64_t, VkRenderPass> render_passes;
-        std::unordered_map<uint64_t, VkFramebuffer> vk_framebuffers;
-        std::unordered_map<uint64_t, VkPipeline> pipelines;
-        std::unordered_map<uint64_t, VkSampler> vk_samplers;
+        std::unordered_map<uint64_t, VkRenderPass>& render_passes = sh->render_passes;
+        std::unordered_map<uint64_t, VkFramebuffer>& vk_framebuffers = sh->vk_framebuffers;
+        std::unordered_map<uint64_t, VkPipeline>& pipelines = sh->pipelines;
+        std::unordered_map<uint64_t, VkSampler>& vk_samplers = sh->vk_samplers;
 
         std::vector<GLStateSnapshot> state_stack; // dvk_push_gl_state
 
         // Per-draw bound-state caches
         VkPipeline bound_pipeline = VK_NULL_HANDLE;
         bool descriptors_dirty = true;
+        // descriptor set reuse (draw.cpp)
+        uint64_t desc_last_hash = 0, desc_last_serial = 0;
+        VkDescriptorSet desc_last_set = VK_NULL_HANDLE;
+        VkPipelineLayout desc_last_layout = VK_NULL_HANDLE;
+        // occlusion query in flight (query.cpp)
+        bool query_vk_active = false;
+        uint32_t query_vk_index = 0;
+        // semaphores the next submit waits on (another context's finished work, dvk_ticket_use)
+        std::vector<std::pair<VkSemaphore, uint64_t>> submit_waits;   // (timeline, value)
+        VkSemaphore timeline = VK_NULL_HANDLE;   // a shared context: signalled with each frame's serial
+        std::atomic<uint64_t> last_submitted{ 0 };
+        // a shared context (dvk_context_create_shared)
+        bool init_shared();
+        void create_frames();
+        void destroy_frames();
 
         // Statistics
         struct Stats {
@@ -623,5 +736,7 @@ namespace dvk {
         void set_error(GLenum e) { if (error == GL_NO_ERROR) error = e; }
     };
 
-    extern Context* g_ctx;
+    extern Context* g_ctx;                  // the first context (the game thread's)
+    extern thread_local Context* t_ctx;     // this thread's current context, if not g_ctx
+    inline Context* current_ctx() { Context* t = t_ctx; return t ? t : g_ctx; }
 }

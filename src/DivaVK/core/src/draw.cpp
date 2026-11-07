@@ -225,9 +225,12 @@ namespace dvk {
         }
 
         uint64_t h = hash_bytes(&k, sizeof(k));
-        auto it = pipelines.find(h);
-        if (it != pipelines.end())
-            return it->second;
+        {
+            std::lock_guard<std::mutex> l(sh->cache_mutex);
+            auto it = pipelines.find(h);
+            if (it != pipelines.end())
+                return it->second;
+        }
 
         VkPipelineShaderStageCreateInfo stages[2] = {};
         stages[0].sType = stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -330,7 +333,17 @@ namespace dvk {
             log("vkCreateGraphicsPipelines failed (program %u)", p->name);
             pipe = VK_NULL_HANDLE;
         }
-        pipelines[h] = pipe;
+        {
+            // another context may have made the same one meanwhile: keep the first
+            std::lock_guard<std::mutex> l(sh->cache_mutex);
+            auto it = pipelines.find(h);
+            if (it != pipelines.end()) {
+                if (pipe)
+                    vkDestroyPipeline(device, pipe, nullptr);
+                return it->second;
+            }
+            pipelines[h] = pipe;
+        }
         stats.pipelines_created++;
         return pipe;
     }
@@ -454,10 +467,10 @@ namespace dvk {
         }
 
         // Reuse the previous set when nothing changed (common for consecutive draws).
-        static uint64_t last_hash = 0;
-        static uint64_t last_serial = 0;
-        static VkDescriptorSet last_set = VK_NULL_HANDLE;
-        static VkPipelineLayout last_layout = VK_NULL_HANDLE;
+        uint64_t& last_hash = ctx.desc_last_hash;
+        uint64_t& last_serial = ctx.desc_last_serial;
+        VkDescriptorSet& last_set = ctx.desc_last_set;
+        VkPipelineLayout& last_layout = ctx.desc_last_layout;
         if (last_hash == h && last_serial == ctx.serial && last_set && last_layout == p->layout && !ctx.descriptors_dirty)
             return true;
 

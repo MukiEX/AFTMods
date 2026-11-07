@@ -129,9 +129,12 @@ namespace dvk {
 
     VkRenderPass Context::get_render_pass(const PassKey& key) {
         uint64_t h = hash_bytes(&key, sizeof(key));
-        auto it = render_passes.find(h);
-        if (it != render_passes.end())
-            return it->second;
+        {
+            std::lock_guard<std::mutex> l(sh->cache_mutex);
+            auto it = render_passes.find(h);
+            if (it != render_passes.end())
+                return it->second;
+        }
 
         VkAttachmentDescription atts[MAX_COLOR_ATTACHMENTS + 1];
         VkAttachmentReference color_refs[MAX_COLOR_ATTACHMENTS];
@@ -202,6 +205,12 @@ namespace dvk {
         rpci.pDependencies = deps;
         VkRenderPass rp = VK_NULL_HANDLE;
         DVK_CHECK(vkCreateRenderPass(device, &rpci, nullptr, &rp));
+        std::lock_guard<std::mutex> l(sh->cache_mutex);
+        auto it = render_passes.find(h);
+        if (it != render_passes.end()) {
+            vkDestroyRenderPass(device, rp, nullptr);
+            return it->second;
+        }
         render_passes[h] = rp;
         return rp;
     }
@@ -258,6 +267,7 @@ namespace dvk {
         uint64_t fh = hash_bytes(views.data(), views.size() * sizeof(VkImageView), (uint64_t)(uintptr_t)rp);
         hash_combine(fh, ((uint64_t)tgt.width << 32) | (uint32_t)tgt.height);
         VkFramebuffer fb;
+        std::unique_lock<std::mutex> fb_lock(ctx.sh->cache_mutex);
         auto it = s_fb_entries.find(fh);
         if (it != s_fb_entries.end())
             fb = it->second.fb;
@@ -273,6 +283,7 @@ namespace dvk {
             s_fb_entries[fh] = { fb, views };
             ctx.vk_framebuffers[fh] = fb;
         }
+        fb_lock.unlock();
 
         VkRenderPassBeginInfo rbi = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
         rbi.renderPass = rp;
@@ -516,6 +527,7 @@ namespace dvk {
         }
         if (t->attach_views.empty())
             return;
+        std::lock_guard<std::mutex> fb_lock(sh->cache_mutex);
         for (auto it = s_fb_entries.begin(); it != s_fb_entries.end();) {
             bool uses = false;
             for (VkImageView v : it->second.views)

@@ -11,14 +11,9 @@
 #include "context.hpp"
 
 namespace dvk {
-    struct QueryRecord {
-        GLuint name;
-        uint32_t index;
-    };
-    static std::vector<QueryRecord> s_records[FRAMES_IN_FLIGHT];
-
-    static bool s_vk_active = false;
-    static uint32_t s_vk_index = 0;
+    // per context: the Vulkan query in flight, and each frame's records (Frame::query_records)
+#define s_vk_active query_vk_active
+#define s_vk_index query_vk_index
 
     void Context::begin_query(GLenum target, GLuint id) {
         if (target != GL_SAMPLES_PASSED && target != GL_ANY_SAMPLES_PASSED
@@ -57,7 +52,7 @@ namespace dvk {
         q->pool = f.query_pool;
         q->index = s_vk_index;
         q->serial = serial;
-        s_records[frame_index].push_back({ q->name, s_vk_index });
+        frame().query_records.push_back({ q->name, s_vk_index });
     }
 
     void Context::query_on_pass_end() {
@@ -81,8 +76,7 @@ namespace dvk {
     }
 
     void query_collect_frame(Context& ctx, Frame& f) {
-        uint32_t fi = (uint32_t)(&f - ctx.frames);
-        for (const QueryRecord& r : s_records[fi]) {
+        for (const QueryRecord& r : f.query_records) {
             QueryObj* q = ctx.queries.get(r.name);
             if (!q || !q->issued || q->index != r.index || q->serial != f.serial)
                 continue; // query restarted or deleted since
@@ -92,7 +86,7 @@ namespace dvk {
             q->result = q->target == GL_SAMPLES_PASSED ? v : (v ? 1 : 0);
             q->has_result = true;
         }
-        s_records[fi].clear();
+        f.query_records.clear();
     }
 
     bool Context::query_result(QueryObj* q, bool wait, uint64_t& out) {
