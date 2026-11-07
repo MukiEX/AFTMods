@@ -605,6 +605,8 @@ static void pv_threaded_frame() {
     if (!pv_threaded_was) {
         pv_threaded_was = true;
         pv_trace_left = 15;
+        // nothing from before this song: black until the first picture is done
+        memset(pv_cache_valid, 0, sizeof(pv_cache_valid));
         OutputDebugStringA("[DivaLinux] threaded PV on: the HUD every frame over the newest finished PV picture "
             "(slots A and B), the PV on its own thread at whatever rate it manages\n");
     }
