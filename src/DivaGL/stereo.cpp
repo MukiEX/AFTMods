@@ -43,6 +43,14 @@ bool stereo_enabled() {
     return sv_stereo_mode > STEREO_MODE_OFF && sv_stereo_mode < STEREO_MODE_MAX;
 }
 
+// Back to "no eye" (mono, sprites without offsets) after an eye was set up outside
+// render_all_stereo (the async PV's steps).
+void stereo_eye_reset() {
+    stereo_current_eye = 0;
+    for (float_t& i : sprite_stereo_offset)
+        i = 0.0f;
+}
+
 bool stereo_in_eye_pass() {
     return stereo_current_eye != 0;
 }

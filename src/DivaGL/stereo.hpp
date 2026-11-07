@@ -23,6 +23,9 @@ extern float_t sprite_stereo_offset[4];
 // True when the user has stereo enabled (regardless of whether a frame is being rendered).
 extern bool stereo_enabled();
 
+// Back to no eye and no sprite offsets.
+extern void stereo_eye_reset();
+
 // True while one of the two eye passes is being rendered.
 extern bool stereo_in_eye_pass();
 

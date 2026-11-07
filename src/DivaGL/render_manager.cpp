@@ -32,6 +32,7 @@
 #include <divavk/divavk.h>
 #endif
 #include <cstdlib>
+#include <cstring>
 
 struct light_data_color {
     vec4 ambient;
@@ -96,8 +97,10 @@ static void set_reflect_mat(render_data_context& rend_data_ctx, cam_data& cam);
      2-4  draw the PV every 2nd/3rd/4th frame
    Everything drawn into the PV picture freezes with it on skipped frames, including 2D
    backgrounds and movie PVs (cheap, so auto mode rarely skips those). */
-static RenderTexture* pv_cache[2] = {};       // [eye]: 0 mono or left, 1 right
-static bool pv_cache_valid[2] = {};
+static RenderTexture* pv_cache[2][2] = {};    // [slot][eye]: eye 0 mono or left, 1 right
+static bool pv_cache_valid[2][2] = {};
+static int32_t pv_front = 0;                  // slot put back under the HUD
+static int32_t pv_save_slot = 0;              // slot a finished PV picture goes to (the other one in async mode)
 static int32_t pv_cache_width = 0;
 static int32_t pv_cache_height = 0;
 static bool pv_skip = false;                  // this frame reuses the kept PV picture
@@ -120,6 +123,13 @@ struct pv_sync_struct {
     volatile uint32_t skip;         // host: this frame, reuse the kept PV picture
     volatile uint32_t cache_ready;  // us: a kept picture exists for every eye
     volatile uint32_t frames_seen;  // us: frames we followed the host's schedule
+    // version 2: async PV (see pv_async_frame)
+    volatile uint32_t async;        // host: async PV schedule this frame
+    volatile uint32_t disp_seq;     // host: bumped on frames where the PV's draw lists were rebuilt
+    volatile uint32_t pv_busy;      // us: a PV picture is being drawn over several frames
+    volatile uint32_t pv_done;      // us: PV pictures finished
+    volatile uint32_t async_ok;     // us: async PV supported
+    volatile uint32_t period_us;    // host: the display's frame time
 };
 static pv_sync_struct* pv_sync = 0;
 static bool pv_sync_checked = false;
@@ -176,7 +186,7 @@ static void pv_frame_begin() {
     const int32_t w = sb ? rctx->screen_buffer.get_width() : 0;
     const int32_t h = sb ? rctx->screen_buffer.get_height() : 0;
     if (w != pv_cache_width || h != pv_cache_height)
-        pv_cache_valid[0] = pv_cache_valid[1] = false;
+        memset(pv_cache_valid, 0, sizeof(pv_cache_valid));
 
     if (!pv_sync_checked) {
         pv_sync_checked = true;
@@ -186,12 +196,16 @@ static void pv_frame_begin() {
             pv_sync_struct* s = (pv_sync_struct*)(uintptr_t)strtoull(buf, 0, 16);
             if (s && s->magic == 0x59535650u && s->version >= 1) {
                 pv_sync = s;
-                OutputDebugStringA("[DivaLinux] PV frame skip: following the host's PV schedule\n");
+                if (s->version >= 2)
+                    s->async_ok = 1;
+                OutputDebugStringA(s->version >= 2
+                    ? "[DivaLinux] PV frame skip: following the host's PV schedule (async PV supported)\n"
+                    : "[DivaLinux] PV frame skip: following the host's PV schedule\n");
             }
         }
     }
 
-    const bool have = pv_cache_valid[0] && (!stereo_enabled() || pv_cache_valid[1]);
+    const bool have = pv_cache_valid[pv_front][0] && (!stereo_enabled() || pv_cache_valid[pv_front][1]);
     bool skip = false;
     if (pv_sync) {
         skip = have && pv_sync->skip;
@@ -205,8 +219,8 @@ static void pv_frame_begin() {
     pv_skip = skip;
     pv_last_was_full = !skip;
     pv_since_full = skip ? pv_since_full + 1 : 0;
-    if (!skip)
-        pv_stat.full++;
+    if (!skip && !(pv_sync && pv_sync->version >= 2 && pv_sync->async))
+        pv_stat.full++;   // (async PV counts finished pictures instead)
 }
 
 static void pv_cache_save(render_data_context& rend_data_ctx, int32_t eye) {
@@ -217,19 +231,22 @@ static void pv_cache_save(render_data_context& rend_data_ctx, int32_t eye) {
     if (w <= 0 || h <= 0)
         return;
     if (w != pv_cache_width || h != pv_cache_height) {
-        for (RenderTexture*& i : pv_cache)
-            if (i)
-                i->destroy();
+        for (RenderTexture** slot : pv_cache)
+            for (int32_t i = 0; i < 2; i++)
+                if (slot[i])
+                    slot[i]->destroy();
+        memset(pv_cache_valid, 0, sizeof(pv_cache_valid));
         pv_cache_width = w;
         pv_cache_height = h;
     }
-    if (!pv_cache[eye])
-        pv_cache[eye] = new RenderTexture;
-    if (!pv_cache[eye]->m_txhd_color)
-        pv_cache[eye]->create_texture(w, h, 0, GL_RGBA8, 0);
-    fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), pv_cache[eye]->get_fb(),
+    RenderTexture*& rt = pv_cache[pv_save_slot][eye];
+    if (!rt)
+        rt = new RenderTexture;
+    if (!rt->m_txhd_color)
+        rt->create_texture(w, h, 0, GL_RGBA8, 0);
+    fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), rt->get_fb(),
         0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    pv_cache_valid[eye] = true;
+    pv_cache_valid[pv_save_slot][eye] = true;
 }
 
 /* HUD layer ([vr] hud_layer): in a headset, the HUD (sprite list 0) isn't drawn into the
@@ -302,8 +319,332 @@ static void draw_hud_layer() {
 }
 
 static void pv_cache_restore(render_data_context& rend_data_ctx, int32_t eye) {
-    fbo_blit(rend_data_ctx.state, pv_cache[eye]->get_fb(), rctx->screen_buffer.get_fb(),
+    fbo_blit(rend_data_ctx.state, pv_cache[pv_front][eye]->get_fb(), rctx->screen_buffer.get_fb(),
         0, 0, pv_cache_width, pv_cache_height, 0, 0, pv_cache_width, pv_cache_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+}
+
+/* Async PV (a host with schedule version 2: the DivaRecomp runtime on Quest).
+   The HUD is drawn every frame over the newest finished PV picture; the PV picture is
+   drawn in steps spread over as many frames as it takes, into the other of two picture
+   slots (A and B), and becomes the one shown when its last step is done:
+
+     frame 1  HUD drawn over A   PV picture 2: shadow, SSS      (into B)
+     frame 2  HUD drawn over A   PV picture 2: 3D
+     frame 3  HUD drawn over A   PV picture 2: post-process -> finished, B shown from now
+     frame 4  HUD drawn over B   PV picture 3: shadow ...       (into A)
+
+   Nothing in a frame waits for the PV: each frame runs only the steps that fit in what
+   is left of the frame time (a budget that shrinks when frames run late and grows
+   back when they don't). The host only updates the PV's tasks (animation, physics,
+   stage, effects) and rebuilds its draw lists on the frame after a picture is
+   finished (disp_seq); while a picture is in progress its draw lists are kept, and the
+   game's per-frame refresh of them is held (pv_async_refresh_hold). The camera and
+   the post-process state the picture started with are put back for each step. */
+namespace {
+    enum { PV_STEP_MAX = 2 * 9 };
+    struct pv_step { int8_t eye; int8_t pass; };
+
+    struct pv_job_t {
+        bool active;
+        uint32_t seq_seen;
+        uint32_t number;                // picture number (1, 2, ...)
+        int32_t n, next;
+        pv_step steps[PV_STEP_MAX];
+        cam_data cam;
+        int32_t composite_back;
+        GLuint lens_flare_texture;
+        int32_t exposure_history_counter, exposure_query_index, lens_flare_query_index;
+        size_t obj_count[mdl::OBJ_TYPE_MAX];
+        size_t screen_count[mdl::OBJ_TYPE_SCREEN_MAX];
+        size_t reflect_count[mdl::OBJ_TYPE_REFLECT_MAX];
+        int32_t buff_offset;
+        int32_t frames;                 // frames this picture has taken so far
+        int32_t idle_frames;            // frames in a row with no step run
+    };
+    pv_job_t pv_job = {};
+    bool pv_async_was = false;
+    double_t pv_step_est[rndr::RND_PASSID_NUM] = {};
+    double_t pv_budget_ms = 4.0;
+    uint32_t pv_frame_no = 0;
+    int32_t pv_trace_left = 0;          // frames still to log one line each
+    struct {
+        int32_t frames, late, pictures, steps, forced, held, pic_frames_max;
+        double_t worst_ms, pic_frames_sum, step_ms, budget_sum;
+        LARGE_INTEGER start;
+    } pv_as = {};
+
+    const char* pv_pass_name(int32_t pass) {
+        switch (pass) {
+        case rndr::RND_PASSID_SHADOW: return "shadow";
+        case rndr::RND_PASSID_SS_SSS: return "sss";
+        case rndr::RND_PASSID_REFLECT: return "reflect";
+        case rndr::RND_PASSID_REFRACT: return "refract";
+        case rndr::RND_PASSID_PRE_PROCESS: return "pre-process";
+        case rndr::RND_PASSID_CLEAR: return "clear";
+        case rndr::RND_PASSID_PRE_SPRITE: return "background sprites";
+        case rndr::RND_PASSID_3D: return "3D";
+        case rndr::RND_PASSID_POST_PROCESS: return "post-process";
+        }
+        return "?";
+    }
+}
+
+static bool pv_async_on() {
+    return pv_sync && pv_sync->version >= 2 && pv_sync->async;
+}
+
+static bool pv_front_valid() {
+    return pv_cache_valid[pv_front][0] && (!stereo_enabled() || pv_cache_valid[pv_front][1]);
+}
+
+static void pv_job_abandon() {
+    if (!pv_job.active)
+        return;
+    pv_job.active = false;
+    pv_save_slot = pv_front;
+    if (pv_sync)
+        pv_sync->pv_busy = 0;
+}
+
+static void pv_job_start() {
+    pv_job_t& j = pv_job;
+    rndr::Render* rend = render_manager.render;
+    j.active = true;
+    j.number++;
+    j.next = 0;
+    j.n = 0;
+    j.frames = 0;
+    j.idle_frames = 0;
+    static const int8_t passes[] = { rndr::RND_PASSID_SHADOW, rndr::RND_PASSID_SS_SSS, rndr::RND_PASSID_REFLECT,
+        rndr::RND_PASSID_REFRACT, rndr::RND_PASSID_PRE_PROCESS, rndr::RND_PASSID_CLEAR,
+        rndr::RND_PASSID_PRE_SPRITE, rndr::RND_PASSID_3D, rndr::RND_PASSID_POST_PROCESS };
+    const int32_t eyes = stereo_enabled() ? 2 : 1;
+    for (int32_t e = 0; e < eyes; e++)
+        for (int8_t p : passes)
+            if (render_manager.pass_sw[p])
+                j.steps[j.n++] = { (int8_t)e, p };
+            else if (p == rndr::RND_PASSID_POST_PROCESS)
+                j.steps[j.n++] = { (int8_t)e, p };   // always: it ends with keeping the picture
+    j.cam = rctx->render_manager_cam;
+    j.composite_back = rend->composite_back;
+    j.lens_flare_texture = rend->lens_flare_texture;
+    j.exposure_history_counter = rend->exposure_history_counter;
+    j.exposure_query_index = rend->exposure_query_index;
+    j.lens_flare_query_index = rend->lens_flare_query_index;
+    for (int32_t i = 0; i < mdl::OBJ_TYPE_MAX; i++)
+        j.obj_count[i] = disp_manager->obj[i].size();
+    for (int32_t i = 0; i < mdl::OBJ_TYPE_SCREEN_MAX; i++)
+        j.screen_count[i] = rctx->obj_screen[i].size();
+    for (int32_t i = 0; i < mdl::OBJ_TYPE_REFLECT_MAX; i++)
+        j.reflect_count[i] = rctx->obj_reflect[i].size();
+    j.buff_offset = disp_manager->buff_offset;
+    pv_save_slot = pv_front_valid() ? pv_front ^ 1 : pv_front;
+    pv_cache_valid[pv_save_slot][0] = pv_cache_valid[pv_save_slot][1] = false;
+    pv_sync->pv_busy = 1;
+}
+
+/* The game's per-frame refresh of the draw lists, while a PV picture is in progress:
+   keep the lists the picture started with (drop anything added since). */
+bool pv_async_refresh_hold() {
+    if (!pv_job.active)
+        return false;
+    mdl::DispManager* dm = disp_manager;
+    for (int32_t i = 0; i < mdl::OBJ_TYPE_MAX; i++)
+        while (dm->obj[i].size() > pv_job.obj_count[i])
+            dm->obj[i].pop_back();
+    for (int32_t i = 0; i < mdl::OBJ_TYPE_SCREEN_MAX; i++)
+        while (rctx->obj_screen[i].size() > pv_job.screen_count[i])
+            rctx->obj_screen[i].pop_back();
+    for (int32_t i = 0; i < mdl::OBJ_TYPE_REFLECT_MAX; i++)
+        while (rctx->obj_reflect[i].size() > pv_job.reflect_count[i])
+            rctx->obj_reflect[i].pop_back();
+    dm->buff_offset = pv_job.buff_offset;
+    // the per-entry state a refresh resets
+    dm->obj_flags = (mdl::ObjFlags)0;
+    dm->field_8 = 0;
+    dm->field_C = 0;
+    dm->texture_pattern_count = 0;
+    memset(dm->texture_pattern_array, 0, sizeof(dm->texture_pattern_array));
+    dm->texture_transform_count = 0;
+    memset(dm->texture_transform_array, 0, sizeof(dm->texture_transform_array));
+    dm->texture_color_coefficients = 1.0f;
+    dm->texture_color_offset = 0.0f;
+    dm->texture_specular_coefficients = 1.0f;
+    dm->texture_specular_offset = 0.0f;
+    pv_as.held++;
+    return true;
+}
+
+static void pv_job_run_step(const pv_step& st) {
+    pv_job_t& j = pv_job;
+    rndr::Render* rend = render_manager.render;
+    const bool stereo = stereo_enabled();
+    const cam_data cam_now = rctx->render_manager_cam;
+    const int32_t taa = rend->taa;
+    const float_t taa_blend = rend->taa_blend;
+    const int32_t composite_back = rend->composite_back;
+    const GLuint lens_flare_texture = rend->lens_flare_texture;
+
+    rend->composite_back = j.composite_back;
+    rend->lens_flare_texture = j.lens_flare_texture;
+    if (stereo) {
+        // as render_all_stereo: no TAA, and the per-frame ring counters advance once per picture
+        rend->taa = 0;
+        rend->taa_blend = 1.0f;
+        if (st.eye == 1 && j.next > 0 && j.steps[j.next - 1].eye == 0) {
+            rend->exposure_history_counter = j.exposure_history_counter;
+            rend->exposure_query_index = j.exposure_query_index;
+            rend->lens_flare_query_index = j.lens_flare_query_index;
+        }
+        const int32_t sign = st.eye ? 1 : -1;
+        stereo_make_eye_cam(j.cam, rctx->render_manager_cam, sign);
+        stereo_eye_begin(sign);
+    }
+    else
+        rctx->render_manager_cam = j.cam;
+
+    const rndr::RenderPassID pass = (rndr::RenderPassID)st.pass;
+    gl_rend_state_index state = pass <= rndr::RND_PASSID_CLEAR ? GL_REND_STATE_PRE_3D
+        : pass <= rndr::RND_PASSID_3D ? GL_REND_STATE_3D : GL_REND_STATE_2D;
+    {
+        render_data_context rend_data_ctx(state);
+        rend_data_ctx.state.get();
+        rend_data_ctx.state.begin_event("async PV step");
+        render_manager.render_single_pass(rend_data_ctx, pass);
+        if (pass == rndr::RND_PASSID_POST_PROCESS)
+            pv_cache_save(rend_data_ctx, st.eye);
+        rend_data_ctx.state.end_event();
+        rend_data_ctx.state.finish();
+    }
+
+    j.composite_back = rend->composite_back;
+    j.lens_flare_texture = rend->lens_flare_texture;
+    rend->composite_back = composite_back;
+    rend->lens_flare_texture = lens_flare_texture;
+    rend->taa = taa;
+    rend->taa_blend = taa_blend;
+    rctx->render_manager_cam = cam_now;
+    stereo_eye_reset();
+}
+
+static void pv_async_log(double_t elapsed_s) {
+    if (pv_as.frames <= 0)
+        return;
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+        "[DivaLinux] async PV: HUD drawn every frame, %.1f fps (worst %.1f ms, %d frames over the display time); "
+        "PV %.1f pictures/s, %.1f frames each (longest %d); %.2f PV steps per frame (avg budget %.1f ms, %.1f ms used), "
+        "%d steps forced; the HUD never waited for a PV picture (%d draw-list refreshes held)\n",
+        pv_as.frames / elapsed_s, pv_as.worst_ms, pv_as.late, pv_as.pictures / elapsed_s,
+        pv_as.pictures ? pv_as.pic_frames_sum / pv_as.pictures : 0.0, pv_as.pic_frames_max,
+        (double_t)pv_as.steps / pv_as.frames, pv_as.budget_sum / pv_as.frames, pv_as.step_ms / pv_as.frames,
+        pv_as.forced, pv_as.held);
+    OutputDebugStringA(buf);
+}
+
+/* Once per frame in async mode, before the HUD is drawn: run the PV steps that fit. */
+static void pv_async_frame() {
+    pv_job_t& j = pv_job;
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    pv_frame_no++;
+    if (!pv_async_was) {
+        pv_async_was = true;
+        pv_trace_left = 15;
+        OutputDebugStringA("[DivaLinux] async PV on: HUD every frame over the newest finished PV picture, "
+            "the PV drawn in steps over as many frames as it takes (two picture slots, A and B)\n");
+    }
+
+    const double_t period = pv_sync->period_us ? pv_sync->period_us / 1000.0 : pv_vsync_ms > 0.0 ? pv_vsync_ms : 13.9;
+    if (pv_frame_ms > period * 1.10)
+        pv_budget_ms = max_def(0.5, pv_budget_ms * 0.7);
+    else if (pv_frame_ms > 0.0 && pv_frame_ms < period * 1.03)
+        pv_budget_ms = min_def(period * 0.8, pv_budget_ms + 0.25);
+
+    if (!pv_as.start.QuadPart)
+        pv_as.start = now;
+    pv_as.frames++;
+    pv_as.budget_sum += pv_budget_ms;
+    if (pv_frame_ms > pv_as.worst_ms)
+        pv_as.worst_ms = pv_frame_ms;
+    if (pv_frame_ms > period * 1.10)
+        pv_as.late++;
+    const double_t elapsed = (double_t)(now.QuadPart - pv_as.start.QuadPart) / (double_t)pv_qpf.QuadPart;
+    if (elapsed >= 10.0) {
+        pv_async_log(elapsed);
+        pv_as = {};
+        pv_as.start = now;
+        pv_trace_left = 10;
+    }
+
+    if (!j.active && pv_sync->disp_seq != j.seq_seen) {
+        j.seq_seen = pv_sync->disp_seq;
+        pv_job_start();
+    }
+
+    const int32_t shown = pv_front;
+    const uint32_t shown_number = j.active ? j.number - 1 : j.number;
+    const bool force_all = !pv_front_valid();   // nothing to show yet: draw this one whole
+    int32_t ran = 0, first = j.next;
+    bool finished = false;
+    double_t spent = 0.0;
+    char done[160] = "";
+    while (j.active) {
+        const pv_step& st = j.steps[j.next];
+        double_t& est = pv_step_est[st.pass];
+        if (!force_all && spent + est > pv_budget_ms) {
+            if (ran || j.idle_frames < 2)
+                break;
+            pv_as.forced++;   // a step bigger than any budget: run it, or the PV would never move
+        }
+        LARGE_INTEGER t0;
+        QueryPerformanceCounter(&t0);
+        pv_job_run_step(st);
+        const double_t dt = pv_ms_since(t0);
+        est = est > 0.0 ? est * 0.8 + dt * 0.2 : dt;
+        spent += dt;
+        if (pv_trace_left > 0 && strlen(done) < sizeof(done) - 40)
+            snprintf(done + strlen(done), sizeof(done) - strlen(done), "%s%s%s",
+                ran ? ", " : "", pv_pass_name(st.pass), stereo_enabled() ? (st.eye ? " R" : " L") : "");
+        ran++;
+        if (++j.next >= j.n) {
+            pv_front = pv_save_slot;
+            pv_save_slot = pv_front ^ 1;
+            j.active = false;
+            pv_sync->pv_busy = 0;
+            pv_sync->pv_done++;
+            finished = true;
+            pv_as.pictures++;
+            pv_as.pic_frames_sum += j.frames + 1;
+            pv_as.pic_frames_max = max_def(pv_as.pic_frames_max, j.frames + 1);
+        }
+    }
+    if (j.active) {
+        j.frames++;
+        j.idle_frames = ran ? 0 : j.idle_frames + 1;
+    }
+    pv_as.steps += ran;
+    pv_as.step_ms += spent;
+    pv_stat.pv_ms += spent;
+    if (finished)
+        pv_stat.full++;
+
+    if (pv_trace_left > 0) {
+        pv_trace_left--;
+        char buf[512];
+        if (ran)
+            snprintf(buf, sizeof(buf), "[DivaLinux] async PV frame %u (%.1f ms): HUD drawn over %c (picture %u); "
+                "PV picture %u: steps %d-%d of %d (%s, %.1f ms of a %.1f ms budget)%s\n",
+                pv_frame_no, pv_frame_ms, shown ? 'B' : 'A', shown_number, j.number,
+                first + 1, first + ran, j.n, done, spent, pv_budget_ms,
+                finished ? (pv_front ? " -> finished, B shown from the next frame" : " -> finished, A shown from the next frame") : ", still drawing");
+        else
+            snprintf(buf, sizeof(buf), "[DivaLinux] async PV frame %u (%.1f ms): HUD drawn over %c (picture %u); "
+                "PV picture %u: no step this frame (next: %s, about %.1f ms, budget %.1f ms), still drawing\n",
+                pv_frame_no, pv_frame_ms, shown ? 'B' : 'A', shown_number, j.number,
+                j.active ? pv_pass_name(j.steps[j.next].pass) : "-", j.active ? pv_step_est[j.steps[j.next].pass] : 0.0, pv_budget_ms);
+        OutputDebugStringA(buf);
+    }
 }
 
 namespace rndr {
@@ -500,6 +841,16 @@ namespace rndr {
             rend_data_ctx.state.set_depth_mask(GL_TRUE);
         }
 
+        // Async PV: the PV's steps that fit this frame, then the HUD over the newest picture
+        if (pv_async_on()) {
+            pv_async_frame();
+            pv_skip = pv_front_valid();
+        }
+        else if (pv_async_was) {
+            pv_job_abandon();
+            pv_async_was = false;
+        }
+
         if (stereo_enabled())
             render_all_stereo();
         else
@@ -540,7 +891,7 @@ namespace rndr {
         const int32_t eye = stereo_eye_index();
         LARGE_INTEGER pass_start;
         QueryPerformanceCounter(&pass_start);
-        if (pv_skip && pv_cache[eye] && pv_cache_valid[eye]) {
+        if (pv_skip && pv_cache[pv_front][eye] && pv_cache_valid[pv_front][eye]) {
             // PV frame skip: the kept PV picture, then a fresh HUD on top
             render_data_context rend_data_ctx(GL_REND_STATE_2D);
             rend_data_ctx.state.get();

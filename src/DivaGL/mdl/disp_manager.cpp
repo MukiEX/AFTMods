@@ -62,6 +62,8 @@ material_list_struct::material_list_struct(uint64_t hash, vec4& blend_color,
 
 }
 
+bool pv_async_refresh_hold();   // render_manager.cpp
+
 namespace mdl {
     mdl::EtcObjManager* etc_obj_manager;
 
@@ -3632,7 +3634,9 @@ namespace mdl {
     }
 
     HOOK(void, FASTCALL, disp_manager_refresh, 0x0000000140439D20) {
-        disp_manager->refresh();
+        // async PV (render_manager.cpp): a PV picture in progress keeps its draw lists
+        if (!pv_async_refresh_hold())
+            disp_manager->refresh();
     }
 
     HOOK(void, FASTCALL, sub_1404BCC60, 0x00000001404BCC60, vec3* pos, float_t width, float_t height) {
