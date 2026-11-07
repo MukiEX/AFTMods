@@ -58,7 +58,7 @@ namespace {
         std::chrono::steady_clock::time_point next_frame;
         // What the test reads
         int frames_ended = 0, layers_last = 0, swapchains_created = 0;
-        XrCompositionLayerQuad quads[2] = {};
+        XrCompositionLayerQuad quads[3] = {};
         std::vector<uint8_t> pixels;     // last released image of the layers' swapchain, RGBA
         uint32_t pix_w = 0, pix_h = 0;
         VkFormat pix_format = VK_FORMAT_UNDEFINED;
@@ -453,7 +453,7 @@ namespace {
             std::lock_guard<std::mutex> l(g.m);
             g.frames_ended++;
             g.layers_last = (int)fe->layerCount;
-            for (uint32_t i = 0; i < fe->layerCount && i < 2; i++) {
+            for (uint32_t i = 0; i < fe->layerCount && i < 3; i++) {
                 if (fe->layers[i]->type != XR_TYPE_COMPOSITION_LAYER_QUAD) {
                     g.errors++;
                     continue;
@@ -501,7 +501,7 @@ EXPORT XrResult XRAPI_CALL xrNegotiateLoaderRuntimeInterface(const XrNegotiateLo
 struct MockXrReport {
     int frames_ended, layers_last, swapchains_created, errors;
     bool instance_alive, session_alive;
-    XrCompositionLayerQuad quads[2];
+    XrCompositionLayerQuad quads[3];
     uint32_t pix_w, pix_h;
     int pix_format;
 };

@@ -58,7 +58,23 @@ namespace dvk {
         };
 
         static const int STAGING_COUNT = 3;
-        static const int CMD_COUNT = 3;
+        static const int CMD_COUNT = 6;   // two copies per headset frame (picture and HUD)
+
+        // One image stream to the headset: staging images the game thread copies its frames
+        // into, and the OpenXR swapchain the frame thread copies the newest one into.
+        // Staging bookkeeping is guarded by XrState::m; the swapchain is the frame thread's.
+        struct Channel {
+            Staging staging[STAGING_COUNT];
+            int32_t st_width = 0, st_height = 0;
+            int published = -1;        // newest submitted copy
+            int reading = -1;          // being copied by the frame thread
+            int pending = -1;          // recorded this frame, not yet submitted
+            uint64_t published_seq = 0, consumed_seq = 0;
+            XrSwapchain swapchain = XR_NULL_HANDLE;
+            std::vector<XrSwapchainImageVulkan2KHR> sc_images;
+            int32_t sc_width = 0, sc_height = 0;
+            bool sc_has_image = false;
+        };
 
         struct XrState {
             // Runtime
@@ -77,24 +93,19 @@ namespace dvk {
             XrSession session = XR_NULL_HANDLE;
             XrSpace local = XR_NULL_HANDLE;
             XrSpace view = XR_NULL_HANDLE;
-            XrSwapchain swapchain = XR_NULL_HANDLE;
-            std::vector<XrSwapchainImageVulkan2KHR> sc_images;
-            int32_t sc_width = 0, sc_height = 0;
-            bool sc_has_image = false;
             VkFormat sc_format = VK_FORMAT_UNDEFINED;
             VkFormat staging_format = VK_FORMAT_UNDEFINED;
             XrPosef screen_pose = { { 0, 0, 0, 1 }, { 0, 0, -2 } };
             std::atomic<bool> session_running{ false };
 
-            // Staging images shared by the two threads, guarded by m
-            Staging staging[STAGING_COUNT];
-            int32_t st_width = 0, st_height = 0;
+            // The game's picture, and the HUD drawn apart from it (dvk_xr_set_hud_texture):
+            // shown as its own alpha-blended layer just in front of the picture, so it updates
+            // on its own and stands out from the 3D.
+            Channel pv, hud;
+            std::atomic<uint32_t> hud_tex{ 0 };   // GL texture name, 0 = no HUD layer
+            float hud_depth = 0.10f;              // metres in front of the picture
             std::mutex m;
             std::condition_variable cv;
-            int published = -1;        // newest submitted copy
-            int reading = -1;          // being copied by the frame thread
-            int pending = -1;          // recorded this frame, not yet submitted
-            uint64_t published_seq = 0, consumed_seq = 0;
 
             // Frame thread
             Context* ctx = nullptr;
@@ -444,23 +455,23 @@ namespace dvk {
 
     // ---------------------------------------------------------------- frame thread
 
-    static void destroy_swapchain(XrState& x) {
-        if (x.swapchain) {
-            x.xrDestroySwapchain(x.swapchain);
-            x.swapchain = XR_NULL_HANDLE;
+    static void destroy_swapchain(XrState& x, Channel& ch) {
+        if (ch.swapchain) {
+            x.xrDestroySwapchain(ch.swapchain);
+            ch.swapchain = XR_NULL_HANDLE;
         }
-        x.sc_images.clear();
-        x.sc_width = x.sc_height = 0;
-        x.sc_has_image = false;
+        ch.sc_images.clear();
+        ch.sc_width = ch.sc_height = 0;
+        ch.sc_has_image = false;
     }
 
-    static bool ensure_swapchain(XrState& x, int32_t w, int32_t h) {
-        if (x.swapchain && x.sc_width == w && x.sc_height == h)
+    static bool ensure_swapchain(XrState& x, Channel& ch, int32_t w, int32_t h) {
+        if (ch.swapchain && ch.sc_width == w && ch.sc_height == h)
             return true;
-        if (x.swapchain) {
+        if (ch.swapchain) {
             // Our copies into the old images must be finished first.
             vkWaitForFences(x.ctx->device, CMD_COUNT, x.fences, VK_TRUE, UINT64_MAX);
-            destroy_swapchain(x);
+            destroy_swapchain(x, ch);
         }
         XrSwapchainCreateInfo sci = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
         sci.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT
@@ -472,15 +483,15 @@ namespace dvk {
         sci.faceCount = 1;
         sci.arraySize = 1;
         sci.mipCount = 1;
-        if (XR_FAILED_LOG(x.xrCreateSwapchain(x.session, &sci, &x.swapchain), "xrCreateSwapchain"))
+        if (XR_FAILED_LOG(x.xrCreateSwapchain(x.session, &sci, &ch.swapchain), "xrCreateSwapchain"))
             return false;
         uint32_t count = 0;
-        x.xrEnumerateSwapchainImages(x.swapchain, 0, &count, nullptr);
-        x.sc_images.assign(count, { XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR });
-        x.xrEnumerateSwapchainImages(x.swapchain, count, &count, (XrSwapchainImageBaseHeader*)x.sc_images.data());
-        x.sc_width = w;
-        x.sc_height = h;
-        log("OpenXR: swapchain %dx%d, %u images", w, h, count);
+        x.xrEnumerateSwapchainImages(ch.swapchain, 0, &count, nullptr);
+        ch.sc_images.assign(count, { XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR });
+        x.xrEnumerateSwapchainImages(ch.swapchain, count, &count, (XrSwapchainImageBaseHeader*)ch.sc_images.data());
+        ch.sc_width = w;
+        ch.sc_height = h;
+        log("OpenXR: %s swapchain %dx%d, %u images", &ch == &x.hud ? "HUD" : "picture", w, h, count);
         return true;
     }
 
@@ -528,21 +539,21 @@ namespace dvk {
     }
 
     // Copies staging image idx into the next swapchain image. Returns false on failure.
-    static bool copy_to_swapchain(XrState& x, int idx, int32_t w, int32_t h) {
+    static bool copy_to_swapchain(XrState& x, Channel& ch, int idx, int32_t w, int32_t h) {
         Context& c = *x.ctx;
-        if (!ensure_swapchain(x, w, h))
+        if (!ensure_swapchain(x, ch, w, h))
             return false;
 
         uint32_t image = 0;
         XrSwapchainImageAcquireInfo ai = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
         {
             std::lock_guard<std::mutex> q(c.queue_mutex);
-            if (XR_FAILED_LOG(x.xrAcquireSwapchainImage(x.swapchain, &ai, &image), "xrAcquireSwapchainImage"))
+            if (XR_FAILED_LOG(x.xrAcquireSwapchainImage(ch.swapchain, &ai, &image), "xrAcquireSwapchainImage"))
                 return false;
         }
         XrSwapchainImageWaitInfo wi = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
         wi.timeout = 1000000000; // 1 s
-        if (XR_FAILED_LOG(x.xrWaitSwapchainImage(x.swapchain, &wi), "xrWaitSwapchainImage"))
+        if (XR_FAILED_LOG(x.xrWaitSwapchainImage(ch.swapchain, &wi), "xrWaitSwapchainImage"))
             return false;
 
         int k = x.cb_index;
@@ -563,7 +574,7 @@ namespace dvk {
         b[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         b[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         b[0].srcQueueFamilyIndex = b[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b[0].image = x.staging[idx].image;
+        b[0].image = ch.staging[idx].image;
         b[0].subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
         // Swapchain image: acquired in COLOR_ATTACHMENT_OPTIMAL; fully overwritten.
         b[1].srcAccessMask = 0;
@@ -571,7 +582,7 @@ namespace dvk {
         b[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         b[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         b[1].srcQueueFamilyIndex = b[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b[1].image = x.sc_images[image].image;
+        b[1].image = ch.sc_images[image].image;
         b[1].subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, b);
@@ -582,8 +593,8 @@ namespace dvk {
         region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
         region.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
         region.extent = { (uint32_t)w, (uint32_t)h, 1 };
-        vkCmdCopyImage(cb, x.staging[idx].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            x.sc_images[image].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        vkCmdCopyImage(cb, ch.staging[idx].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            ch.sc_images[image].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
         b[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         b[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
@@ -601,22 +612,22 @@ namespace dvk {
         VkResult r = vkQueueSubmit(c.queue, 1, &si, x.fences[k]);
         if (r != VK_SUCCESS)
             log("OpenXR: vkQueueSubmit failed: %d", (int)r);
-        x.xrReleaseSwapchainImage(x.swapchain, &ri);
-        x.sc_has_image = true;
+        x.xrReleaseSwapchainImage(ch.swapchain, &ri);
+        ch.sc_has_image = true;
         return r == VK_SUCCESS;
     }
 
     // Quad layers for the current swapchain contents.
     static uint32_t build_layers(XrState& x, XrCompositionLayerQuad* quads) {
         const dvk_xr_info& in = x.info;
-        const int32_t w = x.sc_width, h = x.sc_height;
+        const int32_t w = x.pv.sc_width, h = x.pv.sc_height;
         auto quad = [&](XrCompositionLayerQuad& q, XrEyeVisibility eye, int32_t rx, int32_t ry, int32_t rw, int32_t rh,
                 float aspect) {
             q = { XR_TYPE_COMPOSITION_LAYER_QUAD };
             q.layerFlags = 0;
             q.space = x.local;
             q.eyeVisibility = eye;
-            q.subImage.swapchain = x.swapchain;
+            q.subImage.swapchain = x.pv.swapchain;
             q.subImage.imageRect = { { rx, ry }, { rw, rh } };
             q.subImage.imageArrayIndex = 0;
             q.pose = x.screen_pose;
@@ -654,6 +665,53 @@ namespace dvk {
         return 2;
     }
 
+    // The HUD layer: the whole HUD image, over the picture's quad, a little nearer the player
+    // and shrunk by the same proportion so its edges still line up with the picture's.
+    static void build_hud_layer(XrState& x, const XrCompositionLayerQuad& picture, XrCompositionLayerQuad& q) {
+        q = picture;
+        q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied alpha
+        q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        q.subImage.swapchain = x.hud.swapchain;
+        q.subImage.imageRect = { { 0, 0 }, { x.hud.sc_width, x.hud.sc_height } };
+        const XrQuaternionf& o = picture.pose.orientation;
+        // the quad's +Z (towards the player) = rotate (0,0,1) by o
+        const float nx = 2.0f * (o.x * o.z + o.w * o.y);
+        const float ny = 2.0f * (o.y * o.z - o.w * o.x);
+        const float nz = 1.0f - 2.0f * (o.x * o.x + o.y * o.y);
+        const float d = x.hud_depth;
+        q.pose.position.x += nx * d;
+        q.pose.position.y += ny * d;
+        q.pose.position.z += nz * d;
+        const float dist = x.info.screen_distance > d + 0.05f ? x.info.screen_distance : d + 0.05f;
+        const float k = (dist - d) / dist;
+        q.size.width *= k;
+        q.size.height *= k;
+    }
+
+    // Copies a channel's newest finished staging image into its swapchain, if there's a new one.
+    static void update_channel(XrState& x, Channel& ch) {
+        int idx = -1;
+        int32_t w = 0, h = 0;
+        uint64_t seq = 0;
+        {
+            std::lock_guard<std::mutex> lock(x.m);
+            if (ch.published >= 0 && ch.published_seq != ch.consumed_seq) {
+                idx = ch.published;
+                ch.reading = idx;
+                seq = ch.published_seq;
+                w = ch.st_width;
+                h = ch.st_height;
+            }
+        }
+        if (idx >= 0) {
+            copy_to_swapchain(x, ch, idx, w, h);
+            std::lock_guard<std::mutex> lock(x.m);
+            ch.reading = -1;
+            ch.consumed_seq = seq;
+            x.cv.notify_all();
+        }
+    }
+
     static void frame_thread(XrState* xs) {
         XrState& x = *xs;
         while (!x.quit) {
@@ -686,32 +744,20 @@ namespace dvk {
                 x.screen_pose = screen_in_front_of(head, x.info);
             }
 
-            XrCompositionLayerQuad quads[2];
-            const XrCompositionLayerBaseHeader* layers[2];
+            XrCompositionLayerQuad quads[3];
+            const XrCompositionLayerBaseHeader* layers[3];
             uint32_t layer_count = 0;
             if (fs.shouldRender) {
-                int idx = -1;
-                int32_t w = 0, h = 0;
-                uint64_t seq = 0;
-                {
-                    std::lock_guard<std::mutex> lock(x.m);
-                    if (x.published >= 0 && x.published_seq != x.consumed_seq) {
-                        idx = x.published;
-                        x.reading = idx;
-                        seq = x.published_seq;
-                        w = x.st_width;
-                        h = x.st_height;
-                    }
-                }
-                if (idx >= 0) {
-                    copy_to_swapchain(x, idx, w, h);
-                    std::lock_guard<std::mutex> lock(x.m);
-                    x.reading = -1;
-                    x.consumed_seq = seq;
-                    x.cv.notify_all();
-                }
-                if (x.sc_has_image) {
+                update_channel(x, x.pv);
+                const bool hud = x.hud_tex.load() != 0;
+                if (hud)
+                    update_channel(x, x.hud);
+                if (x.pv.sc_has_image) {
                     layer_count = build_layers(x, quads);
+                    if (hud && x.hud.sc_has_image) {
+                        build_hud_layer(x, quads[0], quads[layer_count]);
+                        layer_count++;
+                    }
                     for (uint32_t i = 0; i < layer_count; i++)
                         layers[i] = (const XrCompositionLayerBaseHeader*)&quads[i];
                 }
@@ -816,35 +862,32 @@ namespace dvk {
 
     // ---------------------------------------------------------------- game thread
 
-    static void destroy_staging(Context& c, XrState& x) {
-        for (Staging& s : x.staging)
+    static void destroy_staging(Context& c, Channel& ch) {
+        for (Staging& s : ch.staging)
             if (s.image) {
                 vmaDestroyImage(c.vma, s.image, s.alloc);
                 s = Staging();
             }
-        x.st_width = x.st_height = 0;
-        x.published = -1;
+        ch.st_width = ch.st_height = 0;
+        ch.published = -1;
     }
 
-    void xr_record_frame(Context& c, VkCommandBuffer cb) {
-        if (!s_xr || !s_xr->active || !s_xr->session_running)
-            return;
-        XrState& x = *s_xr;
-        TextureObj* src = c.default_color.get();
+    // Copies src (a GL colour image, row 0 at the bottom) into a free staging image of ch, top-down.
+    static void record_channel(Context& c, XrState& x, Channel& ch, TextureObj* src, VkCommandBuffer cb) {
         const int32_t w = src->width, h = src->height;
 
         int idx = -1;
         {
             std::unique_lock<std::mutex> lock(x.m);
-            if (x.st_width != w || x.st_height != h) {
+            if (ch.st_width != w || ch.st_height != h) {
                 // Resized: wait for the frame thread to let go, and for the GPU, then rebuild.
-                x.cv.wait(lock, [&] { return x.reading < 0; });
+                x.cv.wait(lock, [&] { return ch.reading < 0; });
                 {
                     std::lock_guard<std::mutex> q(c.queue_mutex);
                     vkQueueWaitIdle(c.queue);
                 }
-                destroy_staging(c, x);
-                for (Staging& s : x.staging) {
+                destroy_staging(c, ch);
+                for (Staging& s : ch.staging) {
                     VkImageCreateInfo ici = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
                     ici.imageType = VK_IMAGE_TYPE_2D;
                     ici.format = x.staging_format;
@@ -858,19 +901,19 @@ namespace dvk {
                     aci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
                     if (vmaCreateImage(c.vma, &ici, &aci, &s.image, &s.alloc, nullptr) != VK_SUCCESS) {
                         log("OpenXR: can't create %dx%d staging images", w, h);
-                        destroy_staging(c, x);
+                        destroy_staging(c, ch);
                         return;
                     }
                 }
-                x.st_width = w;
-                x.st_height = h;
+                ch.st_width = w;
+                ch.st_height = h;
             }
             for (int i = 0; i < STAGING_COUNT; i++)
-                if (i != x.published && i != x.reading) {
+                if (i != ch.published && i != ch.reading) {
                     idx = i;
                     break;
                 }
-            x.pending = idx;
+            ch.pending = idx;
         }
         if (idx < 0)
             return;
@@ -881,7 +924,7 @@ namespace dvk {
         b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.image = x.staging[idx].image;
+        b.image = ch.staging[idx].image;
         b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
         // srcStage TRANSFER: earlier copies out of this image (frame thread) finish first.
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -897,7 +940,7 @@ namespace dvk {
         region.dstOffsets[0] = { 0, 0, 0 };
         region.dstOffsets[1] = { w, h, 1 };
         vkCmdBlitImage(cb, src->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            x.staging[idx].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
+            ch.staging[idx].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
         c.texture_transition(cb, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, src->rest_layout);
 
         b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -908,15 +951,28 @@ namespace dvk {
             0, 0, nullptr, 0, nullptr, 1, &b);
     }
 
+    void xr_record_frame(Context& c, VkCommandBuffer cb) {
+        if (!s_xr || !s_xr->active || !s_xr->session_running)
+            return;
+        XrState& x = *s_xr;
+        record_channel(c, x, x.pv, c.default_color.get(), cb);
+        if (const GLuint hud = x.hud_tex.load()) {
+            TextureObj* t = c.textures.get(hud);
+            if (t && t->image && t->width > 0 && t->height > 0)
+                record_channel(c, x, x.hud, t, cb);
+        }
+    }
+
     void xr_frame_submitted() {
         if (!s_xr)
             return;
         std::lock_guard<std::mutex> lock(s_xr->m);
-        if (s_xr->pending >= 0) {
-            s_xr->published = s_xr->pending;
-            s_xr->published_seq++;
-            s_xr->pending = -1;
-        }
+        for (Channel* ch : { &s_xr->pv, &s_xr->hud })
+            if (ch->pending >= 0) {
+                ch->published = ch->pending;
+                ch->published_seq++;
+                ch->pending = -1;
+            }
     }
 
     void xr_shutdown(Context& c) {
@@ -935,7 +991,8 @@ namespace dvk {
             }
         }
         if (x.session) {
-            destroy_swapchain(x);
+            destroy_swapchain(x, x.pv);
+            destroy_swapchain(x, x.hud);
             if (x.view) x.xrDestroySpace(x.view);
             if (x.local) x.xrDestroySpace(x.local);
             x.xrDestroySession(x.session);
@@ -946,8 +1003,10 @@ namespace dvk {
                 if (f) vkDestroyFence(c.device, f, nullptr);
             if (x.pool)
                 vkDestroyCommandPool(c.device, x.pool, nullptr);
-            if (c.vma)
-                destroy_staging(c, x);
+            if (c.vma) {
+                destroy_staging(c, x.pv);
+                destroy_staging(c, x.hud);
+            }
         }
         if (x.frames_shown)
             log("OpenXR: %llu frames shown", (unsigned long long)x.frames_shown);
@@ -970,6 +1029,23 @@ extern "C" bool dvk_xr_setup(const dvk_xr_info* info) {
 
 extern "C" bool dvk_xr_active(void) {
     return s_xr && s_xr->active && s_xr->session_running;
+}
+
+extern "C" void dvk_xr_set_hud_texture(uint32_t texture) {
+    if (!s_xr)
+        return;
+    const uint32_t before = s_xr->hud_tex.exchange(texture);
+    if (texture && !before) {
+        // DIVAVK_HUD_DEPTH_CM: how far in front of the picture the HUD layer floats
+        if (const char* e = getenv("DIVAVK_HUD_DEPTH_CM")) {
+            const float cm = (float)atof(e);
+            if (cm >= 0.0f && cm <= 200.0f)
+                s_xr->hud_depth = cm / 100.0f;
+        }
+        log("OpenXR: HUD shown as its own layer, %.0f cm in front of the picture", s_xr->hud_depth * 100.0f);
+    }
+    else if (!texture && before)
+        log("OpenXR: HUD back in the picture");
 }
 
 extern "C" void dvk_xr_recenter(void) {

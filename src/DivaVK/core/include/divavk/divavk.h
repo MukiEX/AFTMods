@@ -131,6 +131,11 @@ bool dvk_xr_setup(const dvk_xr_info* info);
 bool dvk_xr_active(void);
 /* Puts the screen straight ahead of where the player is looking now. */
 void dvk_xr_recenter(void);
+/* Shows a GL texture (an RGBA colour target, premultiplied alpha, rendered like the default
+   framebuffer: row 0 at the bottom) as a layer of its own over the picture, a little nearer
+   the player (DIVAVK_HUD_DEPTH_CM, default 10). Each presented frame copies it, so the
+   game draws its HUD there instead of into the frame. 0 turns it off. */
+void dvk_xr_set_hud_texture(uint32_t texture);
 
 #ifdef __cplusplus
 }

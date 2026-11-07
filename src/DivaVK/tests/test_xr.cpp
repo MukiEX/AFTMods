@@ -32,7 +32,7 @@
 struct MockXrReport {
     int frames_ended, layers_last, swapchains_created, errors;
     bool instance_alive, session_alive;
-    XrCompositionLayerQuad quads[2];
+    XrCompositionLayerQuad quads[3];
     uint32_t pix_w, pix_h;
     int pix_format;
 };
@@ -50,6 +50,12 @@ static PFNGLDISABLEPROC glDisable;
 static PFNGLSCISSORPROC glScissor;
 static PFNGLVIEWPORTPROC glViewport;
 static PFNGLGETERRORPROC glGetError;
+static PFNGLGENTEXTURESPROC glGenTextures;
+static PFNGLBINDTEXTUREPROC glBindTexture;
+static PFNGLTEXIMAGE2DPROC glTexImage2D;
+static PFNGLGENFRAMEBUFFERSPROC glGenFramebuffers;
+static PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer;
+static PFNGLFRAMEBUFFERTEXTURE2DPROC glFramebufferTexture2D;
 
 static void load_gl() {
     glClearColor = (PFNGLCLEARCOLORPROC)dvk_get_proc_address("glClearColor");
@@ -59,6 +65,20 @@ static void load_gl() {
     glScissor = (PFNGLSCISSORPROC)dvk_get_proc_address("glScissor");
     glViewport = (PFNGLVIEWPORTPROC)dvk_get_proc_address("glViewport");
     glGetError = (PFNGLGETERRORPROC)dvk_get_proc_address("glGetError");
+    glGenTextures = (PFNGLGENTEXTURESPROC)dvk_get_proc_address("glGenTextures");
+    glBindTexture = (PFNGLBINDTEXTUREPROC)dvk_get_proc_address("glBindTexture");
+    glTexImage2D = (PFNGLTEXIMAGE2DPROC)dvk_get_proc_address("glTexImage2D");
+    glGenFramebuffers = (PFNGLGENFRAMEBUFFERSPROC)dvk_get_proc_address("glGenFramebuffers");
+    glBindFramebuffer = (PFNGLBINDFRAMEBUFFERPROC)dvk_get_proc_address("glBindFramebuffer");
+    glFramebufferTexture2D = (PFNGLFRAMEBUFFERTEXTURE2DPROC)dvk_get_proc_address("glFramebufferTexture2D");
+}
+
+static void fill_rgba(int x, int y, int w, int h, float r, float g, float b, float a) {
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(x, y, w, h);
+    glClearColor(r, g, b, a);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glDisable(GL_SCISSOR_TEST);
 }
 
 static void fill(int x, int y, int w, int h, float r, float g, float b) {
@@ -238,6 +258,76 @@ static void round_mono_resize(bool validation) {
     CHECK(r.errors == 0, "mock runtime saw %d errors", r.errors);
 }
 
+static void round_hud(bool validation) {
+    printf("mono with a HUD layer\n");
+    setenv("MOCK_XR_FORMATS", "rgba", 1);
+    const int W = 64, H = 64;
+    if (!start(W, H, DVK_XR_LAYOUT_MONO, validation)) {
+        g_failures++;
+        return;
+    }
+    for (int i = 0; i < 100 && !dvk_xr_active(); i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    // The picture: red. The HUD: transparent, with a premultiplied half-green square at its top left.
+    GLuint tex = 0, fbo = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, W, H, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    glViewport(0, 0, W, H);
+    fill_rgba(0, 0, W, H, 0, 0, 0, 0);
+    fill_rgba(0, H - 16, 16, 16, 0, 0.5f, 0, 0.5f);   // GL y is bottom-up: this is the top left
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    fill(0, 0, W, H, 1, 0, 0);
+    dvk_xr_set_hud_texture(tex);
+    present_frames(6);
+
+    MockXrReport r = {};
+    std::vector<uint8_t> px(W * H * 4);
+    mock_xr_report(&r, px.data(), px.size());
+    CHECK(r.layers_last == 2, "%d layers, expected 2 (picture and HUD)", r.layers_last);
+    const XrCompositionLayerQuad& pic = r.quads[0];
+    const XrCompositionLayerQuad& hud = r.quads[1];
+    CHECK(pic.layerFlags == 0, "picture layer flags %llx", (unsigned long long)pic.layerFlags);
+    CHECK((hud.layerFlags & XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT) &&
+          !(hud.layerFlags & XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT),
+        "HUD layer flags %llx: want alpha blending, premultiplied", (unsigned long long)hud.layerFlags);
+    CHECK(hud.subImage.swapchain != pic.subImage.swapchain, "HUD shares the picture's swapchain");
+    CHECK(hud.eyeVisibility == XR_EYE_VISIBILITY_BOTH, "HUD eye visibility %d", hud.eyeVisibility);
+    // The picture faces the mock head from 2.5 m down -X: the HUD sits 10 cm nearer, 4 % smaller.
+    CHECK(feq(hud.pose.position.x, pic.pose.position.x + 0.10f) && feq(hud.pose.position.y, pic.pose.position.y)
+          && feq(hud.pose.position.z, pic.pose.position.z),
+        "HUD at %.3f,%.3f,%.3f, picture at %.3f,%.3f,%.3f", hud.pose.position.x, hud.pose.position.y,
+        hud.pose.position.z, pic.pose.position.x, pic.pose.position.y, pic.pose.position.z);
+    CHECK(feq(hud.size.width, pic.size.width * 0.96f) && feq(hud.size.height, pic.size.height * 0.96f),
+        "HUD size %.3f x %.3f, picture %.3f x %.3f", hud.size.width, hud.size.height, pic.size.width, pic.size.height);
+    // The mock reads back the last layer's image: the HUD, top-down, alpha kept.
+    if (r.pix_w == W && r.pix_h == H) {
+        const uint8_t* tl = &px[((size_t)4 * W + 4) * 4];
+        const uint8_t* br = &px[((size_t)50 * W + 50) * 4];
+        CHECK(tl[0] < 4 && abs(tl[1] - 128) < 4 && tl[2] < 4 && abs(tl[3] - 128) < 4,
+            "HUD top left %d,%d,%d,%d, expected 0,128,0,128", tl[0], tl[1], tl[2], tl[3]);
+        CHECK(br[0] == 0 && br[1] == 0 && br[2] == 0 && br[3] == 0,
+            "HUD elsewhere %d,%d,%d,%d, expected transparent", br[0], br[1], br[2], br[3]);
+    }
+    else
+        CHECK(false, "HUD image %ux%u", r.pix_w, r.pix_h);
+
+    // Off again: back to the one layer
+    dvk_xr_set_hud_texture(0);
+    present_frames(4);
+    mock_xr_report(&r, nullptr, 0);
+    CHECK(r.layers_last == 1, "%d layers after turning the HUD layer off", r.layers_last);
+
+    CHECK(glGetError() == GL_NO_ERROR, "GL error");
+    dvk_destroy();
+    mock_xr_report(&r, nullptr, 0);
+    CHECK(r.errors == 0, "mock runtime saw %d errors", r.errors);
+}
+
 int main(int argc, char** argv) {
     bool validation = argc > 1 && !strcmp(argv[1], "--validate");
     void* mock = dlopen(DIVAVK_MOCK_XR, RTLD_NOW);
@@ -258,6 +348,7 @@ int main(int argc, char** argv) {
 
     round_sbs(validation);
     round_mono_resize(validation);
+    round_hud(validation);
 
     printf("%d/%d checks passed\n", g_checks - g_failures, g_checks);
     return g_failures ? 1 : 0;
