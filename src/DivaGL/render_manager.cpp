@@ -394,6 +394,8 @@ namespace {
     } pv_ts = {};
 }
 
+void pv_camera_snapshot_take();   // camera.cpp
+
 static bool pv_threaded_on() {
     return pv_sync && pv_sync->version >= 2 && pv_sync->async;
 }
@@ -707,6 +709,7 @@ static void pv_threaded_frame() {
         pv_save_slot = t.slot;
         t.eyes = stereo_enabled() ? 2 : 1;
         t.cam = rctx_main->render_manager_cam;
+        pv_camera_snapshot_take();   // what the game's camera getters tell the PV thread
         t.after_main = dvk_last_ticket(dvk_main_context());
         disp_manager_handoff(t.dm, t.rctx.load());
         sprite_manager_handoff_pv_lists();

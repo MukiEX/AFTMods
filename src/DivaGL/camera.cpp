@@ -83,9 +83,107 @@ HOOK(void, FASTCALL, ctrl_camera, 0x00000001401F8970) {
     stereo_update_camera(rctx->render_manager_cam);
 }
 
+/* Threaded PV: the PV render thread draws a picture over several of the game's frames, while
+   the game thread keeps moving the camera. Code drawing the PV that asks the game for the
+   camera (shadow fitting, SSS, depth of field, particle billboards, lens flare) gets the
+   camera as it was at the picture's handoff (pv_camera_snapshot_take, game thread), so it
+   matches the draw lists and rctx->render_manager_cam. Other threads ask the game as usual. */
+namespace {
+    struct pv_camera_snapshot {
+        double_t aspect;
+        float_t far_clip, fv_2d, near_clip, pers, rot_y_deg, rot_z;
+        vec3 intr, pos, up;
+        mat4 cmat, pmat, vpmat, imat;
+        bool ignore_near_clip, ignore_pers;
+    } pv_cam = {};
+
+    double_t(FASTCALL* orig_get_camera_aspect)();
+    float_t(FASTCALL* orig_get_camera_far_clip)();
+    float_t(FASTCALL* orig_get_camera_fv_2d)();
+    void(FASTCALL* orig_get_camera_imatrix)(mat4* imat);
+    vec3(FASTCALL* orig_get_camera_intr)();
+    void(FASTCALL* orig_get_camera_matrix)(mat4* cmat, mat4* pmat, mat4* vpmat);
+    float_t(FASTCALL* orig_get_camera_near_clip)();
+    float_t(FASTCALL* orig_get_camera_pers)();
+    vec3(FASTCALL* orig_get_camera_pos)();
+    float_t(FASTCALL* orig_get_camera_rot_y_deg)();
+    float_t(FASTCALL* orig_get_camera_rot_z)();
+    vec3(FASTCALL* orig_get_camera_up)();
+    bool(FASTCALL* orig_get_ignore_near_clip)();
+    bool(FASTCALL* orig_get_ignore_pers)();
+
+    double_t FASTCALL pv_get_camera_aspect() { return pv_render_thread_flag ? pv_cam.aspect : orig_get_camera_aspect(); }
+    float_t FASTCALL pv_get_camera_far_clip() { return pv_render_thread_flag ? pv_cam.far_clip : orig_get_camera_far_clip(); }
+    float_t FASTCALL pv_get_camera_fv_2d() { return pv_render_thread_flag ? pv_cam.fv_2d : orig_get_camera_fv_2d(); }
+    void FASTCALL pv_get_camera_imatrix(mat4* imat) {
+        if (!pv_render_thread_flag)
+            orig_get_camera_imatrix(imat);
+        else if (imat)
+            *imat = pv_cam.imat;
+    }
+    vec3 FASTCALL pv_get_camera_intr() { return pv_render_thread_flag ? pv_cam.intr : orig_get_camera_intr(); }
+    void FASTCALL pv_get_camera_matrix(mat4* cmat, mat4* pmat, mat4* vpmat) {
+        if (!pv_render_thread_flag) {
+            orig_get_camera_matrix(cmat, pmat, vpmat);
+            return;
+        }
+        if (cmat)
+            *cmat = pv_cam.cmat;
+        if (pmat)
+            *pmat = pv_cam.pmat;
+        if (vpmat)
+            *vpmat = pv_cam.vpmat;
+    }
+    float_t FASTCALL pv_get_camera_near_clip() { return pv_render_thread_flag ? pv_cam.near_clip : orig_get_camera_near_clip(); }
+    float_t FASTCALL pv_get_camera_pers() { return pv_render_thread_flag ? pv_cam.pers : orig_get_camera_pers(); }
+    vec3 FASTCALL pv_get_camera_pos() { return pv_render_thread_flag ? pv_cam.pos : orig_get_camera_pos(); }
+    float_t FASTCALL pv_get_camera_rot_y_deg() { return pv_render_thread_flag ? pv_cam.rot_y_deg : orig_get_camera_rot_y_deg(); }
+    float_t FASTCALL pv_get_camera_rot_z() { return pv_render_thread_flag ? pv_cam.rot_z : orig_get_camera_rot_z(); }
+    vec3 FASTCALL pv_get_camera_up() { return pv_render_thread_flag ? pv_cam.up : orig_get_camera_up(); }
+    bool FASTCALL pv_get_ignore_near_clip() { return pv_render_thread_flag ? pv_cam.ignore_near_clip : orig_get_ignore_near_clip(); }
+    bool FASTCALL pv_get_ignore_pers() { return pv_render_thread_flag ? pv_cam.ignore_pers : orig_get_ignore_pers(); }
+}
+
+// Game thread, at a PV picture's handoff (the PV thread is idle).
+void pv_camera_snapshot_take() {
+    if (!orig_get_camera_pos)
+        return;
+    pv_cam.aspect = orig_get_camera_aspect();
+    pv_cam.far_clip = orig_get_camera_far_clip();
+    pv_cam.fv_2d = orig_get_camera_fv_2d();
+    orig_get_camera_imatrix(&pv_cam.imat);
+    pv_cam.intr = orig_get_camera_intr();
+    orig_get_camera_matrix(&pv_cam.cmat, &pv_cam.pmat, &pv_cam.vpmat);
+    pv_cam.near_clip = orig_get_camera_near_clip();
+    pv_cam.pers = orig_get_camera_pers();
+    pv_cam.pos = orig_get_camera_pos();
+    pv_cam.rot_y_deg = orig_get_camera_rot_y_deg();
+    pv_cam.rot_z = orig_get_camera_rot_z();
+    pv_cam.up = orig_get_camera_up();
+    pv_cam.ignore_near_clip = orig_get_ignore_near_clip();
+    pv_cam.ignore_pers = orig_get_ignore_pers();
+}
+
 void camera_patch() {
     INSTALL_HOOK(init_projection_matrix);
     INSTALL_HOOK(ctrl_camera);
+
+#define PV_CAM_WRAP(name) orig_##name = name; name = pv_##name
+    PV_CAM_WRAP(get_camera_aspect);
+    PV_CAM_WRAP(get_camera_far_clip);
+    PV_CAM_WRAP(get_camera_fv_2d);
+    PV_CAM_WRAP(get_camera_imatrix);
+    PV_CAM_WRAP(get_camera_intr);
+    PV_CAM_WRAP(get_camera_matrix);
+    PV_CAM_WRAP(get_camera_near_clip);
+    PV_CAM_WRAP(get_camera_pers);
+    PV_CAM_WRAP(get_camera_pos);
+    PV_CAM_WRAP(get_camera_rot_y_deg);
+    PV_CAM_WRAP(get_camera_rot_z);
+    PV_CAM_WRAP(get_camera_up);
+    PV_CAM_WRAP(get_ignore_near_clip);
+    PV_CAM_WRAP(get_ignore_pers);
+#undef PV_CAM_WRAP
 }
 
 // 0x1401F8130

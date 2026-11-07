@@ -83,7 +83,7 @@ namespace dvk {
                 snprintf(label, sizeof(label), "%s_c%u_prog%u", what, i, program);
                 dump_texture(tgt.color[i], tgt.color_level[i], tgt.color_layer[i], label);
             }
-        if (tgt.depth) {
+        if (tgt.depth && is_main()) {   // (a shared context's depth readback crashed on Quest)
             snprintf(label, sizeof(label), "%s_depth_prog%u", what, program);
             dump_texture(tgt.depth, tgt.depth_level, 0, label);
         }
