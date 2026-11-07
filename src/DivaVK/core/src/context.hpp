@@ -78,6 +78,9 @@ namespace dvk {
 
         VkQueryPool query_pool = VK_NULL_HANDLE;
         uint32_t queries_used = 0;
+
+        VkQueryPool ts_pool = VK_NULL_HANDLE;  // GPU time: timestamps at the start and end of cmd
+        bool ts_written = false;
     };
 
     // ---------------------------------------------------------------- GL objects
@@ -410,6 +413,13 @@ namespace dvk {
         VkFormat depth_stencil_format = VK_FORMAT_UNDEFINED; // best match for D24S8
 
         Frame frames[FRAMES_IN_FLIGHT];
+        // GPU time per presented frame (timestamps around each command buffer), logged every 10 s
+        double timestamp_ns = 0.0;         // ns per tick; 0 = the queue has no timestamps
+        double gpu_ms_total = 0.0, gpu_ms_worst = 0.0;
+        uint32_t gpu_presents = 0;
+        uint64_t gpu_log_start_ns = 0;
+        // DIVAVK_WINDOW_PRESENT=0: while OpenXR shows the frames, don't present to the window
+        int window_present = -1;
         uint32_t frame_index = 0;
         uint64_t serial = 1;  // serial of the frame being recorded
         bool recording = false;

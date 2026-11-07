@@ -5,10 +5,14 @@
 #define VMA_IMPLEMENTATION
 #define VMA_STATIC_VULKAN_FUNCTIONS 0
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
+#include <cstring>
+#include <chrono>
 #include "context.hpp"
 #include "xr.hpp"
 #include <set>
 #include <mutex>
+
+extern "C" bool dvk_xr_active(void);
 
 namespace dvk {
     Context* g_ctx = nullptr;
@@ -223,6 +227,14 @@ namespace dvk {
         }
 
         vkGetPhysicalDeviceProperties(phys, &props);
+        {
+            uint32_t qcount = 0;
+            vkGetPhysicalDeviceQueueFamilyProperties(phys, &qcount, nullptr);
+            std::vector<VkQueueFamilyProperties> qprops(qcount);
+            vkGetPhysicalDeviceQueueFamilyProperties(phys, &qcount, qprops.data());
+            if (queue_family < qcount && qprops[queue_family].timestampValidBits && props.limits.timestampPeriod > 0.0f)
+                timestamp_ns = props.limits.timestampPeriod;
+        }
         VkPhysicalDeviceFeatures avail;
         vkGetPhysicalDeviceFeatures(phys, &avail);
         features = {};
@@ -361,6 +373,13 @@ namespace dvk {
             qpci.queryType = VK_QUERY_TYPE_OCCLUSION;
             qpci.queryCount = 1024;
             DVK_CHECK(vkCreateQueryPool(device, &qpci, nullptr, &f.query_pool));
+            if (timestamp_ns > 0.0) {
+                VkQueryPoolCreateInfo tci = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+                tci.queryType = VK_QUERY_TYPE_TIMESTAMP;
+                tci.queryCount = 2;
+                if (vkCreateQueryPool(device, &tci, nullptr, &f.ts_pool) != VK_SUCCESS)
+                    f.ts_pool = VK_NULL_HANDLE;
+            }
         }
 
         program_global_init();
@@ -509,6 +528,13 @@ namespace dvk {
         vkWaitForFences(device, 1, &f.fence, VK_TRUE, UINT64_MAX);
         DVK_STAGE("running the game's GL calls");
         f.pending = false;
+        if (f.ts_written) {
+            uint64_t ts[2] = {};
+            if (vkGetQueryPoolResults(device, f.ts_pool, 0, 2, sizeof(ts), ts, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS
+                && ts[1] > ts[0])
+                gpu_ms_total += (double)(ts[1] - ts[0]) * timestamp_ns / 1e6;
+            f.ts_written = false;
+        }
         query_collect_frame(*this, f);
         s_completed_serial = std::max(s_completed_serial, f.serial);
         run_garbage();
@@ -550,6 +576,11 @@ namespace dvk {
         vkBeginCommandBuffer(f.upload_cmd, &bi);
         vkBeginCommandBuffer(f.cmd, &bi);
         vkCmdResetQueryPool(f.cmd, f.query_pool, 0, 1024);
+        if (f.ts_pool) {
+            vkCmdResetQueryPool(f.cmd, f.ts_pool, 0, 2);
+            vkCmdWriteTimestamp(f.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, f.ts_pool, 0);
+            f.ts_written = true;
+        }
         recording = true;
         bound_pipeline = VK_NULL_HANDLE;
         descriptors_dirty = true;
@@ -610,7 +641,15 @@ namespace dvk {
         uint32_t image_index = ~0u;
         VkSemaphore acquire = VK_NULL_HANDLE;
 
-        if (do_present && swapchain) {
+        // In the headset the OpenXR thread shows the frames from its own staging images; the
+        // window isn't seen. DIVAVK_WINDOW_PRESENT=0 skips its copy and its image wait then.
+        if (window_present < 0) {
+            const char* wp = getenv("DIVAVK_WINDOW_PRESENT");
+            window_present = !(wp && !strcmp(wp, "0"));
+            if (!window_present)
+                log("Window present: off while OpenXR shows the frames (DIVAVK_WINDOW_PRESENT=0)");
+        }
+        if (do_present && swapchain && (window_present || !dvk_xr_active())) {
             acquire = acquire_sem[frame_index];
             DVK_STAGE("getting a window image (vkAcquireNextImageKHR)");
             // Bounded wait: a window system that stops returning images must not freeze the game.
@@ -690,6 +729,8 @@ namespace dvk {
                 0, 1, &mb, 0, nullptr, 0, nullptr);
         }
         vkEndCommandBuffer(f.upload_cmd);
+        if (f.ts_written)
+            vkCmdWriteTimestamp(f.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, f.ts_pool, 1);
         vkEndCommandBuffer(f.cmd);
 
         VkCommandBuffer cbs[2];
@@ -746,6 +787,21 @@ namespace dvk {
     void Context::present() {
         dump_frame_end();
         submit_frame(true);
+        // GPU time: what the GPU spent on the frames completed meanwhile, per presented frame
+        if (timestamp_ns > 0.0) {
+            const uint64_t now = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (!gpu_log_start_ns)
+                gpu_log_start_ns = now;
+            gpu_presents++;
+            if (now - gpu_log_start_ns >= 10000000000ull) {
+                log("GPU: %.1f ms per frame on average (%u frames in %.1f s)",
+                    gpu_ms_total / gpu_presents, gpu_presents, (now - gpu_log_start_ns) / 1e9);
+                gpu_ms_total = 0.0;
+                gpu_presents = 0;
+                gpu_log_start_ns = now;
+            }
+        }
         dump_frame_begin();
         // Persist new pipelines now and then; the game may never shut down cleanly.
         if ((serial % 1800) == 0 && stats.pipelines_created != pipelines_at_last_save)

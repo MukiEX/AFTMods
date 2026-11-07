@@ -40,6 +40,7 @@ Same sections and keys as `DivaGL.ini` (`[general]`, `[experimentals]`, `[stereo
 | --- | --- | --- |
 | `pv_frame_skip` | 1 | Draw the PV (shadows, reflections, 3D, post-process) less often than the HUD. The game's logic, notes and judging still run every frame. After post-process the finished PV picture is kept, and a skipped frame puts it back and draws only a fresh HUD on top. **0** off. **1** auto: when a frame with the PV drawn runs late, the next frame reuses the PV picture (never two in a row), so the HUD keeps the display's rate under load. **2-4**: draw the PV every 2nd/3rd/4th frame. Anything drawn into the PV picture freezes with it on skipped frames, 2D backgrounds and movie PVs included. |
 | | | Under the DivaRecomp runtime (Quest), the runtime also throttles the PV's game-side work: characters' animation and physics, stage, effects and camera tasks. While frames run late, the PV is split over two frames: one updates the PV (covering both frames' time), the next builds its draw lists and draws it, so each frame carries about half the PV's cost. DivaLinux then follows the runtime's schedule (`DIVARECOMP_PV_SYNC`), and the same `pv_frame_skip` value sets the runtime's mode. |
+| | | DivaVK also logs the GPU's time per presented frame every 10 seconds (`GPU: … ms per frame`), from Vulkan timestamps around each frame's commands. If it's above the frame time, the GPU is the limit: lower the resolution or the heavier effects. |
 | `perf_log` | 1 | Every 10 seconds, log a line with fps, average and worst frame time, how often the PV was drawn, and render CPU time split into PV and HUD. If a slow PV's frames are long but render CPU is small, the time goes to the game's own work (animation, effects), which frame skipping can't remove. |
 
 A movie that can't be opened (missing, or not a format FFmpeg reads) is logged and played as
@@ -51,6 +52,10 @@ On the first run, if `DivaLinux.ini` doesn't exist yet, it is created from `Diva
 
 DivaMovie's other options (software/hybrid decoding, interop emulation, debug) are gone: they
 controlled Media Foundation and D3D9 paths that DivaLinux doesn't use.
+
+Environment switches for DivaVK: `DIVAVK_PRESENT_MODE=fifo|mailbox|immediate` picks the window's present
+mode. `DIVAVK_WINDOW_PRESENT=0` skips presenting to the window while OpenXR shows the frames: in a headset
+nobody sees the window, and its copy and image wait only cost time.
 
 ## Mouse pointer: `[cursor]`
 
