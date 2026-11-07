@@ -1037,7 +1037,7 @@ extern "C" void dvk_xr_set_hud_texture(uint32_t texture) {
     const uint32_t before = s_xr->hud_tex.exchange(texture);
     if (texture && !before) {
         // DIVAVK_HUD_DEPTH_CM: how far in front of the picture the HUD layer floats
-        if (const char* e = getenv("DIVAVK_HUD_DEPTH_CM")) {
+        if (const char* e = env("DIVAVK_HUD_DEPTH_CM")) {
             const float cm = (float)atof(e);
             if (cm >= 0.0f && cm <= 200.0f)
                 s_xr->hud_depth = cm / 100.0f;

@@ -13,6 +13,9 @@
 #include "xr.hpp"
 #include <set>
 #include <mutex>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 extern "C" bool dvk_xr_active(void);
 
@@ -35,6 +38,23 @@ namespace dvk {
             s_log_func(buf, s_log_user);
         else
             fprintf(stderr, "[DivaVK] %s\n", buf);
+    }
+
+    const char* env(const char* name) {
+#ifdef _WIN32
+        static std::mutex mtx;
+        static std::unordered_map<std::string, std::string> values;
+        char buf[512];
+        const DWORD n = GetEnvironmentVariableA(name, buf, sizeof(buf));
+        if (!n || n >= sizeof(buf))
+            return getenv(name);
+        std::lock_guard<std::mutex> lock(mtx);
+        std::string& v = values[name];
+        v.assign(buf, n);
+        return v.c_str();
+#else
+        return getenv(name);
+#endif
     }
 
     std::atomic<const char*> g_stage{ "starting" };
@@ -669,7 +689,7 @@ namespace dvk {
         // In the headset the OpenXR thread shows the frames from its own staging images; the
         // window isn't seen. DIVAVK_WINDOW_PRESENT=0 skips its copy and its image wait then.
         if (window_present < 0) {
-            const char* wp = getenv("DIVAVK_WINDOW_PRESENT");
+            const char* wp = env("DIVAVK_WINDOW_PRESENT");
             window_present = !(wp && !strcmp(wp, "0"));
             if (!window_present)
                 log("Window present: off while OpenXR shows the frames (DIVAVK_WINDOW_PRESENT=0)");
@@ -885,7 +905,7 @@ namespace dvk {
                         break;
                 }
         // DIVAVK_PRESENT_MODE=fifo|mailbox|immediate forces a mode when the surface offers it.
-        if (const char* forced = getenv("DIVAVK_PRESENT_MODE")) {
+        if (const char* forced = env("DIVAVK_PRESENT_MODE")) {
             VkPresentModeKHR want = !strcmp(forced, "immediate") ? VK_PRESENT_MODE_IMMEDIATE_KHR
                 : !strcmp(forced, "mailbox") ? VK_PRESENT_MODE_MAILBOX_KHR : VK_PRESENT_MODE_FIFO_KHR;
             for (VkPresentModeKHR m : modes)

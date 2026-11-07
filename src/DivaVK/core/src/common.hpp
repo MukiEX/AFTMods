@@ -69,6 +69,10 @@ namespace dvk {
 #define DVK_STAGE(s) (::dvk::g_stage.store((s), std::memory_order_relaxed))
 
     void log(const char* fmt, ...);
+    // An environment switch (DIVAVK_*). On Windows it asks the process environment
+    // (GetEnvironmentVariableA), not the C runtime's copy made at start-up: a host that
+    // sets a switch after that (the DivaRecomp runtime on Quest) is only seen this way.
+    const char* env(const char* name);
     void log_once(const char* key, const char* fmt, ...);
 
     inline void hash_combine(uint64_t& seed, uint64_t v) {
