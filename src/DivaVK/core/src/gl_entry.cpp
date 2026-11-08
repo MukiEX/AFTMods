@@ -1623,7 +1623,11 @@ static bool blit_color_by_draw(Context& c, GLint sx0, GLint sy0, GLint sx1, GLin
     dvk_glUseProgram(full && !s_blit_same_off ? s_blit_prog_full : s_blit_prog);
     dvk_glBindVertexArray(0);
     dvk_glViewport(std::min(dx0, dx1), std::min(dy0, dy1), std::abs(dx1 - dx0), std::abs(dy1 - dy0));
-    dvk_glDrawArrays(GL_TRIANGLES, 0, 6);
+    // one draw per triangle: on the Odin 3 (Adreno 830) the right eye's copy came out wrong in
+    // its second triangle, whatever that triangle's fragment shader read (the uniform block,
+    // gl_FragCoord, interpolated coordinates): each draw's first triangle was always right
+    dvk_glDrawArrays(GL_TRIANGLES, 0, 3);
+    dvk_glDrawArrays(GL_TRIANGLES, 3, 3);
     dvk_pop_gl_state();
     return true;
 }
