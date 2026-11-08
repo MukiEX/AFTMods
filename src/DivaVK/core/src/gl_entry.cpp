@@ -1431,7 +1431,8 @@ static const ProcEntry s_procs[] = {
    Used when the source is a single-sample, non-integer colour texture at level 0 (renderbuffers,
    multisample resolves, depth and stencil keep the transfer path). DIVAVK_BLIT_DRAW=0: off. */
 static std::mutex s_blit_m;
-static GLuint s_blit_prog = 0, s_blit_prog_same = 0, s_blit_samp[2] = {};
+static GLuint s_blit_prog = 0, s_blit_prog_same[2] = {}, s_blit_samp[2] = {};
+static thread_local unsigned s_blit_same_n = 0;   // which of the two same-rectangle programs next
 static int s_blit_state = 0;   // 0 untried, 1 ready, -1 off or failed
 static bool s_blit_same_off = false;   // DIVAVK_BLIT_SAME=0: same-rectangle copies use the general program
 static thread_local GLuint s_blit_ubo = 0;
@@ -1502,9 +1503,22 @@ static bool blit_draw_ready() {
         dvk_glDeleteShader(sh[1]);
         return ok ? prog : 0;
     };
+    // Two copies of it, used in turn: with one, the Odin 3 still showed the right eye's copy
+    // with half of it a flat colour, the left picture's corner texel: as if the second of two
+    // draws with the same pipeline in a frame had, in one of its triangles, the first one's
+    // texture and a coordinate of 0. (The second samples at the texel's centre with the
+    // nearest sampler instead of fetching: the same result, a different shader.)
+    static const char* FS_SAME2 =
+        "#version 430 core\n"
+        "layout(binding = 0) uniform sampler2D g_src;\n"
+        "layout(location = 0) out vec4 result;\n"
+        "void main() {\n"
+        "    result = textureLod(g_src, gl_FragCoord.xy / vec2(textureSize(g_src, 0)), 0.0);\n"
+        "}\n";
     GLuint prog = build(VS, FS);
-    s_blit_prog_same = build(VS, FS_SAME);
-    const GLint ok = prog && s_blit_prog_same;
+    s_blit_prog_same[0] = build(VS, FS_SAME);
+    s_blit_prog_same[1] = build(VS, FS_SAME2);
+    const GLint ok = prog && s_blit_prog_same[0] && s_blit_prog_same[1];
     if (!ok) {
         log("Colour blits: the draw program failed; using transfers");
         return false;
@@ -1606,7 +1620,7 @@ static bool blit_color_by_draw(Context& c, GLint sx0, GLint sy0, GLint sx1, GLin
     // the same rectangle in and out, inside the source: texel = pixel, no uniform block
     const bool same = sx0 == dx0 && sy0 == dy0 && sx1 == dx1 && sy1 == dy1 && sx1 > sx0 && sy1 > sy0
         && sx0 >= 0 && sy0 >= 0 && sx1 <= t->width && sy1 <= t->height;
-    dvk_glUseProgram(same && !s_blit_same_off ? s_blit_prog_same : s_blit_prog);
+    dvk_glUseProgram(same && !s_blit_same_off ? s_blit_prog_same[s_blit_same_n++ & 1] : s_blit_prog);
     dvk_glBindVertexArray(0);
     dvk_glViewport(std::min(dx0, dx1), std::min(dy0, dy1), std::abs(dx1 - dx0), std::abs(dy1 - dy0));
     dvk_glDrawArrays(GL_TRIANGLES, 0, 6);
