@@ -620,6 +620,21 @@ namespace dvk {
                     (uint32_t)std::min(std::abs(sy1 - sy0), std::min(sh - r.srcOffset.y, dh - r.dstOffset.y)), 1 };
                 vkCmdResolveImage(cb, s->image, sl, d->image, dl, 1, &r);
             }
+            else if (s->format == d->format && s->samples == d->samples
+                && sx1 - sx0 == dx1 - dx0 && sy1 - sy0 == dy1 - dy0 && sx1 > sx0 && sy1 > sy0
+                && sx0 >= 0 && sy0 >= 0 && dx0 >= 0 && dy0 >= 0
+                && sx1 <= sw && sy1 <= sh && dx1 <= dw && dy1 <= dh) {
+                // Same size, same format, no flip: a copy. (Adreno 830's driver drew only one of
+                // the two triangles of such a blit: half the PV picture under the HUD showed the
+                // screen's clear colour, split along the diagonal.)
+                VkImageCopy r = {};
+                r.srcSubresource = { aspect, s_level, s_layer, 1 };
+                r.srcOffset = { sx0, sy0, 0 };
+                r.dstSubresource = { aspect, d_level, d_layer, 1 };
+                r.dstOffset = { dx0, dy0, 0 };
+                r.extent = { (uint32_t)(sx1 - sx0), (uint32_t)(sy1 - sy0), 1 };
+                vkCmdCopyImage(cb, s->image, sl, d->image, dl, 1, &r);
+            }
             else {
                 VkImageBlit b = {};
                 b.srcSubresource = { aspect, s_level, s_layer, 1 };

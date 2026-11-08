@@ -462,6 +462,34 @@ static void test_fbo_and_blit() {
     CHECK_PIXEL(2, H - 3, 255, 0, 255, 255);
     CHECK_PIXEL(W - 3, 2, 0, 255, 0, 255);
 
+    // Same-size, same-format blit (done as a copy): the whole rectangle, then an offset part
+    {
+        GLuint t2 = make_texture(64, 64, nullptr), f2;
+        glGenFramebuffers(1, &f2);
+        glBindFramebuffer(GL_FRAMEBUFFER, f2);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t2, 0);
+        glViewport(0, 0, 64, 64);
+        glClearColor(0, 0, 1, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, f2);
+        glBlitFramebuffer(0, 0, 64, 64, 0, 0, 64, 64, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, f2);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        CHECK_PIXEL(2, 2, 255, 0, 255, 255);     // both triangles of the source, corner to corner
+        CHECK_PIXEL(62, 62, 0, 255, 0, 255);
+        CHECK_PIXEL(62, 2, 0, 255, 0, 255);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, f2);
+        glBlitFramebuffer(0, 0, 16, 16, 40, 40, 56, 56, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, f2);
+        CHECK_PIXEL(42, 42, 255, 0, 255, 255);   // moved
+        CHECK_PIXEL(2, 2, 0, 0, 255, 255);       // untouched outside it
+        CHECK_PIXEL(60, 60, 0, 0, 255, 255);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    }
+
     // MSAA renderbuffer -> resolve blit -> texture
     GLuint rb, msfbo;
     glGenRenderbuffers(1, &rb);
