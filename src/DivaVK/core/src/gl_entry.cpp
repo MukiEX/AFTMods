@@ -1431,9 +1431,8 @@ static const ProcEntry s_procs[] = {
    Used when the source is a single-sample, non-integer colour texture at level 0 (renderbuffers,
    multisample resolves, depth and stencil keep the transfer path). DIVAVK_BLIT_DRAW=0: off. */
 static std::mutex s_blit_m;
-static GLuint s_blit_prog = 0, s_blit_prog_full = 0, s_blit_samp[2] = {};
+static GLuint s_blit_prog = 0, s_blit_samp[2] = {};
 static int s_blit_state = 0;   // 0 untried, 1 ready, -1 off or failed
-static bool s_blit_same_off = false;   // DIVAVK_BLIT_SAME=0: whole-texture copies use the general program
 static thread_local GLuint s_blit_ubo = 0;
 
 static bool blit_draw_ready() {
@@ -1469,56 +1468,26 @@ static bool blit_draw_ready() {
         "    if (u.size.z > 0.5) result = textureLod(g_src, s / u.size.xy, 0.0);\n"
         "    else result = texelFetch(g_src, clamp(ivec2(floor(s)), ivec2(0), ivec2(u.size.xy) - 1), 0);\n"
         "}\n";
-    // The whole texture into the same rectangle (the PV picture's save and its copy back under
-    // the HUD): texture coordinates from the vertex shader, like the game's own copy shaders,
-    // with no uniform block and no gl_FragCoord. On the Odin 3 (Adreno 830) the right eye's
-    // copy came out wrong in one of its two triangles whatever the fragment shader did with
-    // gl_FragCoord and the block (zeros read from the block, then the left picture's corner
-    // texel, then a magnified corner of the picture).
-    static const char* VS_FULL =
-        "#version 430 core\n"
-        "layout(location = 0) out vec2 v_uv;\n"
-        "void main() {\n"
-        "    const int c[6] = int[6](0, 1, 2, 2, 1, 3);\n"
-        "    int k = c[gl_VertexIndex];\n"
-        "    vec2 p = vec2(float(k & 1), float(k >> 1));\n"
-        "    v_uv = p;\n"
-        "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
-        "}\n";
-    static const char* FS_FULL =
-        "#version 430 core\n"
-        "layout(binding = 0) uniform sampler2D g_src;\n"
-        "layout(location = 0) in vec2 v_uv;\n"
-        "layout(location = 0) out vec4 result;\n"
-        "void main() {\n"
-        "    result = textureLod(g_src, v_uv, 0.0);\n"
-        "}\n";
-    auto build = [](const char* vs, const char* fs) -> GLuint {
-        GLuint sh[2] = { dvk_glCreateShader(GL_VERTEX_SHADER), dvk_glCreateShader(GL_FRAGMENT_SHADER) };
-        const char* src[2] = { vs, fs };
-        GLint ok = 1;
-        for (int i = 0; i < 2; i++) {
-            dvk_glShaderSource(sh[i], 1, &src[i], nullptr);
-            dvk_glCompileShader(sh[i]);
-            GLint st = 0;
-            dvk_glGetShaderiv(sh[i], GL_COMPILE_STATUS, &st);
-            ok &= st;
-        }
-        GLuint prog = 0;
-        if (ok) {
-            prog = dvk_glCreateProgram();
-            dvk_glAttachShader(prog, sh[0]);
-            dvk_glAttachShader(prog, sh[1]);
-            dvk_glLinkProgram(prog);
-            dvk_glGetProgramiv(prog, GL_LINK_STATUS, &ok);
-        }
-        dvk_glDeleteShader(sh[0]);
-        dvk_glDeleteShader(sh[1]);
-        return ok ? prog : 0;
-    };
-    GLuint prog = build(VS, FS);
-    s_blit_prog_full = build(VS_FULL, FS_FULL);
-    const GLint ok = prog && s_blit_prog_full;
+    GLuint sh[2] = { dvk_glCreateShader(GL_VERTEX_SHADER), dvk_glCreateShader(GL_FRAGMENT_SHADER) };
+    const char* src[2] = { VS, FS };
+    GLint ok = 1;
+    for (int i = 0; i < 2; i++) {
+        dvk_glShaderSource(sh[i], 1, &src[i], nullptr);
+        dvk_glCompileShader(sh[i]);
+        GLint st = 0;
+        dvk_glGetShaderiv(sh[i], GL_COMPILE_STATUS, &st);
+        ok &= st;
+    }
+    GLuint prog = 0;
+    if (ok) {
+        prog = dvk_glCreateProgram();
+        dvk_glAttachShader(prog, sh[0]);
+        dvk_glAttachShader(prog, sh[1]);
+        dvk_glLinkProgram(prog);
+        dvk_glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    }
+    dvk_glDeleteShader(sh[0]);
+    dvk_glDeleteShader(sh[1]);
     if (!ok) {
         log("Colour blits: the draw program failed; using transfers");
         return false;
@@ -1533,8 +1502,6 @@ static bool blit_draw_ready() {
     }
     s_blit_prog = prog;
     s_blit_state = 1;
-    if (const char* e = env("DIVAVK_BLIT_SAME"))
-        s_blit_same_off = !strcmp(e, "0");
     log("Colour blits: drawn (a render pass, not a transfer; DIVAVK_BLIT_DRAW=0 for transfers)");
     return true;
 }
@@ -1617,17 +1584,10 @@ static bool blit_color_by_draw(Context& c, GLint sx0, GLint sy0, GLint sx1, GLin
     dvk_glActiveTexture(GL_TEXTURE0);
     dvk_glBindTexture(GL_TEXTURE_2D, a.texture);
     dvk_glBindSampler(0, s_blit_samp[linear ? 1 : 0]);
-    // the whole texture into the same rectangle: texture coordinates from the vertex shader
-    const bool full = sx0 == 0 && sy0 == 0 && sx1 == t->width && sy1 == t->height
-        && dx0 == 0 && dy0 == 0 && dx1 == t->width && dy1 == t->height;
-    dvk_glUseProgram(full && !s_blit_same_off ? s_blit_prog_full : s_blit_prog);
+    dvk_glUseProgram(s_blit_prog);
     dvk_glBindVertexArray(0);
     dvk_glViewport(std::min(dx0, dx1), std::min(dy0, dy1), std::abs(dx1 - dx0), std::abs(dy1 - dy0));
-    // one draw per triangle: on the Odin 3 (Adreno 830) the right eye's copy came out wrong in
-    // its second triangle, whatever that triangle's fragment shader read (the uniform block,
-    // gl_FragCoord, interpolated coordinates): each draw's first triangle was always right
-    dvk_glDrawArrays(GL_TRIANGLES, 0, 3);
-    dvk_glDrawArrays(GL_TRIANGLES, 3, 3);
+    dvk_glDrawArrays(GL_TRIANGLES, 0, 6);
     dvk_pop_gl_state();
     return true;
 }
