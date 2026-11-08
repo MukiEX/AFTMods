@@ -996,10 +996,16 @@ static void DVK_APIENTRY dvk_glClearBufferfv(GLenum buf, GLint db, const GLfloat
 static void DVK_APIENTRY dvk_glClearBufferiv(GLenum buf, GLint db, const GLint* v) { CTX; c.clear_buffer(buf, db, nullptr, v); }
 static void DVK_APIENTRY dvk_glClearBufferfi(GLenum buf, GLint db, GLfloat d, GLint s) { CTX; c.clear_buffer(buf, db, &d, &s); }
 
+static bool blit_color_by_draw(Context& c, GLint sx0, GLint sy0, GLint sx1, GLint sy1,
+    GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLenum filter);
+
 static void DVK_APIENTRY dvk_glBlitFramebuffer(GLint sx0, GLint sy0, GLint sx1, GLint sy1,
     GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLbitfield mask, GLenum filter) {
     CTX;
-    c.blit_framebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, mask, filter);
+    if ((mask & GL_COLOR_BUFFER_BIT) && blit_color_by_draw(c, sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, filter))
+        mask &= ~GL_COLOR_BUFFER_BIT;
+    if (mask)
+        c.blit_framebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, mask, filter);
 }
 
 static void DVK_APIENTRY dvk_glReadPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type, void* out) {
@@ -1415,6 +1421,149 @@ static const ProcEntry s_procs[] = {
 #undef A
 
 // ------------------------------------------------------------------ logging stubs
+
+/* Colour blits as draws: a full-screen triangle sampling the read framebuffer's colour
+   texture into the draw framebuffer, through the ordinary GL path. On an Odin 3 (Adreno 830)
+   a transfer that read an image the previous transfer had written (the game's copy into the
+   window's framebuffer, then the present blit; the PV picture's slot, then the copy under the
+   HUD) got only the first of the two triangles the driver draws it with, whatever the barriers
+   between them. A render pass in between (the leek pointer, when it's showing) avoided it.
+   Used when the source is a single-sample, non-integer colour texture at level 0 (renderbuffers,
+   multisample resolves, depth and stencil keep the transfer path). DIVAVK_BLIT_DRAW=0: off. */
+static std::mutex s_blit_m;
+static GLuint s_blit_prog = 0, s_blit_samp[2] = {};
+static int s_blit_state = 0;   // 0 untried, 1 ready, -1 off or failed
+static thread_local GLuint s_blit_ubo = 0;
+
+static bool blit_draw_ready() {
+    std::lock_guard<std::mutex> l(s_blit_m);
+    if (s_blit_state)
+        return s_blit_state > 0;
+    s_blit_state = -1;
+    if (const char* e = env("DIVAVK_BLIT_DRAW"))
+        if (!strcmp(e, "0")) {
+            log("Colour blits: transfers (DIVAVK_BLIT_DRAW=0)");
+            return false;
+        }
+    static const char* VS =
+        "#version 430 core\n"
+        "void main() {\n"
+        "    vec2 p = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
+        "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+        "}\n";
+    static const char* FS =
+        "#version 430 core\n"
+        "layout(std140, binding = 15) uniform DvkBlit { vec4 dst; vec4 src; vec4 size; } u;\n"
+        "layout(binding = 0) uniform sampler2D g_src;\n"
+        "layout(location = 0) out vec4 result;\n"
+        "void main() {\n"
+        "    vec2 t = (gl_FragCoord.xy - u.dst.xy) / (u.dst.zw - u.dst.xy);\n"
+        "    vec2 s = u.src.xy + t * (u.src.zw - u.src.xy);\n"
+        "    if (u.size.z > 0.5) result = textureLod(g_src, s / u.size.xy, 0.0);\n"
+        "    else result = texelFetch(g_src, clamp(ivec2(floor(s)), ivec2(0), ivec2(u.size.xy) - 1), 0);\n"
+        "}\n";
+    GLuint sh[2] = { dvk_glCreateShader(GL_VERTEX_SHADER), dvk_glCreateShader(GL_FRAGMENT_SHADER) };
+    const char* src[2] = { VS, FS };
+    GLint ok = 1;
+    for (int i = 0; i < 2; i++) {
+        dvk_glShaderSource(sh[i], 1, &src[i], nullptr);
+        dvk_glCompileShader(sh[i]);
+        GLint st = 0;
+        dvk_glGetShaderiv(sh[i], GL_COMPILE_STATUS, &st);
+        ok &= st;
+    }
+    GLuint prog = 0;
+    if (ok) {
+        prog = dvk_glCreateProgram();
+        dvk_glAttachShader(prog, sh[0]);
+        dvk_glAttachShader(prog, sh[1]);
+        dvk_glLinkProgram(prog);
+        dvk_glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    }
+    dvk_glDeleteShader(sh[0]);
+    dvk_glDeleteShader(sh[1]);
+    if (!ok) {
+        log("Colour blits: the draw program failed; using transfers");
+        return false;
+    }
+    dvk_glGenSamplers(2, s_blit_samp);
+    for (int i = 0; i < 2; i++) {
+        GLint f = i ? GL_LINEAR : GL_NEAREST;
+        dvk_glSamplerParameteri(s_blit_samp[i], GL_TEXTURE_MIN_FILTER, f);
+        dvk_glSamplerParameteri(s_blit_samp[i], GL_TEXTURE_MAG_FILTER, f);
+        dvk_glSamplerParameteri(s_blit_samp[i], GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        dvk_glSamplerParameteri(s_blit_samp[i], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    s_blit_prog = prog;
+    s_blit_state = 1;
+    log("Colour blits: drawn (a render pass, not a transfer; DIVAVK_BLIT_DRAW=0 for transfers)");
+    return true;
+}
+
+static bool blit_color_by_draw(Context& c, GLint sx0, GLint sy0, GLint sx1, GLint sy1,
+    GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLenum filter) {
+    if (!c.read_fbo || sx0 == sx1 || sy0 == sy1 || dx0 == dx1 || dy0 == dy1)
+        return false;
+    FramebufferObj* rf = c.framebuffers.get(c.read_fbo);
+    if (!rf)
+        return false;
+    uint32_t ri = rf->read_buffer >= GL_COLOR_ATTACHMENT0 ? rf->read_buffer - GL_COLOR_ATTACHMENT0 : 0;
+    if (ri >= MAX_COLOR_ATTACHMENTS)
+        return false;
+    const Attachment& a = rf->color[ri];
+    if (!a.texture || a.renderbuffer || a.level != 0 || a.layer != 0)
+        return false;
+    TextureObj* t = c.textures.get(a.texture);
+    if (!t || !t->image || t->target != GL_TEXTURE_2D || t->samples != 1 || !t->format
+        || t->format->depth || t->format->stencil || t->format->is_int || t->base_level != 0)
+        return false;
+    if (c.draw_fbo == c.read_fbo)
+        return false;   // the same framebuffer: a feedback loop as a draw
+    if (c.draw_fbo) {
+        FramebufferObj* df = c.framebuffers.get(c.draw_fbo);
+        if (!df)
+            return false;
+        for (const Attachment& d : df->color)
+            if (d.texture == a.texture && !d.renderbuffer)
+                return false;
+    }
+    if (!blit_draw_ready())
+        return false;
+
+    const bool scaled = std::abs(sx1 - sx0) != std::abs(dx1 - dx0) || std::abs(sy1 - sy0) != std::abs(dy1 - dy0);
+    const bool linear = filter == GL_LINEAR && scaled;
+    const float block[12] = {
+        (float)dx0, (float)dy0, (float)dx1, (float)dy1,
+        (float)sx0, (float)sy0, (float)sx1, (float)sy1,
+        (float)t->width, (float)t->height, linear ? 1.0f : 0.0f, 0.0f,
+    };
+    dvk_push_gl_state();   // everything below is undone by the pop
+    const GLuint read = c.read_fbo, draw = c.draw_fbo;
+    if (!s_blit_ubo)
+        dvk_glGenBuffers(1, &s_blit_ubo);
+    dvk_glBindBuffer(GL_UNIFORM_BUFFER, s_blit_ubo);
+    dvk_glBufferData(GL_UNIFORM_BUFFER, sizeof(block), block, GL_DYNAMIC_DRAW);
+    dvk_glBindBufferBase(GL_UNIFORM_BUFFER, 15, s_blit_ubo);
+    dvk_glBindFramebuffer(GL_READ_FRAMEBUFFER, read);
+    dvk_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw);
+    dvk_glDisable(GL_BLEND);
+    dvk_glDisable(GL_CULL_FACE);
+    dvk_glDisable(GL_DEPTH_TEST);
+    dvk_glDisable(GL_STENCIL_TEST);
+    dvk_glDisable(GL_SCISSOR_TEST);
+    dvk_glDisable(GL_PRIMITIVE_RESTART);
+    dvk_glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    dvk_glDepthMask(GL_FALSE);
+    dvk_glActiveTexture(GL_TEXTURE0);
+    dvk_glBindTexture(GL_TEXTURE_2D, a.texture);
+    dvk_glBindSampler(0, s_blit_samp[linear ? 1 : 0]);
+    dvk_glUseProgram(s_blit_prog);
+    dvk_glBindVertexArray(0);
+    dvk_glViewport(std::min(dx0, dx1), std::min(dy0, dy1), std::abs(dx1 - dx0), std::abs(dy1 - dy0));
+    dvk_glDrawArrays(GL_TRIANGLES, 0, 3);
+    dvk_pop_gl_state();
+    return true;
+}
 
 static const char* s_stub_names[] = {
 #include "gl_names.inc"
