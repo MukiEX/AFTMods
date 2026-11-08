@@ -634,6 +634,7 @@ namespace dvk {
                 r.dstOffset = { dx0, dy0, 0 };
                 r.extent = { (uint32_t)(sx1 - sx0), (uint32_t)(sy1 - sy0), 1 };
                 vkCmdCopyImage(cb, s->image, sl, d->image, dl, 1, &r);
+                log_once("blit_as_copy", "Same-size blits are done as image copies (%dx%d first)", sx1 - sx0, sy1 - sy0);
             }
             else {
                 VkImageBlit b = {};
