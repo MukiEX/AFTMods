@@ -430,6 +430,26 @@ static void pv_thread_draw() {
     r->ctrl();
     r->render_manager_cam = t.cam;
 
+    // What render_all does at the start of every frame: this context's cached GL state back
+    // in step with GL, and the baseline render state the passes expect (colour writes on,
+    // depth test LEQUAL with writes). Without it a pass that left colour writes off carried
+    // into the next picture: objects drew depth only, as black holes. (Not framebuffer 0:
+    // that's the window's image, the game thread's.)
+    gl_state.get();
+    {
+        render_data_context rend_data_ctx(GL_REND_STATE_PRE_3D);
+        rend_data_ctx.state.get();
+        rend_data_ctx.state.set_color_mask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        rend_data_ctx.state.enable_depth_test();
+        rend_data_ctx.state.set_depth_func(GL_LEQUAL);
+        rend_data_ctx.state.set_depth_mask(GL_TRUE);
+        // and what the HUD's sprite pass leaves behind every frame on one thread
+        rend_data_ctx.state.enable_cull_face();
+        rend_data_ctx.state.disable_blend();
+        rend_data_ctx.state.bind_framebuffer(0);
+        rend_data_ctx.state.finish();
+    }
+
     {
         // what the game thread's rndpass_pre_proc did for the PV, now for this picture only
         render_data_context rend_data_ctx(GL_REND_STATE_PRE_3D);
@@ -509,7 +529,16 @@ static void pv_thread_draw() {
     sprite_manager_post_draw();
     sprite_manager_thread_clear_lists();
     {
+        // and what render_all does at its end
         render_data_context rend_data_ctx(GL_REND_STATE_POST_2D);
+        rend_data_ctx.state.get();
+        rend_data_ctx.state.bind_vertex_array(0);
+        rend_data_ctx.state.disable_primitive_restart();
+        rend_data_ctx.state.bind_uniform_buffer(0);
+        for (int32_t i = 0; i < 5; i++)
+            rend_data_ctx.state.bind_uniform_buffer_base(i, 0);
+        rend_data_ctx.state.bind_shader_storage_buffer(0);
+        rend_data_ctx.state.bind_shader_storage_buffer_base(0, 0);
         rend_data_ctx.state.finish();
     }
 
