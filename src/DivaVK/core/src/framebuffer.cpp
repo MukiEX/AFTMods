@@ -557,8 +557,21 @@ namespace dvk {
     }
 
     // Transition helper for two images that may be the same image.
+    // Every transfer is fenced off from everything before and after it with a full memory
+    // barrier, even when no layout changes (a texture whose resting layout is already the
+    // transfer's skips its image barrier): a copy into the default framebuffer followed by
+    // the present blit, or a blit followed by another, ran into each other on Adreno 830.
+    static void transfer_fence(VkCommandBuffer cb) {
+        VkMemoryBarrier mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+        mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            0, 1, &mb, 0, nullptr, 0, nullptr);
+    }
+
     static void begin_transfer(Context& ctx, VkCommandBuffer cb, TextureObj* src, TextureObj* dst,
         VkImageLayout& src_layout, VkImageLayout& dst_layout) {
+        transfer_fence(cb);
         if (src == dst) {
             src_layout = dst_layout = VK_IMAGE_LAYOUT_GENERAL;
             ctx.texture_transition(cb, src, src->rest_layout, VK_IMAGE_LAYOUT_GENERAL);
@@ -572,12 +585,13 @@ namespace dvk {
 
     static void end_transfer(Context& ctx, VkCommandBuffer cb, TextureObj* src, TextureObj* dst,
         VkImageLayout src_layout, VkImageLayout dst_layout) {
-        if (src == dst) {
+        if (src == dst)
             ctx.texture_transition(cb, src, VK_IMAGE_LAYOUT_GENERAL, src->rest_layout);
-            return;
+        else {
+            ctx.texture_transition(cb, src, src_layout, src->rest_layout);
+            ctx.texture_transition(cb, dst, dst_layout, dst->rest_layout);
         }
-        ctx.texture_transition(cb, src, src_layout, src->rest_layout);
-        ctx.texture_transition(cb, dst, dst_layout, dst->rest_layout);
+        transfer_fence(cb);
     }
 
     void Context::blit_framebuffer(GLint sx0, GLint sy0, GLint sx1, GLint sy1,

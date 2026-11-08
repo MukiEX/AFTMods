@@ -39,9 +39,13 @@ namespace dvk {
         if (!t->image || (from == to && from != VK_IMAGE_LAYOUT_UNDEFINED))
             return;
         VkImageMemoryBarrier b = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
-        b.srcAccessMask = access_for_layout(from) & (VK_ACCESS_TRANSFER_WRITE_BIT
-            | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
-        b.dstAccessMask = access_for_layout(to);
+        // Broad on purpose: any earlier write, for any later access. Adreno 830 (Odin 3) didn't
+        // finish a copy's writes before the next transfer read them with the narrow masks (the
+        // window showed half the last copy into the default framebuffer, split on the diagonal).
+        b.srcAccessMask = (access_for_layout(from) & (VK_ACCESS_TRANSFER_WRITE_BIT
+            | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT))
+            | VK_ACCESS_MEMORY_WRITE_BIT;
+        b.dstAccessMask = access_for_layout(to) | VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
         b.oldLayout = from;
         b.newLayout = to;
         b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
