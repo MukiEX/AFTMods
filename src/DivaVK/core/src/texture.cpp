@@ -149,9 +149,11 @@ namespace dvk {
 
         uint32_t max_samples = fi->depth ? props.limits.framebufferDepthSampleCounts
             : props.limits.framebufferColorSampleCounts;
+        // the most samples supported up to the request (counts can skip: llvmpipe offers 1 and 4)
         uint32_t s = 1;
-        while (s * 2 <= std::max(samples, 1u) && (max_samples & (s * 2)))
-            s *= 2;
+        for (uint32_t c = 2; c <= std::max(samples, 1u); c *= 2)
+            if (max_samples & c)
+                s = c;
         t->samples = s;
         if (s > 1)
             t->levels = 1;

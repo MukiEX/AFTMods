@@ -10,6 +10,8 @@
 */
 
 #include "context.hpp"
+#include <map>
+#include <tuple>
 
 namespace dvk {
     struct FbEntry {
@@ -594,6 +596,109 @@ namespace dvk {
         transfer_fence(cb);
     }
 
+    // A whole-image multisample resolve done by a render pass (its resolve attachment) rather
+    // than vkCmdResolveImage: Adreno 830 drew half of transfers that read the last one's output,
+    // and the MSAA resolve into the PV's screen buffer was the last full-screen one left (the
+    // right eye in SBS showed the old picture in one triangle). DIVAVK_RESOLVE_PASS=0: off.
+    static bool resolve_by_pass(Context& ctx, VkCommandBuffer cb, TextureObj* s, TextureObj* d,
+        uint32_t d_level, uint32_t d_layer) {
+        static int on = -1;
+        if (on < 0) {
+            const char* e = env("DIVAVK_RESOLVE_PASS");
+            on = !(e && e[0] == '0');
+            log(on ? "Multisample resolves: by a render pass (DIVAVK_RESOLVE_PASS=0 for transfers)"
+                   : "Multisample resolves: transfers (DIVAVK_RESOLVE_PASS=0)");
+        }
+        if (!on || !s->image || !d->image || !d->renderable || s->format->vk != d->format->vk
+            || s->format->depth || s->format->stencil)
+            return false;
+        const VkFormat fmt = s->format->vk;
+        const VkImageLayout sl = s->rest_layout, dl = d->rest_layout;
+        if (sl == VK_IMAGE_LAYOUT_UNDEFINED || dl == VK_IMAGE_LAYOUT_UNDEFINED)
+            return false;
+
+        static std::map<std::tuple<VkFormat, uint32_t, VkImageLayout, VkImageLayout>, VkRenderPass> passes;
+        VkRenderPass rp = VK_NULL_HANDLE;
+        {
+            std::lock_guard<std::mutex> l(ctx.sh->cache_mutex);
+            auto key = std::make_tuple(fmt, s->samples, sl, dl);
+            auto it = passes.find(key);
+            if (it != passes.end())
+                rp = it->second;
+            else {
+                VkAttachmentDescription atts[2] = {};
+                atts[0].format = fmt;
+                atts[0].samples = (VkSampleCountFlagBits)s->samples;
+                atts[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+                atts[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+                atts[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+                atts[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+                atts[0].initialLayout = atts[0].finalLayout = sl;
+                atts[1] = atts[0];
+                atts[1].samples = VK_SAMPLE_COUNT_1_BIT;
+                atts[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;   // all of it is written
+                atts[1].initialLayout = atts[1].finalLayout = dl;
+                VkAttachmentReference cref = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+                VkAttachmentReference rref = { 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+                VkSubpassDescription sub = {};
+                sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+                sub.colorAttachmentCount = 1;
+                sub.pColorAttachments = &cref;
+                sub.pResolveAttachments = &rref;
+                VkSubpassDependency deps[2] = {};
+                deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+                deps[0].dstSubpass = 0;
+                deps[0].srcStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                deps[0].dstStageMask = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT;
+                deps[0].srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+                deps[0].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                deps[1].srcSubpass = 0;
+                deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+                deps[1].srcStageMask = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT;
+                deps[1].dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                deps[1].srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+                deps[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                VkRenderPassCreateInfo rpci = { VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
+                rpci.attachmentCount = 2;
+                rpci.pAttachments = atts;
+                rpci.subpassCount = 1;
+                rpci.pSubpasses = &sub;
+                rpci.dependencyCount = 2;
+                rpci.pDependencies = deps;
+                if (vkCreateRenderPass(ctx.device, &rpci, nullptr, &rp) != VK_SUCCESS)
+                    return false;
+                passes[key] = rp;
+            }
+        }
+
+        VkImageView views[2] = { ctx.texture_attach_view(s, 0, 0), ctx.texture_attach_view(d, d_level, d_layer) };
+        if (!views[0] || !views[1])
+            return false;
+        VkFramebufferCreateInfo fci = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
+        fci.renderPass = rp;
+        fci.attachmentCount = 2;
+        fci.pAttachments = views;
+        fci.width = (uint32_t)s->width;
+        fci.height = (uint32_t)s->height;
+        fci.layers = 1;
+        VkFramebuffer fb = VK_NULL_HANDLE;
+        if (vkCreateFramebuffer(ctx.device, &fci, nullptr, &fb) != VK_SUCCESS)
+            return false;
+        VkDevice dev = ctx.device;
+        ctx.defer_destroy([dev, fb]() { vkDestroyFramebuffer(dev, fb, nullptr); });
+
+        VkRenderPassBeginInfo rbi = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+        rbi.renderPass = rp;
+        rbi.framebuffer = fb;
+        rbi.renderArea = { { 0, 0 }, { (uint32_t)s->width, (uint32_t)s->height } };
+        vkCmdBeginRenderPass(cb, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdEndRenderPass(cb);
+        s->last_used_serial = d->last_used_serial = ctx.serial;
+        ctx.stats.passes++;
+        log_once("resolve_pass", "Multisample resolve by a render pass (%dx%d, %u samples first)", s->width, s->height, s->samples);
+        return true;
+    }
+
     void Context::blit_framebuffer(GLint sx0, GLint sy0, GLint sx1, GLint sy1,
         GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLbitfield mask, GLenum filter) {
         sync_point(*this);
@@ -618,6 +723,12 @@ namespace dvk {
                 return;
             int32_t sw = std::max(s->width >> s_level, 1), sh = std::max(s->height >> s_level, 1);
             int32_t dw = std::max(d->width >> d_level, 1), dh = std::max(d->height >> d_level, 1);
+            if (s->samples > 1 && d->samples == 1 && aspect == VK_IMAGE_ASPECT_COLOR_BIT
+                && s_level == 0 && s_layer == 0 && sw == dw && sh == dh
+                && sx0 == 0 && sy0 == 0 && sx1 == sw && sy1 == sh
+                && dx0 == 0 && dy0 == 0 && dx1 == dw && dy1 == dh
+                && resolve_by_pass(*this, cb, s, d, d_level, d_layer))
+                return;
             VkImageLayout sl, dl;
             begin_transfer(*this, cb, s, d, sl, dl);
 
