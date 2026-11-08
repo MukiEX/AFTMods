@@ -1519,15 +1519,21 @@ static bool blit_color_by_draw(Context& c, GLint sx0, GLint sy0, GLint sx1, GLin
     if (ri >= MAX_COLOR_ATTACHMENTS)
         return transfer("blitx_rb", "read buffer");
     const Attachment& a = rf->color[ri];
-    if (!a.texture || a.renderbuffer)
-        return transfer("blitx_rbuf", "a renderbuffer");
-    if (a.level != 0 || a.layer != 0)
+    if (!a.texture)
+        return transfer("blitx_none", "nothing attached");
+    if (!a.renderbuffer && (a.level != 0 || a.layer != 0))
         return transfer("blitx_level", "a mip level or layer");
     TextureObj* t = c.textures.get(a.texture);
     if (!t || !t->image || !t->format)
         return transfer("blitx_tex", "no texture image");
-    if (t->target != GL_TEXTURE_2D || t->samples != 1)
-        return transfer("blitx_ms", "multisample or not 2D");
+    if (t->samples != 1)
+        return transfer("blitx_ms", "multisample");
+    if (t->target != GL_TEXTURE_2D && t->target != GL_RENDERBUFFER)
+        return transfer("blitx_2d", "not a 2D texture");
+    // a renderbuffer is an image like a 2D texture's (same name table), sampled the same way when
+    // its format allows sampling (its resting layout then is the sampling one)
+    if (t->rest_layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        return transfer("blitx_nosample", "a format that can't be sampled");
     if (t->format->depth || t->format->stencil || t->format->is_int)
         return transfer("blitx_fmt", "depth, stencil or integer");
     if (t->base_level != 0)
@@ -1539,7 +1545,7 @@ static bool blit_color_by_draw(Context& c, GLint sx0, GLint sy0, GLint sx1, GLin
         if (!df)
             return transfer("blitx_nodfb", "unknown draw framebuffer");
         for (const Attachment& d : df->color)
-            if (d.texture == a.texture && !d.renderbuffer)
+            if (d.texture == a.texture)   // textures and renderbuffers share names
                 return transfer("blitx_loop", "the source texture is also the target");
     }
     if (!blit_draw_ready())

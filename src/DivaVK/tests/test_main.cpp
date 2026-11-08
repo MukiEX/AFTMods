@@ -507,6 +507,23 @@ static void test_fbo_and_blit() {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     CHECK_PIXEL(32, 32, 255, 255, 0, 255);
 
+    // single-sample renderbuffer -> blit (drawn: sampled like a texture) -> texture, half-size offset
+    GLuint rb1, rbfbo;
+    glGenRenderbuffers(1, &rb1);
+    glBindRenderbuffer(GL_RENDERBUFFER, rb1);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, 1, GL_RGBA8, 64, 64);
+    glGenFramebuffers(1, &rbfbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, rbfbo);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb1);
+    glClearColor(0, 1, 1, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, rbfbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+    glBlitFramebuffer(0, 0, 64, 64, 32, 0, 64, 64, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    CHECK_PIXEL(48, 32, 0, 255, 255, 255);
+    CHECK_PIXEL(8, 32, 255, 255, 0, 255);   // left half still the resolve's yellow
+
     // glCopyTexSubImage2D from the bound framebuffer into a texture
     GLuint dst = make_texture(64, 64, nullptr);
     glBindTexture(GL_TEXTURE_2D, dst);
