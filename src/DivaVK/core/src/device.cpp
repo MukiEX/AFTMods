@@ -205,6 +205,8 @@ namespace dvk {
             vkCreateDebugUtilsMessengerEXT(instance, &mci, nullptr, &messenger);
         }
 
+        surface_fn = ci.create_surface;
+        surface_user = ci.user;
         if (ci.create_surface)
             surface = (VkSurfaceKHR)ci.create_surface((dvk_instance)instance, ci.user);
 
@@ -873,9 +875,17 @@ namespace dvk {
                 }
                 else if (acquire_timeouts == 3 || acquire_timeouts % 600 == 0)
                     log("The window isn't returning images (%d timeouts); frames are being skipped", acquire_timeouts);
+                // still nothing: the window may have been replaced under us (Android, back from
+                // the background) without the old one saying so; make a new surface
+                if (acquire_timeouts == 8 && surface_fn) {
+                    swapchain_dirty = surface_lost = true;
+                    acquire_timeouts = 0;
+                }
             }
-            else if (r == VK_ERROR_OUT_OF_DATE_KHR) {
+            else if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_ERROR_SURFACE_LOST_KHR) {
                 swapchain_dirty = true;
+                if (r == VK_ERROR_SURFACE_LOST_KHR)
+                    surface_lost = true;
                 image_index = ~0u;
                 acquire = VK_NULL_HANDLE;
             }
@@ -1012,6 +1022,8 @@ namespace dvk {
             VkResult pr = vkQueuePresentKHR(queue, &pi);
             if (pr == VK_ERROR_OUT_OF_DATE_KHR)
                 swapchain_dirty = true;
+            else if (pr == VK_ERROR_SURFACE_LOST_KHR)
+                swapchain_dirty = surface_lost = true;
         }
         queue_lock.unlock();
         DVK_STAGE("running the game's GL calls");
@@ -1025,7 +1037,10 @@ namespace dvk {
 
         if (swapchain_dirty) {
             wait_idle_all();
-            create_swapchain();
+            // a window that went away (the app left the screen) needs a new surface; so does
+            // a swapchain that can't be made on the old one
+            if (surface_lost || !create_swapchain())
+                recreate_surface();
         }
     }
 
@@ -1069,6 +1084,24 @@ namespace dvk {
             swapchain = VK_NULL_HANDLE;
         }
         swapchain_images.clear();
+    }
+
+    bool Context::recreate_surface() {
+        surface_lost = false;
+        if (!surface_fn || !surface)
+            return false;
+        destroy_swapchain();
+        vkDestroySurfaceKHR(instance, surface, nullptr);
+        surface = (VkSurfaceKHR)surface_fn((dvk_instance)instance, surface_user);
+        if (!surface) {
+            log("The window went away and no new surface could be made");
+            return false;
+        }
+        VkBool32 ok = VK_FALSE;
+        vkGetPhysicalDeviceSurfaceSupportKHR(phys, queue_family, surface, &ok);
+        bool r = ok && create_swapchain();
+        log("The window was replaced: new surface and swapchain %s", r ? "made" : "FAILED");
+        return r;
     }
 
     bool Context::create_swapchain() {

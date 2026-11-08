@@ -654,6 +654,12 @@ namespace dvk {
 
         // Presentation
         VkSurfaceKHR surface = VK_NULL_HANDLE;
+        // the host's surface maker, kept to make a new surface when the window is replaced
+        // (Android destroys an app's window when it goes to the background)
+        dvk_create_surface_func surface_fn = nullptr;
+        void* surface_user = nullptr;
+        bool surface_lost = false;
+        bool recreate_surface();
         VkSwapchainKHR swapchain = VK_NULL_HANDLE;
         std::vector<VkImage> swapchain_images;
         VkFormat swapchain_format = VK_FORMAT_UNDEFINED;
