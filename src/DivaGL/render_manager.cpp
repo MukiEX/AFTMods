@@ -539,12 +539,41 @@ static void pv_thread_draw() {
     t.recorded.store(t.number);
 }
 
+/* DIVA_PV_THREAD_INLINE=1 (a test): the game thread draws each PV picture itself, right at
+   its handoff, as if it were the PV thread (its context, render context, lists and camera).
+   Everything is the same except the drawing happens on the game thread, in the handoff frame:
+   if the picture is right this way and wrong on the thread, the cause is something the game
+   thread changes while the PV thread draws. */
+static bool pv_inline_mode() {
+    static int v = -1;
+    if (v < 0) {
+        char buf[8];
+        const DWORD n = GetEnvironmentVariableA("DIVA_PV_THREAD_INLINE", buf, sizeof(buf));
+        v = n && n < sizeof(buf) && buf[0] == '1';
+        if (v)
+            OutputDebugStringA("[DivaLinux] PV thread inline test: the game thread draws each PV picture at its handoff\n");
+    }
+    return v > 0;
+}
+
+static gl_state_struct pv_gl_state_shared = {};
+
+static void pv_thread_bind(bool on) {
+    pv_render_thread_flag = on;
+    gl_state_thread = on ? &pv_gl_state_shared : 0;
+    gl_rend_state_thread_base = on ? GL_REND_STATE_COUNT : 0;
+    rctx_thread = on ? pvt->rctx.load() : 0;
+    disp_manager_thread = on ? pvt->dm : 0;
+    sprite_manager_thread_bind(on);
+    Glitter::UsePvScenes(on);
+    dvk_make_current(on ? pvt->ctx : nullptr);
+}
+
 static void pv_thread_main() {
     pv_thread_t& t = *pvt;
     dvk_make_current(t.ctx);
     pv_render_thread_flag = true;
-    static gl_state_struct pv_gl_state = {};
-    gl_state_thread = &pv_gl_state;
+    gl_state_thread = &pv_gl_state_shared;
     gl_rend_state_thread_base = GL_REND_STATE_COUNT;
     gl_state.get();
     render_context* r = new render_context;    // its own buffers and vertex arrays, on its context
@@ -710,15 +739,26 @@ static void pv_threaded_frame() {
         t.eyes = stereo_enabled() ? 2 : 1;
         t.cam = rctx_main->render_manager_cam;
         pv_camera_snapshot_take();   // what the game's camera getters tell the PV thread
-        t.after_main = dvk_last_ticket(dvk_main_context());
+        // Everything the game thread has recorded so far goes to the GPU now, and the
+        // picture's GPU work goes after it: this frame's uploads (character vertex data,
+        // textures) included, not just the previous frames'. (A submit, not a wait.)
+        t.after_main = dvk_flush();
         disp_manager_handoff(t.dm, t.rctx.load());
         sprite_manager_handoff_pv_lists();
         Glitter::SnapshotScenesForPv();
-        {
-            std::lock_guard<std::mutex> lock(t.m);
-            t.job = true;
+        if (pv_inline_mode()) {
+            // the test mode: draw it here and now, as the PV thread would
+            pv_thread_bind(true);
+            pv_thread_draw();
+            pv_thread_bind(false);
         }
-        t.cv.notify_one();
+        else {
+            {
+                std::lock_guard<std::mutex> lock(t.m);
+                t.job = true;
+            }
+            t.cv.notify_one();
+        }
         pv_job_out = true;
         pv_sync->pv_busy = 1;
         QueryPerformanceCounter(&pv_handoff_time);

@@ -33,7 +33,7 @@ namespace dvk {
         SSBO_BINDING_BASE = 48,
         MAX_VERTEX_ATTRIBS = 16,
         MAX_COLOR_ATTACHMENTS = 8,
-        FRAMES_IN_FLIGHT = 2,
+        FRAMES_IN_FLIGHT = 3,   // (3: room for a mid-frame submit at a PV handoff without waiting)
     };
 
     struct Context;

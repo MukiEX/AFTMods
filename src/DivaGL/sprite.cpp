@@ -1442,9 +1442,17 @@ void sprite_manager_thread_free() {
 }
 
 static spr::SpriteManager* sprite_manager_pv = 0;   // the PV thread's, for the handoff
+static spr::SpriteManager::RenderData* sprite_manager_render_data_pv = 0;
 
 void sprite_manager_thread_register() {
     sprite_manager_pv = sprite_manager_thread;
+    sprite_manager_render_data_pv = sprite_manager_render_data_thread;
+}
+
+// Another thread draws as the PV thread for a while (DIVA_PV_THREAD_INLINE, a test mode).
+void sprite_manager_thread_bind(bool on) {
+    sprite_manager_thread = on ? sprite_manager_pv : 0;
+    sprite_manager_render_data_thread = on ? sprite_manager_render_data_pv : 0;
 }
 
 // Game thread, while the PV thread is idle: the PV's lists move to the PV thread's manager
