@@ -525,7 +525,6 @@ static void pv_thread_draw() {
             rend_data_ctx.state.end_event();
             rend_data_ctx.state.finish();
         }
-        dvk_flush();   // submitted in pieces, so the GPU can fit the HUD's frames in between
         {
             render_data_context rend_data_ctx(GL_REND_STATE_3D);
             rend_data_ctx.state.get();
@@ -535,7 +534,6 @@ static void pv_thread_draw() {
             rend_data_ctx.state.end_event();
             rend_data_ctx.state.finish();
         }
-        dvk_flush();
         {
             render_data_context rend_data_ctx(GL_REND_STATE_2D);
             rend_data_ctx.state.get();
