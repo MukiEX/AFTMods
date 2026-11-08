@@ -599,15 +599,17 @@ namespace dvk {
     // A whole-image multisample resolve done by a render pass (its resolve attachment) rather
     // than vkCmdResolveImage: Adreno 830 drew half of transfers that read the last one's output,
     // and the MSAA resolve into the PV's screen buffer was the last full-screen one left (the
-    // right eye in SBS showed the old picture in one triangle). DIVAVK_RESOLVE_PASS=0: off.
+    // right eye in SBS showed the old picture in one triangle). That didn't fix the triangle,
+    // and on the Odin 3 the attract mode went black with it, so it's off unless
+    // DIVAVK_RESOLVE_PASS=1.
     static bool resolve_by_pass(Context& ctx, VkCommandBuffer cb, TextureObj* s, TextureObj* d,
         uint32_t d_level, uint32_t d_layer) {
         static int on = -1;
         if (on < 0) {
             const char* e = env("DIVAVK_RESOLVE_PASS");
-            on = !(e && e[0] == '0');
-            log(on ? "Multisample resolves: by a render pass (DIVAVK_RESOLVE_PASS=0 for transfers)"
-                   : "Multisample resolves: transfers (DIVAVK_RESOLVE_PASS=0)");
+            on = e && e[0] == '1';
+            if (on)
+                log("Multisample resolves: by a render pass (DIVAVK_RESOLVE_PASS=1)");
         }
         if (!on || !s->image || !d->image || !d->renderable || s->format->vk != d->format->vk
             || s->format->depth || s->format->stencil)
