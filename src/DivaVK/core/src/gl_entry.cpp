@@ -1422,7 +1422,7 @@ static const ProcEntry s_procs[] = {
 
 // ------------------------------------------------------------------ logging stubs
 
-/* Colour blits as draws: a full-screen triangle sampling the read framebuffer's colour
+/* Colour blits as draws: a quad over the destination rectangle sampling the read framebuffer's colour
    texture into the draw framebuffer, through the ordinary GL path. On an Odin 3 (Adreno 830)
    a transfer that read an image the previous transfer had written (the game's copy into the
    window's framebuffer, then the present blit; the PV picture's slot, then the copy under the
@@ -1448,7 +1448,13 @@ static bool blit_draw_ready() {
     static const char* VS =
         "#version 430 core\n"
         "void main() {\n"
-        "    vec2 p = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
+        "    // two triangles exactly covering the viewport (0,1,2 and 2,1,3 of its corners), not\n"
+        "    // one oversized triangle: that one is clipped to the viewport by the GPU, and the\n"
+        "    // Odin 3 (Adreno 830) showed a picture copied with it only on one side of the\n"
+        "    // viewport's diagonal (the right eye's PV picture in SBS)\n"
+        "    const int c[6] = int[6](0, 1, 2, 2, 1, 3);\n"
+        "    int k = c[gl_VertexIndex];\n"
+        "    vec2 p = vec2(float(k & 1), float(k >> 1));\n"
         "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
         "}\n";
     static const char* FS =
@@ -1581,7 +1587,7 @@ static bool blit_color_by_draw(Context& c, GLint sx0, GLint sy0, GLint sx1, GLin
     dvk_glUseProgram(s_blit_prog);
     dvk_glBindVertexArray(0);
     dvk_glViewport(std::min(dx0, dx1), std::min(dy0, dy1), std::abs(dx1 - dx0), std::abs(dy1 - dy0));
-    dvk_glDrawArrays(GL_TRIANGLES, 0, 3);
+    dvk_glDrawArrays(GL_TRIANGLES, 0, 6);
     dvk_pop_gl_state();
     return true;
 }
