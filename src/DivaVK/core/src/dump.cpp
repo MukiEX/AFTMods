@@ -177,6 +177,18 @@ extern "C" void dvk_dump_begin(void) {
     c->dump_frame_begin();
 }
 
+// While a frame dump is being written on this thread's context: one GL texture as it is now.
+extern "C" void dvk_dump_gl_texture(unsigned int name, const char* what) {
+    dvk::Context* c = dvk::current_ctx();
+    if (!c || !c->dump_active || !name)
+        return;
+    dvk::TextureObj* t = c->textures.get(name);
+    if (!t)
+        return;
+    c->end_pass();   // what's recorded so far into it is in the readback
+    c->dump_texture(t, 0, 0, what ? what : "texture");
+}
+
 extern "C" void dvk_dump_end(void) {
     dvk::Context* c = dvk::current_ctx();
     if (c && !c->is_main())

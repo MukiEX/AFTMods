@@ -321,6 +321,7 @@ static void pv_cache_save(render_data_context& rend_data_ctx, int32_t eye) {
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)prev_draw);
     rend_data_ctx.state.bind_read_framebuffer((GLuint)prev_read);
     rend_data_ctx.state.bind_draw_framebuffer((GLuint)prev_draw);
+    dvk_dump_gl_texture(pv_cache_tex[slot][eye], eye ? "pvpic_saved_right" : "pvpic_saved_left");   // (a frame dump only)
     pv_cache_valid[slot][eye] = true;
 }
 
@@ -644,6 +645,9 @@ static void pv_thread_draw() {
         rend_data_ctx.state.finish();
     }
 
+    // (a frame dump only) the picture as handed over, to compare with right after its save
+    for (int32_t e = 0; e < t.eyes; e++)
+        dvk_dump_gl_texture(pv_cache_tex[pv_save_slot][e], e ? "pvpic_at_end_right" : "pvpic_at_end_left");
     dvk_dump_end();
     const uint64_t ticket = dvk_flush();
     pv_thread_t::pic_t& pic = t.pic[t.number % PV_SLOTS];
