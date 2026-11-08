@@ -278,3 +278,8 @@ extern "C" void dvk_context_get_stats(dvk_context ctx, dvk_stats* out) {
     out->hoisted_uploads = s.hoisted_uploads;
     out->inline_uploads = s.inline_uploads;
 }
+
+extern "C" double dvk_context_take_wait_ms(dvk_context ctx) {
+    Context* c = ctx ? (Context*)ctx : g_ctx;
+    return c ? c->wait_ms_shared.exchange(0.0) : 0.0;
+}

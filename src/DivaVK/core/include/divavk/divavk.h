@@ -119,6 +119,8 @@ dvk_context dvk_main_context(void);
 uint64_t dvk_last_ticket(dvk_context ctx);
 /* GPU time a context's frames took since the last call (NULL = the first context). */
 double dvk_context_take_gpu_ms(dvk_context ctx, uint32_t* frames);
+/* Time a context's thread spent waiting for its own earlier GPU work since the last call. */
+double dvk_context_take_wait_ms(dvk_context ctx);
 
 /* Name of the Vulkan device in use (for logs/overlays). */
 const char* dvk_device_name(void);

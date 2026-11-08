@@ -33,7 +33,7 @@ namespace dvk {
         SSBO_BINDING_BASE = 48,
         MAX_VERTEX_ATTRIBS = 16,
         MAX_COLOR_ATTACHMENTS = 8,
-        FRAMES_IN_FLIGHT = 3,   // (3: room for a mid-frame submit at a PV handoff without waiting)
+        FRAMES_IN_FLIGHT = 8,   // the most a context can have; each uses frames_in_flight of them
     };
 
     struct Context;
@@ -534,6 +534,11 @@ namespace dvk {
         bool is_main() const { return owns_shared; }
 
         Frame frames[FRAMES_IN_FLIGHT];
+        // Frames this context cycles through: 3 for the game thread's (room for a mid-frame
+        // submit at a PV handoff without waiting), 8 for a shared context, which submits a
+        // picture in pieces and shouldn't wait for its own earlier pieces on the GPU.
+        uint32_t frames_in_flight = 3;
+        std::atomic<double> wait_ms_shared{ 0.0 };     // time spent waiting for its own frames' fences
         // GPU time per presented frame (timestamps around each command buffer), logged every 10 s
         double& timestamp_ns = sh->timestamp_ns; // ns per tick; 0 = the queue has no timestamps
         double gpu_ms_total = 0.0, gpu_ms_worst = 0.0;

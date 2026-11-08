@@ -467,6 +467,8 @@ static void pv_thread_draw() {
     }
     sprite_manager_pre_draw();
     mdl::etc_obj_manager->pre_draw();
+    const double_t ms_pre = pv_ms_since(t0);
+    double_t ms_eye[2] = {};
 
     const bool stereo = t.eyes == 2;
     const cam_data center_cam = r->render_manager_cam;
@@ -480,6 +482,8 @@ static void pv_thread_draw() {
         rend->taa_blend = 1.0f;
     }
     for (int32_t eye = 0; eye < t.eyes; eye++) {
+        LARGE_INTEGER te;
+        QueryPerformanceCounter(&te);
         if (eye)
             pv_thread_baseline_state();   // as the eye before it left things, the HUD passes didn't run here
         if (stereo) {
@@ -522,6 +526,7 @@ static void pv_thread_draw() {
             rend_data_ctx.state.finish();
         }
         stereo_eye_reset();
+        ms_eye[eye] = pv_ms_since(te);
     }
     r->render_manager_cam = center_cam;
     rend->taa = taa;
@@ -568,9 +573,10 @@ static void pv_thread_draw() {
             char buf[512];
             snprintf(buf, sizeof(buf), "[DivaLinux] PV thread picture %u: %zu draw-list entries (opaque %zu, transparent %zu, "
                 "translucent %zu, screen %zu), sprites: surface %zu, background %zu; %llu draws in %llu render passes, "
-                "%d eye(s), %.1f ms\n", t.number, objs, obj_opaque, obj_transp, obj_transl, obj_screen, spr1, spr2,
+                "%d eye(s), %.1f ms (setup %.1f, eyes %.1f + %.1f, rest %.1f)\n", t.number, objs, obj_opaque, obj_transp, obj_transl,
+                obj_screen, spr1, spr2,
                 (unsigned long long)(st1.draws - st0.draws), (unsigned long long)(st1.render_passes - st0.render_passes),
-                t.eyes, t.cpu_ms.load());
+                t.eyes, t.cpu_ms.load(), ms_pre, ms_eye[0], ms_eye[1], t.cpu_ms.load() - ms_pre - ms_eye[0] - ms_eye[1]);
             OutputDebugStringA(buf);
         }
     }
@@ -707,17 +713,19 @@ static void pv_threaded_log(double_t elapsed_s) {
             if (m & (1ull << i))
                 o += snprintf(cores + o, sizeof(cores) - o, "%s%d", o ? "," : "", i);
     }
-    char buf[700];
+    const double_t pv_wait_ms = pvt ? dvk_context_take_wait_ms(pvt->ctx) : 0.0;
+    char buf[800];
     snprintf(buf, sizeof(buf),
         "[DivaLinux] threaded PV: HUD %.1f fps (avg %.1f ms, worst %.1f ms, %d frames over the display time); "
         "the game thread waited for the PV 0 times (handoffs %.2f ms each). PV %.1f pictures/s, %.1f ms each "
         "from handoff to shown (longest %.1f), PV thread %.1f ms per picture. GPU: HUD queue %.1f ms per frame, "
-        "PV queue %.1f ms per picture; PV thread on cores %s\n",
+        "PV queue %.1f ms per picture; PV thread on cores %s, waiting for its own GPU work %.1f ms per picture\n",
         pv_ts.frames / elapsed_s, pv_ts.sum_ms / pv_ts.frames, pv_ts.worst_ms, pv_ts.late,
         pv_ts.pictures ? pv_ts.handoff_ms / pv_ts.pictures : 0.0,
         pv_ts.pictures / elapsed_s, pv_ts.pictures ? pv_ts.pic_ms_sum / pv_ts.pictures : 0.0, pv_ts.pic_ms_max,
         pv_ts.pictures ? pv_ts.pv_cpu_ms / pv_ts.pictures : 0.0,
-        hud_gpu_frames ? hud_gpu_ms / hud_gpu_frames : 0.0, gpu_frames ? gpu_ms / gpu_frames : 0.0, cores);
+        hud_gpu_frames ? hud_gpu_ms / hud_gpu_frames : 0.0, gpu_frames ? gpu_ms / gpu_frames : 0.0, cores,
+        pv_ts.pictures ? pv_wait_ms / pv_ts.pictures : 0.0);
     OutputDebugStringA(buf);
 }
 

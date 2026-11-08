@@ -534,6 +534,7 @@ namespace dvk {
         sci.pNext = &stci;
         if (vkCreateSemaphore(device, &sci, nullptr, &timeline) != VK_SUCCESS)
             return false;
+        frames_in_flight = 8;
         create_frames();
         serial = sh->next_serial.fetch_add(1);
         default_fbo.name = 0;
@@ -690,7 +691,13 @@ namespace dvk {
         if (!f.pending)
             return;
         DVK_STAGE("waiting for the GPU to finish an earlier frame (vkWaitForFences)");
-        vkWaitForFences(device, 1, &f.fence, VK_TRUE, UINT64_MAX);
+        if (vkGetFenceStatus(device, f.fence) != VK_SUCCESS) {
+            const auto w0 = std::chrono::steady_clock::now();
+            vkWaitForFences(device, 1, &f.fence, VK_TRUE, UINT64_MAX);
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - w0).count();
+            double prev = wait_ms_shared.load();
+            while (!wait_ms_shared.compare_exchange_weak(prev, prev + ms)) {}
+        }
         DVK_STAGE("running the game's GL calls");
         f.pending = false;
         if (f.ts_written) {
@@ -712,8 +719,8 @@ namespace dvk {
     }
 
     void Context::wait_idle_all() {
-        for (uint32_t i = 1; i <= FRAMES_IN_FLIGHT; i++)
-            wait_frame(frames[(frame_index + i) % FRAMES_IN_FLIGHT]);
+        for (uint32_t i = 1; i <= frames_in_flight; i++)
+            wait_frame(frames[(frame_index + i) % frames_in_flight]);
         {
             std::lock_guard<std::mutex> q(queue_mutex);
             vkQueueWaitIdle(queue);
@@ -980,7 +987,7 @@ namespace dvk {
             xr_frame_submitted();
 
         last_submitted.store(serial);
-        frame_index = (frame_index + 1) % FRAMES_IN_FLIGHT;
+        frame_index = (frame_index + 1) % frames_in_flight;
         serial = sh->next_serial.fetch_add(1);
         update_unfinished();
 
