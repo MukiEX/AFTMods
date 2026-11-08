@@ -379,6 +379,7 @@ namespace {
         std::atomic<uint64_t> ticket{ 0 };      // the picture's ticket once submitted
         std::atomic<uint32_t> recorded{ 0 };    // number of the picture last submitted
         std::atomic<double> cpu_ms{ 0.0 };      // its thread time for the last picture
+        std::atomic<uint64_t> cores{ 0 };       // CPU cores it ran pictures on (bits), for the log
     };
     pv_thread_t* pvt = nullptr;
     std::atomic<uint32_t> pv_song_first{ 1 };   // the song's first picture number, for the log
@@ -550,6 +551,11 @@ static void pv_thread_draw() {
     const uint64_t ticket = dvk_flush();
     t.cpu_ms.store(pv_ms_since(t0));
     {
+        const DWORD core = GetCurrentProcessorNumber();
+        if (core < 64)
+            t.cores.fetch_or(1ull << core);
+    }
+    {
         // the first pictures of each song, then one every 10 seconds
         static LARGE_INTEGER last_log = {};
         LARGE_INTEGER now;
@@ -604,6 +610,10 @@ static void pv_thread_bind(bool on) {
 
 static void pv_thread_main() {
     pv_thread_t& t = *pvt;
+    // Ask for the fast cores: the DivaRecomp runtime keeps a thread raising itself to HIGHEST on
+    // them, at a higher host priority (Android otherwise parks a thread that sleeps between
+    // pictures on an efficiency core). Elsewhere it's just a priority.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
     dvk_make_current(t.ctx);
     pv_render_thread_flag = true;
     gl_state_thread = &pv_gl_state_shared;
@@ -689,17 +699,25 @@ static void pv_threaded_log(double_t elapsed_s) {
     const double_t gpu_ms = pvt ? dvk_context_take_gpu_ms(pvt->ctx, &gpu_frames) : 0.0;
     uint32_t hud_gpu_frames = 0;
     const double_t hud_gpu_ms = dvk_context_take_gpu_ms(nullptr, &hud_gpu_frames);
-    char buf[640];
+    char cores[96] = "-";
+    if (pvt) {
+        const uint64_t m = pvt->cores.exchange(0);
+        size_t o = 0;
+        for (int32_t i = 0; i < 64 && o + 4 < sizeof(cores); i++)
+            if (m & (1ull << i))
+                o += snprintf(cores + o, sizeof(cores) - o, "%s%d", o ? "," : "", i);
+    }
+    char buf[700];
     snprintf(buf, sizeof(buf),
         "[DivaLinux] threaded PV: HUD %.1f fps (avg %.1f ms, worst %.1f ms, %d frames over the display time); "
         "the game thread waited for the PV 0 times (handoffs %.2f ms each). PV %.1f pictures/s, %.1f ms each "
         "from handoff to shown (longest %.1f), PV thread %.1f ms per picture. GPU: HUD queue %.1f ms per frame, "
-        "PV queue %.1f ms per picture\n",
+        "PV queue %.1f ms per picture; PV thread on cores %s\n",
         pv_ts.frames / elapsed_s, pv_ts.sum_ms / pv_ts.frames, pv_ts.worst_ms, pv_ts.late,
         pv_ts.pictures ? pv_ts.handoff_ms / pv_ts.pictures : 0.0,
         pv_ts.pictures / elapsed_s, pv_ts.pictures ? pv_ts.pic_ms_sum / pv_ts.pictures : 0.0, pv_ts.pic_ms_max,
         pv_ts.pictures ? pv_ts.pv_cpu_ms / pv_ts.pictures : 0.0,
-        hud_gpu_frames ? hud_gpu_ms / hud_gpu_frames : 0.0, gpu_frames ? gpu_ms / gpu_frames : 0.0);
+        hud_gpu_frames ? hud_gpu_ms / hud_gpu_frames : 0.0, gpu_frames ? gpu_ms / gpu_frames : 0.0, cores);
     OutputDebugStringA(buf);
 }
 
