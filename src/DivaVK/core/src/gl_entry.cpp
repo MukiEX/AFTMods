@@ -1431,8 +1431,9 @@ static const ProcEntry s_procs[] = {
    Used when the source is a single-sample, non-integer colour texture at level 0 (renderbuffers,
    multisample resolves, depth and stencil keep the transfer path). DIVAVK_BLIT_DRAW=0: off. */
 static std::mutex s_blit_m;
-static GLuint s_blit_prog = 0, s_blit_samp[2] = {};
+static GLuint s_blit_prog = 0, s_blit_prog_same = 0, s_blit_samp[2] = {};
 static int s_blit_state = 0;   // 0 untried, 1 ready, -1 off or failed
+static bool s_blit_same_off = false;   // DIVAVK_BLIT_SAME=0: same-rectangle copies use the general program
 static thread_local GLuint s_blit_ubo = 0;
 
 static bool blit_draw_ready() {
@@ -1468,26 +1469,42 @@ static bool blit_draw_ready() {
         "    if (u.size.z > 0.5) result = textureLod(g_src, s / u.size.xy, 0.0);\n"
         "    else result = texelFetch(g_src, clamp(ivec2(floor(s)), ivec2(0), ivec2(u.size.xy) - 1), 0);\n"
         "}\n";
-    GLuint sh[2] = { dvk_glCreateShader(GL_VERTEX_SHADER), dvk_glCreateShader(GL_FRAGMENT_SHADER) };
-    const char* src[2] = { VS, FS };
-    GLint ok = 1;
-    for (int i = 0; i < 2; i++) {
-        dvk_glShaderSource(sh[i], 1, &src[i], nullptr);
-        dvk_glCompileShader(sh[i]);
-        GLint st = 0;
-        dvk_glGetShaderiv(sh[i], GL_COMPILE_STATUS, &st);
-        ok &= st;
-    }
-    GLuint prog = 0;
-    if (ok) {
-        prog = dvk_glCreateProgram();
-        dvk_glAttachShader(prog, sh[0]);
-        dvk_glAttachShader(prog, sh[1]);
-        dvk_glLinkProgram(prog);
-        dvk_glGetProgramiv(prog, GL_LINK_STATUS, &ok);
-    }
-    dvk_glDeleteShader(sh[0]);
-    dvk_glDeleteShader(sh[1]);
+    // the same rectangle in and out (the PV picture's save and its copy under the HUD): no
+    // uniform block at all. The Odin 3 (Adreno 830) drew the right eye's copy with the block
+    // read as zeros in one of the quad's two triangles: that half showed texel (0,0), flat.
+    static const char* FS_SAME =
+        "#version 430 core\n"
+        "layout(binding = 0) uniform sampler2D g_src;\n"
+        "layout(location = 0) out vec4 result;\n"
+        "void main() {\n"
+        "    result = texelFetch(g_src, ivec2(gl_FragCoord.xy), 0);\n"
+        "}\n";
+    auto build = [](const char* vs, const char* fs) -> GLuint {
+        GLuint sh[2] = { dvk_glCreateShader(GL_VERTEX_SHADER), dvk_glCreateShader(GL_FRAGMENT_SHADER) };
+        const char* src[2] = { vs, fs };
+        GLint ok = 1;
+        for (int i = 0; i < 2; i++) {
+            dvk_glShaderSource(sh[i], 1, &src[i], nullptr);
+            dvk_glCompileShader(sh[i]);
+            GLint st = 0;
+            dvk_glGetShaderiv(sh[i], GL_COMPILE_STATUS, &st);
+            ok &= st;
+        }
+        GLuint prog = 0;
+        if (ok) {
+            prog = dvk_glCreateProgram();
+            dvk_glAttachShader(prog, sh[0]);
+            dvk_glAttachShader(prog, sh[1]);
+            dvk_glLinkProgram(prog);
+            dvk_glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+        }
+        dvk_glDeleteShader(sh[0]);
+        dvk_glDeleteShader(sh[1]);
+        return ok ? prog : 0;
+    };
+    GLuint prog = build(VS, FS);
+    s_blit_prog_same = build(VS, FS_SAME);
+    const GLint ok = prog && s_blit_prog_same;
     if (!ok) {
         log("Colour blits: the draw program failed; using transfers");
         return false;
@@ -1502,6 +1519,8 @@ static bool blit_draw_ready() {
     }
     s_blit_prog = prog;
     s_blit_state = 1;
+    if (const char* e = env("DIVAVK_BLIT_SAME"))
+        s_blit_same_off = !strcmp(e, "0");
     log("Colour blits: drawn (a render pass, not a transfer; DIVAVK_BLIT_DRAW=0 for transfers)");
     return true;
 }
@@ -1584,7 +1603,10 @@ static bool blit_color_by_draw(Context& c, GLint sx0, GLint sy0, GLint sx1, GLin
     dvk_glActiveTexture(GL_TEXTURE0);
     dvk_glBindTexture(GL_TEXTURE_2D, a.texture);
     dvk_glBindSampler(0, s_blit_samp[linear ? 1 : 0]);
-    dvk_glUseProgram(s_blit_prog);
+    // the same rectangle in and out, inside the source: texel = pixel, no uniform block
+    const bool same = sx0 == dx0 && sy0 == dy0 && sx1 == dx1 && sy1 == dy1 && sx1 > sx0 && sy1 > sy0
+        && sx0 >= 0 && sy0 >= 0 && sx1 <= t->width && sy1 <= t->height;
+    dvk_glUseProgram(same && !s_blit_same_off ? s_blit_prog_same : s_blit_prog);
     dvk_glBindVertexArray(0);
     dvk_glViewport(std::min(dx0, dx1), std::min(dy0, dy1), std::abs(dx1 - dx0), std::abs(dy1 - dy0));
     dvk_glDrawArrays(GL_TRIANGLES, 0, 6);
