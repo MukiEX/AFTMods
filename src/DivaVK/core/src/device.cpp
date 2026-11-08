@@ -343,6 +343,10 @@ namespace dvk {
             if (queue_family < qn)
                 family_queues = qf[queue_family].queueCount;
         }
+        // DIVAVK_SECOND_QUEUE=0: the PV render thread shares the game's queue (a test)
+        if (const char* e = env("DIVAVK_SECOND_QUEUE"))
+            if (!strcmp(e, "0"))
+                family_queues = 1;
         VkPhysicalDeviceTimelineSemaphoreFeaturesKHR tsf = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR };
         if (has_extension(dev_exts, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)) {
             VkPhysicalDeviceFeatures2 f2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
