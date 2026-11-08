@@ -33,6 +33,17 @@ static thread_local int32_t stereo_current_eye = 0;
 // Updated once per frame from the center camera
 static float_t stereo_half_sep = 0.0f;     // half the eye separation in use, world units
 static float_t stereo_conv_dist = 1.0f;    // convergence (zero parallax) distance, world units
+// The PV render thread's: as they were at its picture's handoff (stereo_snapshot_for_pv), so
+// both eyes use the same separation and convergence while the game thread updates these.
+static float_t stereo_half_sep_pv = 0.0f;
+static float_t stereo_conv_dist_pv = 1.0f;
+#define STEREO_HALF_SEP (pv_render_thread_flag ? stereo_half_sep_pv : stereo_half_sep)
+#define STEREO_CONV_DIST (pv_render_thread_flag ? stereo_conv_dist_pv : stereo_conv_dist)
+
+void stereo_snapshot_for_pv() {
+    stereo_half_sep_pv = stereo_half_sep;
+    stereo_conv_dist_pv = stereo_conv_dist;
+}
 static float_t stereo_conv_smoothed = 0.0f; // auto convergence, eased between frames (0 = none yet)
 static vec3 stereo_last_view_point = 0.0f;
 static vec3 stereo_last_interest = 0.0f;
@@ -168,12 +179,12 @@ void stereo_update_camera(const cam_data& center) {
 }
 
 float_t stereo_cull_margin(float_t depth) {
-    if (!stereo_enabled() || stereo_half_sep <= 0.0f)
+    if (!stereo_enabled() || STEREO_HALF_SEP <= 0.0f)
         return 0.0f;
 
     // An eye frustum differs from the center one by at most half_sep in front of the
     // convergence plane, and by half_sep * (depth / conv - 1) behind it.
-    return stereo_half_sep * max_def(1.0f, depth / stereo_conv_dist);
+    return STEREO_HALF_SEP * max_def(1.0f, depth / STEREO_CONV_DIST);
 }
 
 static float_t stereo_proj_shift(int32_t eye_sign, float_t fov_y, float_t aspect) {
@@ -183,8 +194,8 @@ static float_t stereo_proj_shift(int32_t eye_sign, float_t fov_y, float_t aspect
     // NDC x of a point at the convergence distance on the center axis is
     // -p00 * e / conv in the eye camera; shift it back to 0.
     const float_t p00 = 1.0f / (aspect * tanf(fov_y * 0.5f));
-    const float_t e = stereo_half_sep * (float_t)eye_sign;
-    return e * p00 / stereo_conv_dist;
+    const float_t e = STEREO_HALF_SEP * (float_t)eye_sign;
+    return e * p00 / STEREO_CONV_DIST;
 }
 
 vec2 stereo_get_proj_offset(float_t fov_y, float_t aspect) {
@@ -194,7 +205,7 @@ vec2 stereo_get_proj_offset(float_t fov_y, float_t aspect) {
 void stereo_make_eye_cam(const cam_data& center, cam_data& eye, int32_t eye_sign) {
     eye = center;
 
-    const float_t e = stereo_half_sep * (float_t)eye_sign;
+    const float_t e = STEREO_HALF_SEP * (float_t)eye_sign;
     const mat4& view = center.view_mat;
     const vec3 right(view.row0.x, view.row1.x, view.row2.x);
 

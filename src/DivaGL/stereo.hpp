@@ -23,6 +23,9 @@ extern thread_local float_t sprite_stereo_offset[4];
 // True when the user has stereo enabled (regardless of whether a frame is being rendered).
 extern bool stereo_enabled();
 
+// Game thread, at a PV picture's handoff: the separation and convergence the PV thread uses.
+extern void stereo_snapshot_for_pv();
+
 // Back to no eye and no sprite offsets.
 extern void stereo_eye_reset();
 

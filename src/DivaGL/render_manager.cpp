@@ -397,6 +397,26 @@ namespace {
 
 void pv_camera_snapshot_take();   // camera.cpp
 
+/* The shadow state for the PV picture being drawn. The game sets parts of it every frame (each
+   character's shadow distance base as objects are entered), so on the PV thread the passes use
+   a copy taken at the handoff: otherwise the right eye, drawn a game frame or two after the
+   left, used a shadow state the left eye's shadow maps weren't made with. */
+alignas(16) static uint8_t pv_shadow_copy[sizeof(Shadow)];
+static bool pv_shadow_copied = false;
+
+Shadow* render_shadow() {
+    if (pv_render_thread_flag && pv_shadow_copied)
+        return (Shadow*)pv_shadow_copy;
+    return render_manager.shadow_ptr;
+}
+
+static void pv_shadow_snapshot_take() {
+    if (render_manager.shadow_ptr) {
+        memcpy(pv_shadow_copy, render_manager.shadow_ptr, sizeof(Shadow));
+        pv_shadow_copied = true;
+    }
+}
+
 static bool pv_threaded_on() {
     return pv_sync && pv_sync->version >= 2 && pv_sync->async;
 }
@@ -798,6 +818,8 @@ static void pv_threaded_frame() {
         t.eyes = stereo_enabled() ? 2 : 1;
         t.cam = rctx_main->render_manager_cam;
         pv_camera_snapshot_take();   // what the game's camera getters tell the PV thread
+        pv_shadow_snapshot_take();   // and the shadow state it draws with
+        stereo_snapshot_for_pv();    // and the eye separation
         // Everything the game thread has recorded so far goes to the GPU now, and the
         // picture's GPU work goes after it: this frame's uploads (character vertex data,
         // textures) included, not just the previous frames'. (A submit, not a wait.)
@@ -1325,7 +1347,7 @@ namespace rndr {
                 make_shadowmap = true;
         }
 
-        Shadow* shad = shadow_ptr;
+        Shadow* shad = render_shadow();
         if (stereo_reuse_shadow_maps()) {
             // Second stereo eye: the shadow maps are rendered from the light's camera, so the
             // first eye's are exactly what this eye would draw. (The texproj part above uses
@@ -1389,9 +1411,9 @@ namespace rndr {
                     lighting_set(rend_data_ctx, (light_set_id)i);
 
                 if (shadow)
-                    shadow_ptr->bind_shadow(rend_data_ctx);
+                    render_shadow()->bind_shadow(rend_data_ctx);
                 else
-                    render_manager.shadow_ptr->unbind_shadow(rend_data_ctx);
+                    render_shadow()->unbind_shadow(rend_data_ctx);
 
                 cam_data reflect_cam = cam;
                 set_reflect_mat(rend_data_ctx, reflect_cam);
@@ -1404,7 +1426,7 @@ namespace rndr {
                 disp_manager->draw(rend_data_ctx, mdl::OBJ_TYPE_SSS, reflect_cam);
                 rend_data_ctx.state.disable_depth_test();
                 rctx->draw_state_rend_data[rend_data_ctx.index].shader_index = -1;
-                render_manager.shadow_ptr->unbind_shadow(rend_data_ctx);
+                render_shadow()->unbind_shadow(rend_data_ctx);
                 rend_data_ctx.shader_flags.arr[U_NPR] = 0;
 
                 if (npr_param == 1) {
@@ -1442,9 +1464,9 @@ namespace rndr {
                 lighting_set(rend_data_ctx, (light_set_id)i);
 
             if (shadow)
-                shadow_ptr->bind_shadow(rend_data_ctx);
+                render_shadow()->bind_shadow(rend_data_ctx);
             else
-                shadow_ptr->unbind_shadow(rend_data_ctx);
+                render_shadow()->unbind_shadow(rend_data_ctx);
 
             rend_data_ctx.set_batch_scene_camera(cam);
 
@@ -1455,7 +1477,7 @@ namespace rndr {
             disp_manager->draw(rend_data_ctx, mdl::OBJ_TYPE_SSS, cam);
             rend_data_ctx.state.disable_depth_test();
             rctx->draw_state_rend_data[rend_data_ctx.index].shader_index = -1;
-            shadow_ptr->unbind_shadow(rend_data_ctx);
+            render_shadow()->unbind_shadow(rend_data_ctx);
             rend_data_ctx.shader_flags.arr[U_NPR] = 0;
 
             if (npr_param == 1) {
@@ -1710,9 +1732,9 @@ namespace rndr {
             fog_set(rend_data_ctx, (fog_id)i);
 
         if (shadow)
-            shadow_ptr->bind_shadow(rend_data_ctx);
+            render_shadow()->bind_shadow(rend_data_ctx);
         else
-            shadow_ptr->unbind_shadow(rend_data_ctx);
+            render_shadow()->unbind_shadow(rend_data_ctx);
 
         if (effect_texture)
             rend_data_ctx.state.active_bind_texture_2d(14, effect_texture->glid);
@@ -1890,7 +1912,7 @@ namespace rndr {
         rend_data_ctx.state.disable_depth_test();
 
         if (shadow)
-            shadow_ptr->unbind_shadow(rend_data_ctx);
+            render_shadow()->unbind_shadow(rend_data_ctx);
         pass_sprite_surf(rend_data_ctx);
         shader::unbind(rend_data_ctx.state);
         render->end_render(rend_data_ctx.state);
@@ -2107,7 +2129,7 @@ HOOK(void, FASTCALL, render_manager_init_data, 0x0000000140502A2A, int32_t ssaa,
 
     init_shadow();
     render_manager.shadow_ptr = get_shadow();
-    render_manager.shadow_ptr->create();
+    render_shadow()->create();
 
     sss_data_get()->init();
 
@@ -2585,9 +2607,9 @@ static void draw_pass_reflect_full(render_data_context& rend_data_ctx, rndr::Ren
         rctx->draw_state_rend_data[rend_data_ctx.index].shader_index = -1;
 
         if (render_manager.shadow)
-            render_manager.shadow_ptr->bind_shadow(rend_data_ctx);
+            render_shadow()->bind_shadow(rend_data_ctx);
         else
-            render_manager.shadow_ptr->unbind_shadow(rend_data_ctx);
+            render_shadow()->unbind_shadow(rend_data_ctx);
 
         if (render_manager.effect_texture)
             rend_data_ctx.state.active_bind_texture_2d(14, render_manager.effect_texture->glid);
@@ -2694,7 +2716,7 @@ static void draw_pass_reflect_full(render_data_context& rend_data_ctx, rndr::Ren
         rend_data_ctx.state.active_bind_texture_2d(15, 0);
 
         if (render_manager.shadow)
-            render_manager.shadow_ptr->unbind_shadow(rend_data_ctx);
+            render_shadow()->unbind_shadow(rend_data_ctx);
 
         rend_data_ctx.state.set_cull_face_mode(GL_BACK);
         rend_data_ctx.state.disable_depth_test();
