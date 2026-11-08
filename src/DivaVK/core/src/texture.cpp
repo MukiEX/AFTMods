@@ -673,6 +673,7 @@ namespace dvk {
         VmaAllocationCreateInfo aci = {};
         aci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
         aci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        aci.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;   // nothing here flushes or invalidates by hand
         VkBuffer rb;
         VmaAllocation ra;
         VmaAllocationInfo ai = {};

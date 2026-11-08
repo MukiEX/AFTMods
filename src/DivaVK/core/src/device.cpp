@@ -112,6 +112,7 @@ namespace dvk {
         VmaAllocationCreateInfo aci = {};
         aci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
         aci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        aci.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;   // nothing here flushes or invalidates by hand
         VmaAllocationInfo info = {};
         DVK_CHECK(vmaCreateBuffer(ctx.vma, &bci, &aci, &c.buffer, &c.alloc, &info));
         c.ptr = (uint8_t*)info.pMappedData;
@@ -293,6 +294,24 @@ namespace dvk {
         log("Device: %s (Vulkan %u.%u.%u)%s", props.deviceName, VK_API_VERSION_MAJOR(props.apiVersion),
             VK_API_VERSION_MINOR(props.apiVersion), VK_API_VERSION_PATCH(props.apiVersion),
             features.textureCompressionBC ? "" : " - no BC texture support");
+        {
+            // CPU-visible memory types (mapped buffers require HOST_COHERENT: nothing flushes by hand)
+            VkPhysicalDeviceMemoryProperties mp;
+            vkGetPhysicalDeviceMemoryProperties(phys, &mp);
+            std::string types;
+            for (uint32_t i = 0; i < mp.memoryTypeCount; i++) {
+                VkMemoryPropertyFlags f = mp.memoryTypes[i].propertyFlags;
+                if (!(f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+                    continue;
+                char b[96];
+                snprintf(b, sizeof(b), "%s%u:%s%s%s", types.empty() ? "" : ", ", i,
+                    f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT ? " device-local" : "",
+                    f & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT ? " coherent" : " NOT coherent",
+                    f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT ? " cached" : "");
+                types += b;
+            }
+            log("CPU-visible memory types: %s", types.c_str());
+        }
 
         vkEnumerateDeviceExtensionProperties(phys, nullptr, &count, nullptr);
         std::vector<VkExtensionProperties> dev_exts(count);
@@ -460,6 +479,7 @@ namespace dvk {
             VmaAllocationCreateInfo vaci = {};
             vaci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
             vaci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            vaci.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
             VmaAllocationInfo ainfo = {};
             DVK_CHECK(vmaCreateBuffer(vma, &bci, &vaci, &null_vertex_buffer, &null_vertex_alloc, &ainfo));
             const float data[8] = { 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f };
