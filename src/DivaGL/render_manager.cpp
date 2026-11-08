@@ -305,8 +305,22 @@ static void pv_cache_save(render_data_context& rend_data_ctx, int32_t eye) {
             slot, eye ? "right eye" : "left eye/mono", tex, fb, w, h);
         OutputDebugStringA(buf);
     }
+    /* Put the framebuffer bindings back after the copy. Left bound, the picture's framebuffer
+       took whatever was drawn next without binding its own: after the right eye (the last
+       thing in a PV picture) the post-process wrap-up drew into it, and the Odin 3 showed the
+       right eye with a flat colour over half of it (a per-draw dump found it already in the
+       saved picture, and not a timing matter: the same with one GPU queue). */
+    GLint prev_draw = 0, prev_read = 0;
+    glGetIntegervDLL(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
+    glGetIntegervDLL(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
     fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), pv_cache_fb[slot][eye],
         0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    // now (the render state only binds at its next draw, and a render state made after this
+    // reads the bindings from GL), and in this render state too
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)prev_read);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)prev_draw);
+    rend_data_ctx.state.bind_read_framebuffer((GLuint)prev_read);
+    rend_data_ctx.state.bind_draw_framebuffer((GLuint)prev_draw);
     pv_cache_valid[slot][eye] = true;
 }
 
