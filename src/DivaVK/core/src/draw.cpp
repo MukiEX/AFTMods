@@ -662,5 +662,25 @@ namespace dvk {
         else
             vkCmdDraw(cb, (uint32_t)count, (uint32_t)instances, (uint32_t)first, 0);
         stats.draws++;
+
+        // DIVAVK_DUMP_DRAWS=1: a frame dump on the main context saves the target after every
+        // draw (not only at pass ends), to find the one draw that changes a picture.
+        static int dump_draws = -1;
+        if (dump_draws < 0) {
+            const char* e = env("DIVAVK_DUMP_DRAWS");
+            dump_draws = e && e[0] == '1';
+        }
+        if (dump_draws && dump_active && is_main() && pass_active) {
+            PassTarget done = pass_target;
+            const GLuint prog = program;
+            dump_active = false;   // this pass's end isn't dumped again
+            end_pass();
+            dump_active = true;
+            char what[64];
+            snprintf(what, sizeof(what), "draw%u_v%d_i%d_prog%u", (unsigned)stats.draws, (int)count, (int)instances, prog);
+            for (uint32_t i = 0; i < done.num_color; i++)
+                if (done.color[i])
+                    dump_texture(done.color[i], done.color_level[i], done.color_layer[i], what);
+        }
     }
 }
