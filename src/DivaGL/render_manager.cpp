@@ -103,6 +103,7 @@ static void set_reflect_mat(render_data_context& rend_data_ctx, cam_data& cam);
 // the PV thread is recording into, so the next picture never waits for the last one's GPU work.
 #define PV_SLOTS 3
 static RenderTexture* pv_cache[PV_SLOTS][2] = {};    // [slot][eye]: eye 0 mono or left, 1 right
+static GLuint pv_cache_tex[PV_SLOTS][2] = {};      // their colour textures (plain GL ones, see pv_cache_save)
 static bool pv_cache_valid[PV_SLOTS][2] = {};
 static int32_t pv_front = 0;                  // slot put back under the HUD
 static int32_t pv_save_slot = 0;              // slot a finished PV picture goes to (the other one in async mode)
@@ -247,9 +248,14 @@ static void pv_cache_save(render_data_context& rend_data_ctx, int32_t eye) {
         return;
     const int32_t slot = pv_save_slot;
     if (w != pv_cache_w[slot] || h != pv_cache_h[slot]) {
-        for (RenderTexture* i : pv_cache[slot])
-            if (i)
-                i->destroy();
+        for (int32_t e = 0; e < 2; e++) {
+            if (pv_cache[slot][e])
+                pv_cache[slot][e]->destroy();
+            if (pv_cache_tex[slot][e]) {
+                glDeleteTexturesDLL(1, &pv_cache_tex[slot][e]);
+                pv_cache_tex[slot][e] = 0;
+            }
+        }
         pv_cache_valid[slot][0] = pv_cache_valid[slot][1] = false;
         pv_cache_w[slot] = w;
         pv_cache_h[slot] = h;
@@ -257,8 +263,31 @@ static void pv_cache_save(render_data_context& rend_data_ctx, int32_t eye) {
     RenderTexture*& rt = pv_cache[slot][eye];
     if (!rt)
         rt = new RenderTexture;
-    if (!rt->m_txhd_color)
-        rt->create_texture(w, h, 0, GL_RGBA8, 0);
+    if (!pv_cache_tex[slot][eye]) {
+        /* A plain GL texture, not one from the game's texture manager (RenderTexture::
+           create_texture): that one is a map without a lock, filled from the game thread too,
+           and keyed by a counter that isn't unique, handing back an existing texture when a key
+           repeats. With the PV thread creating its pictures there, a frame dump from an Odin 3
+           (SBS stereo) showed both eyes of a slot saved into one texture, and the right eye
+           shown with half of some other picture in it. */
+        GLuint tex = 0;
+        glGenTexturesDLL(1, &tex);
+        gl_state.bind_texture_2d(tex);
+        glTexParameteriDLL(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+        glTexParameteriDLL(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        glTexParameteriDLL(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteriDLL(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteriDLL(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteriDLL(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2DDLL(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+        gl_state.bind_texture_2d(0);
+        pv_cache_tex[slot][eye] = tex;
+        rt->attach_texture(tex, 0, 0, false);
+        char buf[160];
+        snprintf(buf, sizeof(buf), "[DivaLinux] PV picture slot %d %s: texture %u, framebuffer %u (%dx%d)\n",
+            slot, eye ? "right eye" : "left eye/mono", tex, rt->get_fb(), w, h);
+        OutputDebugStringA(buf);
+    }
     fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), rt->get_fb(),
         0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     pv_cache_valid[slot][eye] = true;
@@ -720,7 +749,12 @@ static bool pv_thread_start() {
     // the PV thread's GL work may use what the game thread made so far
     dvk_flush();
     pvt->thread = std::thread(pv_thread_main);
-    return false;   // ready on a later frame
+    /* Wait for its setup (its render context's buffers, made through the game's texture
+       manager, which has no lock): the game thread making textures at the same time could
+       leave two of them sharing one. A few milliseconds, once. */
+    for (int32_t i = 0; i < 5000 && !pvt->ready.load(); i++)
+        Sleep(1);
+    return false;   // used from the next frame
 }
 
 void pv_thread_stop() {
@@ -1173,7 +1207,7 @@ namespace rndr {
         const int32_t eye = stereo_eye_index();
         LARGE_INTEGER pass_start;
         QueryPerformanceCounter(&pass_start);
-        const bool have_picture = pv_cache[pv_front][eye] && pv_cache_valid[pv_front][eye];
+        const bool have_picture = pv_cache[pv_front][eye] && pv_cache_tex[pv_front][eye] && pv_cache_valid[pv_front][eye];
         if (pv_skip && (have_picture || pv_threaded_was)) {
             // PV frame skip / threaded PV: the kept PV picture (black before the first one),
             // then a fresh HUD on top

@@ -1502,30 +1502,45 @@ static bool blit_draw_ready() {
 
 static bool blit_color_by_draw(Context& c, GLint sx0, GLint sy0, GLint sx1, GLint sy1,
     GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLenum filter) {
-    if (!c.read_fbo || sx0 == sx1 || sy0 == sy1 || dx0 == dx1 || dy0 == dy1)
+    // once per reason: which blits still go to the transfer path (and so could meet the Adreno bug)
+    auto transfer = [&](const char* key, const char* why) {
+        log_once(key, "Colour blit as a transfer (%s): framebuffer %u -> %u, %dx%d -> %dx%d", why,
+            c.read_fbo, c.draw_fbo, std::abs(sx1 - sx0), std::abs(sy1 - sy0), std::abs(dx1 - dx0), std::abs(dy1 - dy0));
         return false;
+    };
+    if (sx0 == sx1 || sy0 == sy1 || dx0 == dx1 || dy0 == dy1)
+        return false;
+    if (!c.read_fbo)
+        return transfer("blitx_win", "from the window");
     FramebufferObj* rf = c.framebuffers.get(c.read_fbo);
     if (!rf)
-        return false;
+        return transfer("blitx_nofb", "unknown read framebuffer");
     uint32_t ri = rf->read_buffer >= GL_COLOR_ATTACHMENT0 ? rf->read_buffer - GL_COLOR_ATTACHMENT0 : 0;
     if (ri >= MAX_COLOR_ATTACHMENTS)
-        return false;
+        return transfer("blitx_rb", "read buffer");
     const Attachment& a = rf->color[ri];
-    if (!a.texture || a.renderbuffer || a.level != 0 || a.layer != 0)
-        return false;
+    if (!a.texture || a.renderbuffer)
+        return transfer("blitx_rbuf", "a renderbuffer");
+    if (a.level != 0 || a.layer != 0)
+        return transfer("blitx_level", "a mip level or layer");
     TextureObj* t = c.textures.get(a.texture);
-    if (!t || !t->image || t->target != GL_TEXTURE_2D || t->samples != 1 || !t->format
-        || t->format->depth || t->format->stencil || t->format->is_int || t->base_level != 0)
-        return false;
+    if (!t || !t->image || !t->format)
+        return transfer("blitx_tex", "no texture image");
+    if (t->target != GL_TEXTURE_2D || t->samples != 1)
+        return transfer("blitx_ms", "multisample or not 2D");
+    if (t->format->depth || t->format->stencil || t->format->is_int)
+        return transfer("blitx_fmt", "depth, stencil or integer");
+    if (t->base_level != 0)
+        return transfer("blitx_base", "base level not 0");
     if (c.draw_fbo == c.read_fbo)
-        return false;   // the same framebuffer: a feedback loop as a draw
+        return transfer("blitx_same", "within one framebuffer");   // a feedback loop as a draw
     if (c.draw_fbo) {
         FramebufferObj* df = c.framebuffers.get(c.draw_fbo);
         if (!df)
-            return false;
+            return transfer("blitx_nodfb", "unknown draw framebuffer");
         for (const Attachment& d : df->color)
             if (d.texture == a.texture && !d.renderbuffer)
-                return false;
+                return transfer("blitx_loop", "the source texture is also the target");
     }
     if (!blit_draw_ready())
         return false;
