@@ -404,6 +404,26 @@ static bool pv_front_valid() {
     return pv_cache_valid[pv_front][0] && (!stereo_enabled() || pv_cache_valid[pv_front][1]);
 }
 
+// What render_all does at the start of every frame (and, in stereo, what the HUD's sprite
+// pass and the eye composite left between the eyes): DivaGL's cached GL state back in step
+// with GL, and the baseline render state the passes expect (colour writes on, depth test
+// LEQUAL with writes, cull face on, no blending). Without it a pass that left colour writes off
+// carried into the next picture or eye: objects drew depth only, as black holes. (Not
+// framebuffer 0's contents: that's the window's image, the game thread's.)
+static void pv_thread_baseline_state() {
+    gl_state.get();
+    render_data_context rend_data_ctx(GL_REND_STATE_PRE_3D);
+    rend_data_ctx.state.get();
+    rend_data_ctx.state.set_color_mask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    rend_data_ctx.state.enable_depth_test();
+    rend_data_ctx.state.set_depth_func(GL_LEQUAL);
+    rend_data_ctx.state.set_depth_mask(GL_TRUE);
+    rend_data_ctx.state.enable_cull_face();
+    rend_data_ctx.state.disable_blend();
+    rend_data_ctx.state.bind_framebuffer(0);
+    rend_data_ctx.state.finish();
+}
+
 static void pv_thread_draw() {
     pv_thread_t& t = *pvt;
     LARGE_INTEGER t0;
@@ -430,25 +450,7 @@ static void pv_thread_draw() {
     r->ctrl();
     r->render_manager_cam = t.cam;
 
-    // What render_all does at the start of every frame: this context's cached GL state back
-    // in step with GL, and the baseline render state the passes expect (colour writes on,
-    // depth test LEQUAL with writes). Without it a pass that left colour writes off carried
-    // into the next picture: objects drew depth only, as black holes. (Not framebuffer 0:
-    // that's the window's image, the game thread's.)
-    gl_state.get();
-    {
-        render_data_context rend_data_ctx(GL_REND_STATE_PRE_3D);
-        rend_data_ctx.state.get();
-        rend_data_ctx.state.set_color_mask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        rend_data_ctx.state.enable_depth_test();
-        rend_data_ctx.state.set_depth_func(GL_LEQUAL);
-        rend_data_ctx.state.set_depth_mask(GL_TRUE);
-        // and what the HUD's sprite pass leaves behind every frame on one thread
-        rend_data_ctx.state.enable_cull_face();
-        rend_data_ctx.state.disable_blend();
-        rend_data_ctx.state.bind_framebuffer(0);
-        rend_data_ctx.state.finish();
-    }
+    pv_thread_baseline_state();
 
     {
         // what the game thread's rndpass_pre_proc did for the PV, now for this picture only
@@ -477,6 +479,8 @@ static void pv_thread_draw() {
         rend->taa_blend = 1.0f;
     }
     for (int32_t eye = 0; eye < t.eyes; eye++) {
+        if (eye)
+            pv_thread_baseline_state();   // as the eye before it left things, the HUD passes didn't run here
         if (stereo) {
             const int32_t sign = eye ? 1 : -1;
             if (eye) {
