@@ -99,12 +99,15 @@ static void set_reflect_mat(render_data_context& rend_data_ctx, cam_data& cam);
      2-4  draw the PV every 2nd/3rd/4th frame
    Everything drawn into the PV picture freezes with it on skipped frames, including 2D
    backgrounds and movie PVs (cheap, so auto mode rarely skips those). */
-static RenderTexture* pv_cache[2][2] = {};    // [slot][eye]: eye 0 mono or left, 1 right
-static bool pv_cache_valid[2][2] = {};
+// Slots: in threaded mode one shown under the HUD, one whose picture the GPU is drawing, one
+// the PV thread is recording into, so the next picture never waits for the last one's GPU work.
+#define PV_SLOTS 3
+static RenderTexture* pv_cache[PV_SLOTS][2] = {};    // [slot][eye]: eye 0 mono or left, 1 right
+static bool pv_cache_valid[PV_SLOTS][2] = {};
 static int32_t pv_front = 0;                  // slot put back under the HUD
 static int32_t pv_save_slot = 0;              // slot a finished PV picture goes to (the other one in async mode)
-static int32_t pv_cache_w[2] = {};           // per slot (written by whoever draws into it)
-static int32_t pv_cache_h[2] = {};
+static int32_t pv_cache_w[PV_SLOTS] = {};    // per slot (written by whoever draws into it)
+static int32_t pv_cache_h[PV_SLOTS] = {};
 static bool pv_skip = false;                  // this frame reuses the kept PV picture
 static bool pv_threaded_was = false;          // threaded PV (pv_threaded_frame) was on last frame
 static int32_t pv_since_full = 0;             // frames since the PV was last drawn
@@ -354,7 +357,11 @@ static void pv_cache_restore(render_data_context& rend_data_ctx, int32_t eye) {
    lists are then refreshed and filled as usual. The PV thread has its own render context
    (buffers, targets, cached GL state), draws shadows, reflections, 3D and post-process per
    eye, keeps the result in its slot, submits and publishes the ticket. The game thread shows
-   the slot once the ticket is done on the GPU; the next picture is handed off after that.
+   the slot once the ticket is done on the GPU.
+   Pipelined: the next picture is handed off as soon as the PV thread is free on the CPU (and a
+   slot is free), not when the last one is shown, so recording picture N+1 overlaps the GPU
+   drawing picture N. At most two pictures are out (one on the GPU, one being recorded); the
+   runtime is told (pv_busy) only while neither a thread nor a slot is free.
    The PV thread's GPU work is ordered after the game frames that last showed the slot it
    overwrites (a GPU-side wait of the PV queue on the game's queue, never the reverse). */
 namespace {
@@ -376,18 +383,25 @@ namespace {
         uint32_t number = 0;
         cam_data cam;
         // results, published by the PV thread
-        std::atomic<uint64_t> ticket{ 0 };      // the picture's ticket once submitted
         std::atomic<uint32_t> recorded{ 0 };    // number of the picture last submitted
-        std::atomic<double> cpu_ms{ 0.0 };      // its thread time for the last picture
         std::atomic<uint64_t> cores{ 0 };       // CPU cores it ran pictures on (bits), for the log
+        std::atomic<bool> cpu_busy{ false };    // a picture handed off, the PV thread still recording it
+        std::atomic<int32_t> out{ 0 };          // pictures handed off and not shown yet (0..2)
+        // per picture out, by number % PV_SLOTS
+        struct pic_t {
+            std::atomic<uint64_t> ticket{ 0 };  // PV thread: its ticket once submitted (0 before)
+            std::atomic<double> cpu_ms{ 0.0 };  // PV thread: its thread time
+            int32_t slot = 0;                   // game thread, at the handoff
+            uint32_t number = 0;
+            LARGE_INTEGER handoff = {};
+        } pic[PV_SLOTS];
     };
     pv_thread_t* pvt = nullptr;
     std::atomic<uint32_t> pv_song_first{ 1 };   // the song's first picture number, for the log
-    bool pv_job_out = false;                    // game thread: handed off, not shown yet
+    uint32_t pv_next_show = 1;                  // game thread: the oldest picture out
     uint32_t pv_shown_number = 0;
     uint32_t pv_frame_no = 0;
     int32_t pv_trace_left = 0;
-    LARGE_INTEGER pv_handoff_time = {};
     struct {
         int32_t frames, late, pictures;
         double_t worst_ms, sum_ms, pic_ms_sum, pic_ms_max, pv_cpu_ms, handoff_ms;
@@ -572,7 +586,8 @@ static void pv_thread_draw() {
 
     dvk_dump_end();
     const uint64_t ticket = dvk_flush();
-    t.cpu_ms.store(pv_ms_since(t0));
+    pv_thread_t::pic_t& pic = t.pic[t.number % PV_SLOTS];
+    pic.cpu_ms.store(pv_ms_since(t0));
     {
         const DWORD core = GetCurrentProcessorNumber();
         if (core < 64)
@@ -594,11 +609,11 @@ static void pv_thread_draw() {
                 "%d eye(s), %.1f ms (setup %.1f, eyes %.1f + %.1f, rest %.1f)\n", t.number, objs, obj_opaque, obj_transp, obj_transl,
                 obj_screen, spr1, spr2,
                 (unsigned long long)(st1.draws - st0.draws), (unsigned long long)(st1.render_passes - st0.render_passes),
-                t.eyes, t.cpu_ms.load(), ms_pre, ms_eye[0], ms_eye[1], t.cpu_ms.load() - ms_pre - ms_eye[0] - ms_eye[1]);
+                t.eyes, pic.cpu_ms.load(), ms_pre, ms_eye[0], ms_eye[1], pic.cpu_ms.load() - ms_pre - ms_eye[0] - ms_eye[1]);
             OutputDebugStringA(buf);
         }
     }
-    t.ticket.store(ticket);
+    pic.ticket.store(ticket);
     t.recorded.store(t.number);
 }
 
@@ -671,6 +686,12 @@ static void pv_thread_main() {
         }
         if (pv_sync)
             pv_sync->pv_drawing = 0;
+        // free for the next picture now (its GPU work may still be running): the runtime
+        // may update the PV again from its next frame if a slot is free too
+        // (pv_busy first: the game thread can hand off, and set it, only once cpu_busy clears)
+        if (pv_sync && t.out.load() < 2)
+            pv_sync->pv_busy = 0;
+        t.cpu_busy.store(false);
     }
 
     sprite_manager_thread_free();
@@ -759,8 +780,10 @@ static void pv_threaded_frame() {
         // nothing from before this song: black until the first picture is done
         memset(pv_cache_valid, 0, sizeof(pv_cache_valid));
         pv_song_first = pvt ? pvt->number + 1 : 1;
+        pv_next_show = pvt ? pvt->number + 1 : 1;
         OutputDebugStringA("[DivaLinux] threaded PV on: the HUD every frame over the newest finished PV picture "
-            "(slots A and B), the PV on its own thread at whatever rate it manages\n");
+            "(slots A, B and C), the PV on its own thread at whatever rate it manages, pipelined (the next picture "
+            "recorded while the GPU draws the last)\n");
     }
     const double_t period = pv_sync->period_us ? pv_sync->period_us / 1000.0 : 13.9;
     if (!pv_ts.start.QuadPart)
@@ -783,34 +806,58 @@ static void pv_threaded_frame() {
     char trace[256] = "";
     const bool ready = pv_thread_start();
 
-    // a picture finished on the GPU: show it from this frame
-    if (ready && pv_job_out && pvt->recorded.load() == pvt->number
-        && dvk_ticket_done(pvt->ctx, pvt->ticket.load())) {
-        dvk_ticket_use(pvt->ctx, pvt->ticket.load());   // (finished: no GPU wait)
-        pv_front = pvt->slot;
-        pv_job_out = false;
-        pv_shown_number = pvt->number;
-        const double_t ms = pv_ms_since(pv_handoff_time);
+    // pictures finished on the GPU, oldest first: the newest of them shown from this frame
+    while (ready && pvt->out.load() > 0) {
+        pv_thread_t::pic_t& p = pvt->pic[pv_next_show % PV_SLOTS];
+        const uint64_t ticket = p.ticket.load();
+        if (!ticket || !dvk_ticket_done(pvt->ctx, ticket))
+            break;
+        dvk_ticket_use(pvt->ctx, ticket);   // (finished: no GPU wait)
+        pv_front = p.slot;
+        pv_shown_number = p.number;
+        pv_next_show++;
+        pvt->out.fetch_sub(1);
+        const double_t ms = pv_ms_since(p.handoff);
         pv_ts.pictures++;
         pv_ts.pic_ms_sum += ms;
         pv_ts.pic_ms_max = max_def(pv_ts.pic_ms_max, ms);
-        pv_ts.pv_cpu_ms += pvt->cpu_ms.load();
+        pv_ts.pv_cpu_ms += p.cpu_ms.load();
         pv_stat.full++;
-        pv_sync->pv_busy = 0;
         pv_sync->pv_done++;
-        snprintf(trace, sizeof(trace), "picture %u finished (%.1f ms after its handoff, PV thread %.1f ms) -> %c shown from now; ",
-            pv_shown_number, ms, pvt->cpu_ms.load(), pv_front ? 'B' : 'A');
+        snprintf(trace + strlen(trace), sizeof(trace) - strlen(trace),
+            "picture %u finished (%.1f ms after its handoff, PV thread %.1f ms) -> %c shown from now; ",
+            pv_shown_number, ms, p.cpu_ms.load(), 'A' + pv_front);
     }
+    // the thread and a slot free: the runtime may update the PV (again) from its next frame
+    const bool can_hand_off = ready && !pvt->cpu_busy.load() && pvt->out.load() < 2;
+    if (can_hand_off)
+        pv_sync->pv_busy = 0;
 
     // the PV's tasks rebuilt their lists this frame: hand them to the PV thread
     static uint32_t seq_seen = 0;
-    if (ready && !pv_job_out && pv_sync->disp_seq != seq_seen) {
+    if (can_hand_off && pv_sync->disp_seq != seq_seen) {
         seq_seen = pv_sync->disp_seq;
         LARGE_INTEGER h0;
         QueryPerformanceCounter(&h0);
         pv_thread_t& t = *pvt;
         t.number++;
-        t.slot = pv_front_valid() ? pv_front ^ 1 : pv_front;
+        // a slot neither shown (when there's a picture to show) nor used by a picture still out
+        {
+            bool used[PV_SLOTS] = {};
+            if (pv_front_valid())
+                used[pv_front] = true;
+            for (uint32_t n = pv_next_show; n < t.number; n++)
+                used[t.pic[n % PV_SLOTS].slot] = true;
+            t.slot = 0;
+            while (t.slot < PV_SLOTS - 1 && used[t.slot])
+                t.slot++;
+        }
+        pv_thread_t::pic_t& p = t.pic[t.number % PV_SLOTS];
+        p.ticket.store(0);
+        p.cpu_ms.store(0.0);
+        p.slot = t.slot;
+        p.number = t.number;
+        QueryPerformanceCounter(&p.handoff);
         pv_cache_valid[t.slot][0] = pv_cache_valid[t.slot][1] = false;
         pv_save_slot = t.slot;
         t.eyes = stereo_enabled() ? 2 : 1;
@@ -832,26 +879,30 @@ static void pv_threaded_frame() {
             pv_thread_bind(false);
         }
         else {
+            t.cpu_busy.store(true);
+            t.out.fetch_add(1);
             {
                 std::lock_guard<std::mutex> lock(t.m);
                 t.job = true;
             }
             t.cv.notify_one();
         }
-        pv_job_out = true;
+        if (pv_inline_mode())
+            t.out.fetch_add(1);
+        // busy until the PV thread is done recording it (it clears this itself) and a slot is free
         pv_sync->pv_busy = 1;
-        QueryPerformanceCounter(&pv_handoff_time);
         pv_ts.handoff_ms += pv_ms_since(h0);
         snprintf(trace + strlen(trace), sizeof(trace) - strlen(trace), "picture %u handed to the PV thread (into %c); ",
-            t.number, t.slot ? 'B' : 'A');
+            t.number, 'A' + t.slot);
     }
 
     if (pv_trace_left > 0) {
         pv_trace_left--;
         char buf[512];
         snprintf(buf, sizeof(buf), "[DivaLinux] threaded PV frame %u (%.1f ms): HUD drawn over %c (picture %u), "
-            "waited for the PV 0 ms; %s%s\n", pv_frame_no, pv_frame_ms, pv_front ? 'B' : 'A', pv_shown_number, trace,
-            pv_job_out ? "PV thread drawing" : (ready ? "PV thread idle" : "PV thread starting"));
+            "waited for the PV 0 ms; %s%s, %d picture(s) out\n", pv_frame_no, pv_frame_ms, 'A' + pv_front, pv_shown_number, trace,
+            !ready ? "PV thread starting" : pvt->cpu_busy.load() ? "PV thread recording" : "PV thread free",
+            ready ? pvt->out.load() : 0);
         OutputDebugStringA(buf);
     }
 }
@@ -1068,11 +1119,14 @@ namespace rndr {
             // Leaving a song: the PV thread may still be drawing the last picture with the
             // shared post-process state and objects; the game thread draws the PV itself from
             // now on, so let that finish first (not during play: this is the song's end).
-            if (pvt && pv_job_out)
-                while (pvt->recorded.load() != pvt->number)
+            if (pvt)
+                while (pvt->cpu_busy.load())
                     Sleep(0);
+            if (pvt) {
+                pvt->out.store(0);
+                pv_next_show = pvt->number + 1;
+            }
             pv_threaded_was = false;
-            pv_job_out = false;
             pv_save_slot = pv_front;
             if (pv_sync)
                 pv_sync->pv_busy = 0;
