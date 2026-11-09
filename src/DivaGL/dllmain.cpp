@@ -38,6 +38,7 @@ extern "C" void divalinux_io_trace_install(HMODULE self, const wchar_t* config_f
 extern "C" void divalinux_vfs_install(HMODULE self, const wchar_t* config_file);
 extern "C" void divalinux_cursor_install(const wchar_t* config_file);
 extern "C" void divaoverlay_install(HMODULE self, const wchar_t* divalinux_ini); // src/DivaOverlay
+extern "C" void divalinux_stages_install(const wchar_t* game_dir);                // songs per credit
 #include <divavk/divavk.h>
 #define DIVAGL_PLUGIN_NAME L"DivaLinux"
 std::wstring CONFIG_FILE_STRING = GetDirPath() + L"\\plugins\\DivaLinux.ini";
@@ -177,6 +178,7 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
         divalinux_movie_install(CONFIG_FILE);
         divalinux_cursor_install(CONFIG_FILE);
         divaoverlay_install(handle, CONFIG_FILE);   // the in-game settings menu
+        divalinux_stages_install(GetDirPath().c_str());
         // The file layer's hooks go in first, so the trace (when on) measures what it does.
         divalinux_vfs_install(handle, CONFIG_FILE);
         divalinux_io_trace_install(handle, CONFIG_FILE);

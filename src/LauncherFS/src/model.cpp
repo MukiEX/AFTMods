@@ -457,6 +457,8 @@ namespace lfs {
                 make_bool(L"Auto_Databank", PATCHES, CONFIG, L"Auto Databank", L"Automatically generate databank for missing entries and allow multiple PvList files to be used.", true, false),
                 make_int(L"Enhanced_Stage_Manager", PATCHES, CONFIG, L"Number of Stages:", L"Set the number of stages (0 = default).", 0, 0, INT_MAX),
                 make_bool(L"Enhanced_Stage_Manager_Encore", PATCHES, CONFIG, L"Encore", L"Enable encore stages.", true, false),
+                make_int(L"normal_stages", PATCHES, CONFIG, L"Songs per Credit (Normal):", L"Songs per credit with ASSURE NEXT STAGE off (failing a song ends the credit).\n0 = the game's own (2 or 3). Needs DivaLinux.dva or DivaRecomp; Number of Stages above must be 0.", 0, 0, 10),
+                make_int(L"protected_stages", PATCHES, CONFIG, L"Songs per Credit (Protected):", L"Songs per credit with ASSURE NEXT STAGE on (the PROTECTED gauge: failing doesn't end the credit).\n0 = the game's own (2 or 3). Needs DivaLinux.dva or DivaRecomp; Number of Stages above must be 0.", 0, 0, 10),
                 make_bool(L"sing_missed", PATCHES, CONFIG, L"Sing Missed", L"Sing missed notes.", false, false),
                 make_bool(L"autopause", KEYCONFIG, KEYCFG, L"Pause Automatically", L"Pause when focus is lost.", true, true),
 

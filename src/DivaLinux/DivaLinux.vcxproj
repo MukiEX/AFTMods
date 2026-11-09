@@ -130,6 +130,7 @@
     <ClCompile Include="io_trace.cpp" />
     <ClCompile Include="vfs.cpp" />
     <ClCompile Include="overlay.cpp" />
+    <ClCompile Include="stages.cpp" />
     <ClCompile Include="..\DivaOverlay\ov_host.cpp">
       <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
