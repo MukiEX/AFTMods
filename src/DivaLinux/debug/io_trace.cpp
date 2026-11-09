@@ -28,8 +28,8 @@
 
 #pragma intrinsic(_ReturnAddress)
 
-#include "common/iat_patch.hpp"
-#include "common/util.hpp"
+#include "../common/iat_patch.hpp"
+#include "../common/util.hpp"
 
 namespace {
     // ------------------------------------------------------------ hooked functions

@@ -15,7 +15,7 @@
 */
 
 #include <windows.h>
-#include "../../DivaLinux/common/iat_patch.hpp"
+#include "../common/iat_patch.hpp"
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -474,8 +474,8 @@ static int patch_imports(HMODULE module, const char* label) {
 static std::vector<HMODULE> s_patched;
 
 #ifdef DIVALINUX
-extern "C" void divalinux_vfs_patch_modules(); // src/DivaLinux/vfs.cpp
-extern "C" void divalinux_io_trace_patch_modules(); // src/DivaLinux/io_trace.cpp
+extern "C" void divalinux_vfs_patch_modules(); // src/DivaLinux/vfs/vfs.cpp
+extern "C" void divalinux_io_trace_patch_modules(); // src/DivaLinux/debug/io_trace.cpp
 #endif
 
 static void patch_all_modules() {

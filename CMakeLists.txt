@@ -139,9 +139,9 @@ if(AFTMODS_BUILD_DIVALINUX)
     set(DIVALINUX_MOVIE_SOURCES ${MV}/movie.cpp ${MV}/ff_loader.cpp ${MV}/ff_movie.cpp ${MV}/ff_player.cpp
         ${MV}/movie_gl.cpp ${MV}/movie_yuv.cpp)
     add_library(DivaLinux SHARED
-        ${AFT_ROOT}/src/DivaVK/plugin/vk_bridge.cpp
+        ${AFT_ROOT}/src/DivaLinux/gl_bridge/vk_bridge.cpp
         ${DIVALINUX_MOVIE_SOURCES}
-        ${AFT_ROOT}/src/DivaLinux/io_trace.cpp
+        ${AFT_ROOT}/src/DivaLinux/debug/io_trace.cpp
         ${AFT_ROOT}/src/DivaLinux/vfs/vfs.cpp
         ${AFT_ROOT}/src/DivaLinux/vfs/paths.cpp
         ${AFT_ROOT}/src/DivaLinux/vfs/wildcard.cpp
@@ -155,7 +155,7 @@ if(AFTMODS_BUILD_DIVALINUX)
         ${AFT_ROOT}/src/DivaLinux/overlay/launcher_api.cpp
         ${AFT_ROOT}/src/DivaLinux/overlay/layout.cpp
         ${AFT_ROOT}/src/DivaLinux/overlay/overlay_gl.cpp
-        ${AFT_ROOT}/src/DivaLinux/stages.cpp
+        ${AFT_ROOT}/src/DivaLinux/game/stages.cpp
         ${AFT_ROOT}/src/DivaLinux/common/iat_patch.cpp
         ${AFT_ROOT}/src/DivaLinux/common/util.cpp
         ${DIVAGL_SOURCES})

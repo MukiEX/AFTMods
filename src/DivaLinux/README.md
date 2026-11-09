@@ -237,12 +237,12 @@ Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation la
 | --- | --- |
 | `src/DivaGL/` | The renderer; compiled with `DIVAVK` and `DIVALINUX` defined for this plugin |
 | `src/DivaVK/core/` | GL-on-Vulkan runtime (`divavk_core`) |
-| `src/DivaVK/plugin/vk_bridge.cpp` | WGL emulation and GL import/table patching |
+| `gl_bridge/vk_bridge.cpp` | WGL emulation and GL import/table patching |
 | `movie/ff_loader.*`, `ff_movie.*`, `ff_player.*` | DivaMovie's FFmpeg player (loading FFmpeg, the decoder, the game's player interface), nearly unchanged |
 | `movie/movie_gl.*` | The player's GL upload functions, taken from DivaVK instead of opengl32 |
 | `movie/movie_yuv.*` | GPU YUV-to-RGB conversion into the movie texture, inside `dvk_push_gl_state`/`dvk_pop_gl_state`; tested in `src/DivaVK/tests` |
 | `movie/movie.cpp` | Installs the player on the game's `CreatePlayer` factory |
-| `io_trace.cpp` | The `[debug] io_trace` file I/O trace |
+| `debug/io_trace.cpp` | The `[debug] io_trace` file I/O trace |
 | `vfs/` | `[loading]`: the lookup cache and archive reading. `vfs.cpp` (install, hooking, statistics), `paths.cpp`, `wildcard.*`, `zip_index.*` (a stored zip's index), `archives.cpp`, `dir_cache.cpp`, `vhandles.cpp` (our find and member handles), `hooks.cpp` (the kernel32 replacements); tested on Linux in `tests/` |
 | `overlay/` | Draws the launcher's in-game menu, DivaOverlay and the mouse pointer over the frame: `compositor.cpp` (per frame), `launcher_api.cpp` (the launcher's C ABI), `layout.cpp` (flat / side-by-side placement, where the game sees the mouse), `cursor.cpp` (the pointer), `overlay_gl.*` (the GL drawing; tested in `src/DivaVK/tests`) |
 | `../../tools/divalinux_pack.py` | Makes `rom.zip` and `mdata\<pack>.zip` |

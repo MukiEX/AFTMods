@@ -125,14 +125,14 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\DivaVK\plugin\vk_bridge.cpp" />
+    <ClCompile Include="gl_bridge\vk_bridge.cpp" />
     <ClCompile Include="movie\movie.cpp" />
     <ClCompile Include="movie\ff_loader.cpp" />
     <ClCompile Include="movie\ff_movie.cpp" />
     <ClCompile Include="movie\ff_player.cpp" />
     <ClCompile Include="movie\movie_gl.cpp" />
     <ClCompile Include="movie\movie_yuv.cpp" />
-    <ClCompile Include="io_trace.cpp" />
+    <ClCompile Include="debug\io_trace.cpp" />
     <ClCompile Include="vfs\vfs.cpp" />
     <ClCompile Include="vfs\paths.cpp" />
     <ClCompile Include="vfs\wildcard.cpp" />
@@ -146,7 +146,7 @@
     <ClCompile Include="overlay\launcher_api.cpp" />
     <ClCompile Include="overlay\layout.cpp" />
     <ClCompile Include="overlay\overlay_gl.cpp" />
-    <ClCompile Include="stages.cpp" />
+    <ClCompile Include="game\stages.cpp" />
     <ClCompile Include="common\iat_patch.cpp" />
     <ClCompile Include="common\util.cpp" />
     <ClCompile Include="..\DivaOverlay\ov_host.cpp">

@@ -19,7 +19,7 @@ DivaGL and its shaders are by korenkonder; DivaVK builds on them and must credit
 | --- | --- |
 | `core/` | Platform-independent GL-on-Vulkan runtime (`divavk_core` static library) |
 | `core/include/divavk/divavk.h` | Public API: create, `dvk_get_proc_address`, swap, resize |
-| `plugin/vk_bridge.cpp` | Windows/Wine bridge: WGL emulation and import/table patching |
+| `../DivaLinux/gl_bridge/vk_bridge.cpp` | Windows/Wine bridge: WGL emulation and import/table patching |
 | `../DivaLinux/` | Builds `DivaLinux.dva`: DivaGL's sources plus the bridge (`DIVAVK` defined) and the FFmpeg movie player |
 | `tests/` | Headless test runner (any Vulkan driver, including SwiftShader) |
 | `tools/` | Generators for the GL name list and the game's GL slot table |
@@ -29,7 +29,7 @@ DivaGL and its shaders are by korenkonder; DivaVK builds on them and must credit
 
 ```
 diva.exe / GLUT / DivaGL ──GL calls──▶ game GL tables + imports ──patched──▶ DivaVK core ──▶ Vulkan
-                                           (plugin/vk_bridge.cpp)
+                                           (DivaLinux/gl_bridge/vk_bridge.cpp)
 ```
 
 - The bridge rewrites the `opengl32.dll`/`gdi32.dll` imports of `diva.exe`, `glut32.dll` and the
