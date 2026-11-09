@@ -399,7 +399,11 @@ static void pv_cache_restore(render_data_context& rend_data_ctx, int32_t eye) {
     const int32_t w = pv_cache_w[pv_front], h = pv_cache_h[pv_front];
     const int32_t sw = rctx->screen_width, sh = rctx->screen_height;
     const GLuint screen = rctx->screen_buffer.get_fb();
+    // (a frame dump only) the picture as the game thread sees it just before copying it
+    dvk_dump_gl_texture(pv_cache_tex[pv_front][eye], eye ? "restore_src_right" : "restore_src_left");
     pv_blit(pv_cache_fb[pv_front][eye], screen, w, h, sw, sh);
+    dvk_dump_gl_texture(rctx->screen_buffer.m_txhd_color ? rctx->screen_buffer.get_texture_glid() : 0,
+        eye ? "restore_dst_right" : "restore_dst_left");
     // the HUD is drawn into the screen buffer next: leave it bound, as the render state is told
     glBindFramebuffer(GL_FRAMEBUFFER, screen);
     rend_data_ctx.state.bind_framebuffer(screen);
