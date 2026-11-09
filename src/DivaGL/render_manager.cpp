@@ -504,10 +504,6 @@ static bool pv_threaded_on() {
     return pv_sync && pv_sync->version >= 2 && pv_sync->async;
 }
 
-static bool pv_front_valid() {
-    return pv_cache_valid[pv_front][0] && (!stereo_enabled() || pv_cache_valid[pv_front][1]);
-}
-
 // What render_all does at the start of every frame (and, in stereo, what the HUD's sprite
 // pass and the eye composite left between the eyes): DivaGL's cached GL state back in step
 // with GL, and the baseline render state the passes expect (colour writes on, depth test
@@ -920,14 +916,27 @@ static void pv_threaded_frame() {
         t.number++;
         // a slot neither shown (when there's a picture to show) nor used by a picture still out
         {
+            // The shown slot is always off limits, whether or not both its eyes are marked
+            // saved: with it left out when they weren't, the PV thread drew into the picture
+            // being shown. Frame dumps from the Odin 3 caught the game thread copying slot A
+            // while the PV thread drew into slot A: Qualcomm's driver showed it as the right
+            // eye with one triangle black (the copy reading the picture half redrawn), Turnip
+            // as whole frames of black PV now and then.
             bool used[PV_SLOTS] = {};
-            if (pv_front_valid())
-                used[pv_front] = true;
+            used[pv_front] = true;
             for (uint32_t n = pv_next_show; n < t.number; n++)
                 used[t.pic[n % PV_SLOTS].slot] = true;
             t.slot = 0;
-            while (t.slot < PV_SLOTS - 1 && used[t.slot])
+            while (t.slot < PV_SLOTS && used[t.slot])
                 t.slot++;
+            if (t.slot == PV_SLOTS) {   // can't happen with at most one picture out at a handoff
+                static bool said;
+                if (!said) {
+                    said = true;
+                    OutputDebugStringA("[DivaLinux] threaded PV: no free picture slot at a handoff; reusing the oldest\n");
+                }
+                t.slot = t.pic[pv_next_show % PV_SLOTS].slot;
+            }
         }
         pv_thread_t::pic_t& p = t.pic[t.number % PV_SLOTS];
         p.ticket.store(0);
