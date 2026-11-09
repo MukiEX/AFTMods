@@ -478,12 +478,12 @@ namespace dov {
         std::vector<SectionPtr> out;
 
         // Under the runtime, only what it reads (pdloader_compat.c): the window and internal
-        // resolution, the frame rate manager's motion rate and the fast loader.
+        // resolution, the frame rate manager's motion rate, the fast loader and No Lyrics.
         std::function<bool(const lfs::Option&)> keep;
         if (recomp)
             keep = [](const lfs::Option& o) {
                 static const wchar_t* used[] = { L"width", L"r.enable", L"r.width", L"frm.motion.rate",
-                    L"fast_loader", L"fast_loader_speed", L"frame_rate_manager" };
+                    L"fast_loader", L"fast_loader_speed", L"frame_rate_manager", L"no_lyrics" };
                 for (const wchar_t* k : used)
                     if (o.key == k)
                         return true;
