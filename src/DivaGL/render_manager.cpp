@@ -624,6 +624,20 @@ static void pv_thread_draw() {
         }
         stereo_eye_reset();
         ms_eye[eye] = pv_ms_since(te);
+        /* Each eye in a submission of its own (DIVA_PV_FLUSH_PER_EYE=0: one for the picture).
+           On the Odin 3 with Qualcomm's driver the second eye's saved picture reached the game
+           thread with one triangle-shaped half never written (stale: an older picture, or the
+           texture's first contents), while the first eye's always arrived whole and mono never
+           failed. Splitting the copy into 4x4 squares left the same single diagonal, so it isn't
+           the copy's triangles; a third copy after it didn't help either. With a flush here
+           every eye's save is the first one of its submission. */
+        static int per_eye = -1;
+        if (per_eye < 0) {
+            const char* e = getenv("DIVA_PV_FLUSH_PER_EYE");
+            per_eye = !(e && e[0] == '0');
+        }
+        if (per_eye && eye + 1 < t.eyes)
+            dvk_flush();
     }
     r->render_manager_cam = center_cam;
     rend->taa = taa;
