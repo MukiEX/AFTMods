@@ -158,6 +158,8 @@ if(AFTMODS_BUILD_DIVALINUX)
         ${AFT_ROOT}/src/DivaLinux/game/stages.cpp
         ${AFT_ROOT}/src/DivaLinux/common/iat_patch.cpp
         ${AFT_ROOT}/src/DivaLinux/common/util.cpp
+        ${AFT_ROOT}/src/DivaLinux/common/config.cpp
+        ${AFT_ROOT}/src/DivaLinux/main.cpp
         ${DIVAGL_SOURCES})
     aft_plugin(DivaLinux)
     target_compile_definitions(DivaLinux PRIVATE DIVAVK DIVALINUX)

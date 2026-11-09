@@ -33,19 +33,12 @@ static void trim_space(const char*& str, size_t& length);
 extern "C" void divavk_bridge_install(HMODULE self);
 extern "C" void divavk_bridge_shutdown();
 extern "C" void divavk_log_text(const char* text);
-extern "C" void divalinux_movie_install(const wchar_t* config_file);
-extern "C" void divalinux_io_trace_install(HMODULE self, const wchar_t* config_file);
-extern "C" void divalinux_vfs_install(HMODULE self, const wchar_t* config_file);
-extern "C" void divalinux_cursor_install(const wchar_t* config_file);
-extern "C" void divaoverlay_install(HMODULE self, const wchar_t* divalinux_ini); // src/DivaOverlay
-extern "C" void divalinux_stages_install(const wchar_t* game_dir);                // songs per credit
+extern "C" void divalinux_install(HMODULE self, const wchar_t* config_file, const wchar_t* game_dir); // src/DivaLinux/main.cpp
+extern "C" void divalinux_migrate_config(const wchar_t* plugins_dir, const wchar_t* config_file);   // src/DivaLinux/common/config.cpp
 #include <divavk/divavk.h>
 #define DIVAGL_PLUGIN_NAME L"DivaLinux"
 std::wstring CONFIG_FILE_STRING = GetDirPath() + L"\\plugins\\DivaLinux.ini";
 
-// First run after switching from the separate plugins: start from their settings.
-// DivaVK.ini (or DivaGL.ini) has the renderer and stereo options; DivaMovie.ini's [general]
-// ffmpeg_player and movie_audio move to [movie]. Only done while DivaLinux.ini doesn't exist.
 // [vr]: show the game in a headset through OpenXR (src/DivaVK/core/src/xr.cpp), as a virtual
 // screen. With SBS stereo on, each eye gets its own half, so the screen is in 3D.
 // Called by the bridge just before it creates the Vulkan context.
@@ -72,27 +65,6 @@ extern "C" bool divalinux_get_xr_info(dvk_xr_info* out) {
     return true;
 }
 
-static void divalinux_migrate_config() {
-    if (GetFileAttributesW(CONFIG_FILE_STRING.c_str()) != INVALID_FILE_ATTRIBUTES)
-        return;
-    std::wstring dir = GetDirPath() + L"\\plugins\\";
-    for (const wchar_t* old : { L"DivaVK.ini", L"DivaGL.ini" })
-        if (CopyFileW((dir + old).c_str(), CONFIG_FILE_STRING.c_str(), TRUE)) {
-            char msg[128];
-            snprintf(msg, sizeof(msg), "Created DivaLinux.ini from %ls", old);
-            divavk_log_text(msg);
-            break;
-        }
-    std::wstring movie_ini = dir + L"DivaMovie.ini";
-    if (GetFileAttributesW(movie_ini.c_str()) != INVALID_FILE_ATTRIBUTES) {
-        for (const wchar_t* key : { L"ffmpeg_player", L"movie_audio" }) {
-            wchar_t value[16] = {};
-            if (GetPrivateProfileStringW(L"general", key, L"", value, 16, movie_ini.c_str()))
-                WritePrivateProfileStringW(L"movie", key, value, CONFIG_FILE_STRING.c_str());
-        }
-        divavk_log_text("Copied movie settings from DivaMovie.ini");
-    }
-}
 #else
 #define DIVAGL_PLUGIN_NAME L"DivaGL"
 std::wstring CONFIG_FILE_STRING = GetDirPath() + L"\\plugins\\DivaGL.ini";
@@ -132,7 +104,7 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
     switch (ul_reason_for_call) {
     case DLL_PROCESS_ATTACH:
 #ifdef DIVAVK
-        divalinux_migrate_config();
+        divalinux_migrate_config((GetDirPath() + L"\\plugins\\").c_str(), CONFIG_FILE_STRING.c_str());
 #endif
         sv_reflect_full = GetPrivateProfileIntW(L"general", L"reflect_full", 0, CONFIG_FILE) > 0 ? true : false;
         sv_reflect_res_scale = GetPrivateProfileIntW(L"general", L"reflect_res_scale", 100, CONFIG_FILE);
@@ -175,13 +147,7 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
 #ifdef DIVAVK
         // No WGL_NV_DX_interop2 under Vulkan: always use the CPU upload path for videos.
         sv_task_movie_player_no_interop = true;
-        divalinux_movie_install(CONFIG_FILE);
-        divalinux_cursor_install(CONFIG_FILE);
-        divaoverlay_install(handle, CONFIG_FILE);   // the in-game settings menu
-        divalinux_stages_install(GetDirPath().c_str());
-        // The file layer's hooks go in first, so the trace (when on) measures what it does.
-        divalinux_vfs_install(handle, CONFIG_FILE);
-        divalinux_io_trace_install(handle, CONFIG_FILE);
+        divalinux_install(handle, CONFIG_FILE, GetDirPath().c_str());   // movie, pointer, menu, files...
 #endif
 
         dll_handle = (size_t)handle;

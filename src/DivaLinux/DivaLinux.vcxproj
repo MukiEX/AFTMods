@@ -149,6 +149,8 @@
     <ClCompile Include="game\stages.cpp" />
     <ClCompile Include="common\iat_patch.cpp" />
     <ClCompile Include="common\util.cpp" />
+    <ClCompile Include="common\config.cpp" />
+    <ClCompile Include="main.cpp" />
     <ClCompile Include="..\DivaOverlay\ov_host.cpp">
       <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
