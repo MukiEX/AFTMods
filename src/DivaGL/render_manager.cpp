@@ -649,6 +649,43 @@ static void pv_thread_draw() {
         rend_data_ctx.state.finish();
     }
 
+    /* One more render pass after the last eye's save, before the picture goes to the GPU: a
+       clear of a 1x1 target of our own. On the Odin 3 with Qualcomm's driver the right eye's
+       picture, saved by the last render pass of the submission, read back from the game thread
+       with one triangle never written (black), though the PV thread's own readback had it
+       whole and the slots and waits were right. The first Odin triangle (a transfer that read
+       the previous transfer's output) went away with a render pass in between; this gives the
+       last save a pass after it. DIVA_PV_TAIL_PASS=0 leaves it out. */
+    {
+        static int tail = -1;
+        static GLuint tail_tex = 0, tail_fb = 0;
+        if (tail < 0) {
+            const char* e = getenv("DIVA_PV_TAIL_PASS");
+            tail = !(e && e[0] == '0');
+        }
+        if (tail) {
+            GLint prev_draw = 0, prev_read = 0, prev_tex = 0;
+            glGetIntegervDLL(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
+            glGetIntegervDLL(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
+            if (!tail_fb) {
+                glGetIntegervDLL(GL_TEXTURE_BINDING_2D, &prev_tex);
+                glGenTexturesDLL(1, &tail_tex);
+                glBindTextureDLL(GL_TEXTURE_2D, tail_tex);
+                glTexParameteriDLL(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+                glTexImage2DDLL(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+                glBindTextureDLL(GL_TEXTURE_2D, (GLuint)prev_tex);
+                glGenFramebuffers(1, &tail_fb);
+                glBindFramebuffer(GL_FRAMEBUFFER, tail_fb);
+                glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tail_tex, 0);
+            }
+            glBindFramebuffer(GL_FRAMEBUFFER, tail_fb);
+            const GLfloat zero[4] = {};
+            glClearBufferfv(GL_COLOR, 0, zero);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)prev_read);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)prev_draw);
+        }
+    }
+
     // (a frame dump only) the picture as handed over, to compare with right after its save
     for (int32_t e = 0; e < t.eyes; e++)
         dvk_dump_gl_texture(pv_cache_tex[pv_save_slot][e], e ? "pvpic_at_end_right" : "pvpic_at_end_left");
