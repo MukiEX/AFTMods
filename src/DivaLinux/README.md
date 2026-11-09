@@ -100,7 +100,7 @@ enabled=0` turns it off, `key=` changes the key. See `src/DivaOverlay/README.md`
 
 ## Faster loading and fewer files: `[loading]`
 
-DivaLinux can take over the game's file access in `rom\` and `mdata\` (`vfs.cpp`). This
+DivaLinux can take over the game's file access in `rom\` and `mdata\` (`vfs/`). This
 helps with two problems on slow devices such as a Quest, or a phone running the game through
 Wine and FEX.
 
@@ -243,7 +243,7 @@ Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation la
 | `movie/movie_yuv.*` | GPU YUV-to-RGB conversion into the movie texture, inside `dvk_push_gl_state`/`dvk_pop_gl_state`; tested in `src/DivaVK/tests` |
 | `movie/movie.cpp` | Installs the player on the game's `CreatePlayer` factory |
 | `io_trace.cpp` | The `[debug] io_trace` file I/O trace |
-| `vfs.cpp` | `[loading]`: the lookup cache and archive reading |
+| `vfs/` | `[loading]`: the lookup cache and archive reading. `vfs.cpp` (install, hooking, statistics), `paths.cpp`, `wildcard.*`, `zip_index.*` (a stored zip's index), `archives.cpp`, `dir_cache.cpp`, `vhandles.cpp` (our find and member handles), `hooks.cpp` (the kernel32 replacements); tested on Linux in `tests/` |
 | `overlay/` | Draws the launcher's in-game menu, DivaOverlay and the mouse pointer over the frame: `compositor.cpp` (per frame), `launcher_api.cpp` (the launcher's C ABI), `layout.cpp` (flat / side-by-side placement, where the game sees the mouse), `cursor.cpp` (the pointer), `overlay_gl.*` (the GL drawing; tested in `src/DivaVK/tests`) |
 | `../../tools/divalinux_pack.py` | Makes `rom.zip` and `mdata\<pack>.zip` |
 | `src/DivaVK/core/src/xr.cpp` | OpenXR output (virtual screen), tested against `src/DivaVK/tests/mock_xr_runtime.cpp` |

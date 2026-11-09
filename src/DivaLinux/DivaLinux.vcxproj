@@ -133,7 +133,14 @@
     <ClCompile Include="movie\movie_gl.cpp" />
     <ClCompile Include="movie\movie_yuv.cpp" />
     <ClCompile Include="io_trace.cpp" />
-    <ClCompile Include="vfs.cpp" />
+    <ClCompile Include="vfs\vfs.cpp" />
+    <ClCompile Include="vfs\paths.cpp" />
+    <ClCompile Include="vfs\wildcard.cpp" />
+    <ClCompile Include="vfs\zip_index.cpp" />
+    <ClCompile Include="vfs\archives.cpp" />
+    <ClCompile Include="vfs\dir_cache.cpp" />
+    <ClCompile Include="vfs\vhandles.cpp" />
+    <ClCompile Include="vfs\hooks.cpp" />
     <ClCompile Include="overlay\compositor.cpp" />
     <ClCompile Include="overlay\cursor.cpp" />
     <ClCompile Include="overlay\launcher_api.cpp" />

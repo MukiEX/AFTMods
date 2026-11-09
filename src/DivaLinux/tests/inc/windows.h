@@ -1,4 +1,4 @@
-// Minimal Win32 stand-in for testing vfs.cpp on Linux (see test.cpp for the fake kernel).
+// Minimal Win32 stand-in for testing the file layer (../vfs) on Linux (see test.cpp for the fake kernel).
 #pragma once
 #include <unistd.h>
 #include <stdint.h>

@@ -142,7 +142,14 @@ if(AFTMODS_BUILD_DIVALINUX)
         ${AFT_ROOT}/src/DivaVK/plugin/vk_bridge.cpp
         ${DIVALINUX_MOVIE_SOURCES}
         ${AFT_ROOT}/src/DivaLinux/io_trace.cpp
-        ${AFT_ROOT}/src/DivaLinux/vfs.cpp
+        ${AFT_ROOT}/src/DivaLinux/vfs/vfs.cpp
+        ${AFT_ROOT}/src/DivaLinux/vfs/paths.cpp
+        ${AFT_ROOT}/src/DivaLinux/vfs/wildcard.cpp
+        ${AFT_ROOT}/src/DivaLinux/vfs/zip_index.cpp
+        ${AFT_ROOT}/src/DivaLinux/vfs/archives.cpp
+        ${AFT_ROOT}/src/DivaLinux/vfs/dir_cache.cpp
+        ${AFT_ROOT}/src/DivaLinux/vfs/vhandles.cpp
+        ${AFT_ROOT}/src/DivaLinux/vfs/hooks.cpp
         ${AFT_ROOT}/src/DivaLinux/overlay/compositor.cpp
         ${AFT_ROOT}/src/DivaLinux/overlay/cursor.cpp
         ${AFT_ROOT}/src/DivaLinux/overlay/launcher_api.cpp

@@ -1,4 +1,4 @@
-// Tests vfs.cpp against a Wine-like fake kernel over Linux folders.
+// Tests the file layer (../vfs) against a Wine-like fake kernel over Linux folders.
 #include <windows.h>
 #include <string>
 #include <vector>
@@ -213,7 +213,23 @@ FARPROC GetProcAddress(HMODULE, const char* n) {
     return (FARPROC)m[n];
 }
 
-#include "../vfs.cpp"
+// The plain names, for DivaLinux's own file access (divalinux_file_*), which calls them
+// directly rather than through the hooked import table.
+HANDLE CreateFileW(LPCWSTR p, DWORD a, DWORD s, LPSECURITY_ATTRIBUTES sa, DWORD d, DWORD f, HANDLE t) { return fake_CreateFileW(p, a, s, sa, d, f, t); }
+BOOL ReadFile(HANDLE h, LPVOID b, DWORD n, LPDWORD r, LPOVERLAPPED ov) { return fake_ReadFile(h, b, n, r, ov); }
+BOOL SetFilePointerEx(HANDLE h, LARGE_INTEGER d, PLARGE_INTEGER o, DWORD m) { return fake_SetFilePointerEx(h, d, o, m); }
+BOOL GetFileSizeEx(HANDLE h, PLARGE_INTEGER s) { return fake_GetFileSizeEx(h, s); }
+
+#include "../vfs/vfs.cpp"
+#include "../vfs/paths.cpp"
+#include "../vfs/wildcard.cpp"
+#include "../vfs/zip_index.cpp"
+#include "../vfs/archives.cpp"
+#include "../vfs/dir_cache.cpp"
+#include "../vfs/vhandles.cpp"
+#include "../vfs/hooks.cpp"
+#include "../common/util.cpp"
+#include "../common/iat_patch.cpp"
 
 static int g_checks = 0, g_fail = 0;
 static std::mutex g_check_m;

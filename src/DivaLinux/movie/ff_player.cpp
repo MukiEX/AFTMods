@@ -73,7 +73,7 @@ namespace FFPlayer
 	int decodeThreads = 0;     // [movie] decode_threads
 	bool gpuConvert = true;    // [movie] gpu_convert
 
-	// Movies are opened through DivaLinux's file layer (vfs.cpp), so ones inside rom.zip or an
+	// Movies are opened through DivaLinux's file layer (vfs/), so ones inside rom.zip or an
 	// mdata pack zip play too: FFmpeg's own file code would only see real folders.
 	extern "C" HANDLE divalinux_file_open(const wchar_t* path);
 	extern "C" BOOL divalinux_file_read(HANDLE h, void* buffer, DWORD size, DWORD* read);
