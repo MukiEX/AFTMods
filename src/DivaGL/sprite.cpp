@@ -422,9 +422,15 @@ namespace spr {
 
             // Stereo: horizontal parallax for this sprite list (clip.x += offset * clip.w).
             // view_projection is stored transposed here, so row0 is clip x and row3 is clip w.
-            if (index >= 0 && index < 4 && sprite_stereo_offset[index] != 0.0f)
-                view_projection.row0 = view_projection.row0
-                    + view_projection.row3 * sprite_stereo_offset[index];
+            // The shift would uncover a strip of whatever is behind (the PV) at one edge, so the
+            // list is also enlarged about the centre just enough to still reach both edges
+            // (plus a hair for filtering), the same in x and y so it keeps its shape.
+            if (index >= 0 && index < 4 && sprite_stereo_offset[index] != 0.0f) {
+                const float_t offset = sprite_stereo_offset[index];
+                const float_t grow = 1.0f + fabsf(offset) + 0.002f;
+                view_projection.row0 = view_projection.row0 * grow + view_projection.row3 * offset;
+                view_projection.row1 = view_projection.row1 * grow;
+            }
 
             float_t v23 = (float_t)x_max * 0.5f;
             float_t v24 = (float_t)x_min + v23;
