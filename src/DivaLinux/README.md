@@ -233,20 +233,24 @@ Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation la
 
 ## Source layout
 
+Paths below are in `src/DivaLinux/` unless they start with `src/`.
+
 | Path | What |
 | --- | --- |
-| `src/DivaGL/` | The renderer; compiled with `DIVAVK` and `DIVALINUX` defined for this plugin |
+| `src/DivaGL/` | The renderer; compiled with `DIVAVK` and `DIVALINUX` defined for this plugin. 3D stereo and VR live here (`stereo.cpp`, plus edits in upstream files, each marked `// 3D stereo`) |
 | `src/DivaVK/core/` | GL-on-Vulkan runtime (`divavk_core`) |
-| `gl_bridge/vk_bridge.cpp` | WGL emulation and GL import/table patching |
-| `movie/ff_loader.*`, `ff_movie.*`, `ff_player.*` | DivaMovie's FFmpeg player (loading FFmpeg, the decoder, the game's player interface), nearly unchanged |
-| `movie/movie_gl.*` | The player's GL upload functions, taken from DivaVK instead of opengl32 |
-| `movie/movie_yuv.*` | GPU YUV-to-RGB conversion into the movie texture, inside `dvk_push_gl_state`/`dvk_pop_gl_state`; tested in `src/DivaVK/tests` |
-| `movie/movie.cpp` | Installs the player on the game's `CreatePlayer` factory |
-| `debug/io_trace.cpp` | The `[debug] io_trace` file I/O trace |
-| `vfs/` | `[loading]`: the lookup cache and archive reading. `vfs.cpp` (install, hooking, statistics), `paths.cpp`, `wildcard.*`, `zip_index.*` (a stored zip's index), `archives.cpp`, `dir_cache.cpp`, `vhandles.cpp` (our find and member handles), `hooks.cpp` (the kernel32 replacements); tested on Linux in `tests/` |
-| `overlay/` | Draws the launcher's in-game menu, DivaOverlay and the mouse pointer over the frame: `compositor.cpp` (per frame), `launcher_api.cpp` (the launcher's C ABI), `layout.cpp` (flat / side-by-side placement, where the game sees the mouse), `cursor.cpp` (the pointer), `overlay_gl.*` (the GL drawing; tested in `src/DivaVK/tests`) |
-| `../../tools/divalinux_pack.py` | Makes `rom.zip` and `mdata\<pack>.zip` |
 | `src/DivaVK/core/src/xr.cpp` | OpenXR output (virtual screen), tested against `src/DivaVK/tests/mock_xr_runtime.cpp` |
+| `main.cpp` | Installs DivaLinux's own features (called from DivaGL's `DllMain`); each reads its own section of `DivaLinux.ini` |
+| `common/` | Shared helpers: `iat_patch.*` (import-table patching for the bridge, the file layer and the trace), `util.*` (logging, timing, text), `config.*` (carrying settings over from DivaGL.ini / DivaVK.ini / DivaMovie.ini) |
+| `gl_bridge/vk_bridge.cpp` | WGL emulation and GL import/table patching; `game_gl_tables.inc` from `src/DivaVK/tools/gen_game_tables.py` |
+| `movie/` | `[movie]`: DivaMovie's FFmpeg player, nearly unchanged: `ff_loader.*` (loading FFmpeg), `ff_movie.*` (the decoder), `ff_player.*` (the game's player interface), `movie_gl.*` (GL uploads through DivaVK), `movie_yuv.*` (GPU YUV-to-RGB inside `dvk_push_gl_state`/`dvk_pop_gl_state`; tested in `src/DivaVK/tests`), `movie.cpp` (hooks the game's `CreatePlayer`) |
+| `overlay/` | Draws the launcher's in-game menu, DivaOverlay and the mouse pointer over the frame: `compositor.cpp` (per frame), `launcher_api.cpp` (the launcher's C ABI), `layout.cpp` (flat / side-by-side placement, where the game sees the mouse), `cursor.cpp` (`[cursor]`, the pointer), `overlay_gl.*` (the GL drawing; tested in `src/DivaVK/tests`) |
+| `src/DivaOverlay/` | `[overlay]`: the in-game settings menu (its own README) |
+| `vfs/` | `[loading]`: the lookup cache and archive reading. `vfs.cpp` (install, hooking, statistics, DivaLinux's own file access), `paths.cpp`, `wildcard.*`, `zip_index.*` (a stored zip's index), `archives.cpp`, `dir_cache.cpp`, `vhandles.cpp` (our find and member handles), `hooks.cpp` (the kernel32 replacements); tested on Linux in `tests/` |
+| `game/stages.cpp` | Songs per credit (`config.ini` `[patches] normal_stages` / `protected_stages`) |
+| `debug/io_trace.cpp` | The `[debug] io_trace` file I/O trace |
+| `tests/` | Linux tests for the file layer (`vfs_test.cpp`) and its Windows-free parts (`units_test.cpp`) |
+| `tools/divalinux_pack.py` (repo root) | Makes `rom.zip` and `mdata\<pack>.zip` |
 
 ## Building
 
