@@ -1,5 +1,3 @@
-#pragma once
-
 // Replacement for diva.exe's MoviePlayLib::Player, backed by FFmpeg.
 //
 // The game creates movie players through CreatePlayer (0x1404255C0) and only talks
@@ -7,11 +5,17 @@
 // same interface, so Media Foundation, DXVA2, Direct3D 9 and WGL_NV_DX_interop are
 // never involved: frames are decoded on the CPU and uploaded into a game texture.
 //
-// Include from dllmain.cpp only, after GLDXInteropEmu.h.
+// movie.cpp hooks CreatePlayer and hands out these players (ff_player.hpp).
 
-#include "FFMovie.h"
-#include "movie_yuv.h"
+#include "ff_player.hpp"
+#include "ff_movie.hpp"
+#include "movie_gl.hpp"
+#include "movie_yuv.hpp"
 #include <mmsystem.h>
+#include <mferror.h>   // MF_E_INVALIDREQUEST, which the game expects from some player calls
+#include <cstring>
+
+#define PRINT(format, ...) movie_log(format, ##__VA_ARGS__)
 
 #pragma comment(lib, "winmm.lib")
 
@@ -19,7 +23,6 @@ namespace FFPlayer
 {
 	// ---- diva.exe 7.10 ----
 
-	constexpr uintptr_t ADDR_CREATE_PLAYER = 0x1404255C0;   // HRESULT CreatePlayer(IPlayer** out)
 
 	// GameTexture* CreateTexture(id, internalFormat, width, height, levels, data, mipmaps)
 	typedef void* (__fastcall* PFN_CreateGameTexture)(UINT32 id, UINT32 internalFormat, int width, int height,
@@ -32,7 +35,7 @@ namespace FFPlayer
 	constexpr UINT32 GL_RGBA8_FORMAT = 0x8058;
 	constexpr size_t GAME_TEXTURE_NAME_OFFSET = 0x10; // GLuint inside the game's texture struct
 
-	inline bool IsSupportedExecutable()
+	bool IsSupportedExecutable()
 	{
 		static const BYTE createPlayer[] = { 0x40, 0x56, 0x48, 0x83, 0xEC, 0x20, 0x83, 0x3D };   // push rsi; sub rsp,20h; cmp [rip+..],0
 		static const BYTE createTexture[] = { 0x48, 0x83, 0xEC, 0x48, 0x0F, 0xB6, 0x84, 0x24 };  // sub rsp,48h; movzx eax,byte [rsp+..]
@@ -102,13 +105,13 @@ namespace FFPlayer
 	const FFFileIO gameFileIO = { GameFileOpen, GameFileRead, GameFileSeek, GameFileSize, GameFileClose };
 	MovieYuv::Converter yuvConverter; // render thread only
 
-	inline bool EnsureFFmpeg()
+	bool EnsureFFmpeg()
 	{
 		AcquireSRWLockExclusive(&ffLoadLock);
 		if (!ffTried)
 		{
 			ffTried = true;
-			std::wstring directory = DirPath() + L"\\plugins\\";
+			std::wstring directory = movie_game_dir() + L"\\plugins\\";
 			if (ff.Load(directory))
 			{
 				PRINT("[Movie] FFmpeg loaded (avcodec %u.%u.%u)\n", ff.avcodec_version() >> 16,
@@ -952,4 +955,10 @@ namespace FFPlayer
 	static_assert(sizeof(PlayerVtbl) == 20 * sizeof(void*), "IPlayer has 20 slots");
 	static_assert(sizeof(TextureVtbl) == 5 * sizeof(void*), "texture interface has 5 slots");
 	static_assert(sizeof(VideoInfo) == 0x18, "VideoInfo is 0x18 bytes");
+
+	void* NewPlayer() { return new Player(); }
+	bool IsPlayer(const void* object)
+	{
+		return object && *(const void* const*)object == (const void*)&Player::vtable;
+	}
 }

@@ -74,7 +74,7 @@ if(WIN32)
 endif()
 
 if(DIVAVK_BUILD_TESTS AND NOT WIN32)
-    add_executable(divavk_tests tests/test_main.cpp)
+    add_executable(divavk_tests tests/test_main.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../DivaLinux/movie/movie_yuv.cpp)
     target_include_directories(divavk_tests PRIVATE core/include external ${DIVAVK_VULKAN_HEADERS_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../DivaLinux/movie)
     target_link_libraries(divavk_tests PRIVATE divavk_core)

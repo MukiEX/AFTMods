@@ -127,6 +127,11 @@
   <ItemGroup>
     <ClCompile Include="..\DivaVK\plugin\vk_bridge.cpp" />
     <ClCompile Include="movie\movie.cpp" />
+    <ClCompile Include="movie\ff_loader.cpp" />
+    <ClCompile Include="movie\ff_movie.cpp" />
+    <ClCompile Include="movie\ff_player.cpp" />
+    <ClCompile Include="movie\movie_gl.cpp" />
+    <ClCompile Include="movie\movie_yuv.cpp" />
     <ClCompile Include="io_trace.cpp" />
     <ClCompile Include="vfs.cpp" />
     <ClCompile Include="overlay.cpp" />

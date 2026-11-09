@@ -11,7 +11,7 @@
 // coloured, textured triangles with clip rectangles, drawn on the GPU, so the CPU only builds
 // the lists.
 //
-// Like movie_yuv.h, it runs on the game's render thread through DivaVK's GL functions between
+// Like movie/movie_yuv.cpp, it runs on the game's render thread through DivaVK's GL functions between
 // dvk_push_gl_state and dvk_pop_gl_state, so the game and DivaGL's cached GL state never see
 // it. Platform-independent: DivaVK's Linux tests run it against SwiftShader.
 

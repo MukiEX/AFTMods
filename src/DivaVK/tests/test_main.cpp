@@ -22,7 +22,7 @@
 #include <dirent.h>
 #include <dlfcn.h>
 #include <vulkan/vulkan.h>
-#include "movie_yuv.h"
+#include "movie_yuv.hpp"
 #include "../overlay_gl.h"
 
 #ifndef DIVAVK_SHADER_DIR
@@ -970,7 +970,7 @@ static void test_present_loop() {
     CHECK(idx.find("RGBA16F") != std::string::npos && idx.find("final") != std::string::npos, "dump index incomplete");
 }
 
-// DivaLinux's GPU colour conversion for movies (src/DivaLinux/movie/movie_yuv.h): colours match
+// DivaLinux's GPU colour conversion for movies (src/DivaLinux/movie/movie_yuv.cpp): colours match
 // a CPU reference, and the GL state the game set up is the same afterwards.
 static void test_movie_yuv() {
     printf("movie yuv conversion\n");

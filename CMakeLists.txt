@@ -135,9 +135,12 @@ if(AFTMODS_BUILD_DIVALINUX)
     target_include_directories(DivaOverlay PRIVATE ${OV} ${LFS}/src ${LFS}/third_party/imgui ${LFS}/third_party/simpleini
         ${AFT_ROOT}/src/DivaVK/core/include)
 
+    set(MV ${AFT_ROOT}/src/DivaLinux/movie)
+    set(DIVALINUX_MOVIE_SOURCES ${MV}/movie.cpp ${MV}/ff_loader.cpp ${MV}/ff_movie.cpp ${MV}/ff_player.cpp
+        ${MV}/movie_gl.cpp ${MV}/movie_yuv.cpp)
     add_library(DivaLinux SHARED
         ${AFT_ROOT}/src/DivaVK/plugin/vk_bridge.cpp
-        ${AFT_ROOT}/src/DivaLinux/movie/movie.cpp
+        ${DIVALINUX_MOVIE_SOURCES}
         ${AFT_ROOT}/src/DivaLinux/io_trace.cpp
         ${AFT_ROOT}/src/DivaLinux/vfs.cpp
         ${AFT_ROOT}/src/DivaLinux/overlay.cpp
@@ -152,7 +155,7 @@ if(AFTMODS_BUILD_DIVALINUX)
         ${AFT_ROOT}/src/DivaVK/external/volk
         ${DIVAVK_VULKAN_HEADERS_DIR}/include)
     # FFmpeg's headers only for the movie player (it loads the DLLs at run time, no import libs).
-    set_source_files_properties(${AFT_ROOT}/src/DivaLinux/movie/movie.cpp PROPERTIES
+    set_source_files_properties(${DIVALINUX_MOVIE_SOURCES} PROPERTIES
         INCLUDE_DIRECTORIES "${DIVALINUX_FFMPEG_INCLUDE_DIR}")
     target_link_libraries(DivaLinux PRIVATE DivaOverlay divavk_core glslang glslang-default-resource-limits winmm)
 endif()

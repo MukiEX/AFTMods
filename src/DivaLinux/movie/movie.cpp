@@ -11,7 +11,6 @@
 
 #include <windows.h>
 #include <unknwn.h>
-#include <mferror.h>   // MF_E_INVALIDREQUEST, which the game expects from some player calls
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -20,7 +19,7 @@
 
 extern "C" void divavk_log_text(const char* text);
 
-static void movie_log(const char* format, ...) {
+void movie_log(const char* format, ...) {
     char buf[1024];
     va_list args;
     va_start(args, format);
@@ -34,7 +33,7 @@ static void movie_log(const char* format, ...) {
 
 #define PRINT(format, ...) movie_log(format, ##__VA_ARGS__)
 
-static std::wstring DirPath() {
+std::wstring movie_game_dir() {
     wchar_t buffer[MAX_PATH];
     GetModuleFileNameW(nullptr, buffer, MAX_PATH);
     std::wstring path(buffer);
@@ -42,14 +41,13 @@ static std::wstring DirPath() {
     return path.substr(0, pos);
 }
 
-#include "movie_gl.h"
-#include "FFPlayer.h"
+#include "ff_player.hpp"
 
 static bool s_ffmpeg_player = true;
 
 HOOK(HRESULT, __fastcall, CreatePlayer, FFPlayer::ADDR_CREATE_PLAYER, void** player) {
     if (s_ffmpeg_player && player && FFPlayer::EnsureFFmpeg()) {
-        *player = new FFPlayer::Player();
+        *player = FFPlayer::NewPlayer();
         PRINT("[Movie] FFmpeg player created\n");
         return S_OK;
     }
@@ -59,7 +57,7 @@ HOOK(HRESULT, __fastcall, CreatePlayer, FFPlayer::ADDR_CREATE_PLAYER, void** pla
 // For DivaGL's movie task: true for our players, which hand the game a GL texture and must
 // never be switched to DivaGL's Direct3D 11 copy path (see task_movie.cpp).
 extern "C" bool divalinux_is_ffmpeg_player(const void* player) {
-    return player && *(const void* const*)player == (const void*)&FFPlayer::Player::vtable;
+    return FFPlayer::IsPlayer(player);
 }
 
 extern "C" void divalinux_movie_install(const wchar_t* config_file) {
