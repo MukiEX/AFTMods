@@ -49,6 +49,8 @@ namespace dov {
         void flush();
         // Size of the rows (buttons) and their text against the rest of the menu (default 1.5).
         void set_row_scale(float scale);
+        // Size of the help panel's text against the rest of the menu (default 2).
+        void set_help_scale(float scale);
         // Something is still moving (keep drawing frames).
         bool animating() const;
 

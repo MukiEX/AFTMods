@@ -64,6 +64,7 @@ namespace dov {
         std::vector<Page> stack;
         float U = 1.0f, W = 1920, H = 1080;
         float RS = 1.5f;   // rows (buttons) and their text, relative to the rest of the menu
+        float HS = 2.0f;   // the help panel (the explanation beside the rows)
         float open_t = 0;                    // 0..1 menu opening
         float save_timer = -1;
         int pending = 0;
@@ -374,12 +375,6 @@ namespace dov {
         void draw_help(ImDrawList* dl, const ItemPtr& it, float alpha) {
             const float x0 = std::max(W * 0.60f, px(62) + row_width() + px(110)), x1 = W - px(44);
             if (x1 - x0 < px(260) || !it) return;
-            const float y0 = list_top() + px(6);
-            const float pad = px(26), wrap = x1 - x0 - pad * 2;
-            std::vector<std::pair<int, std::string>> lines;   // 0 title, 1 body, 2 hint, 3 where
-            float h = pad;
-            ImVec2 ts = measure(bold, px(32), it->label, wrap);
-            h += ts.y + px(12);
             std::string body = it->help;
             if (it->type == Item::Type::Section && it->section) {
                 std::vector<ItemPtr> all;
@@ -388,8 +383,6 @@ namespace dov {
                 snprintf(buf, sizeof(buf), "%s%d setting%s", body.empty() ? "" : "\n\n", (int)all.size(), all.size() == 1 ? "" : "s");
                 body += buf;
             }
-            ImVec2 bs = measure(reg, px(24), body, wrap);
-            h += bs.y + px(18);
             std::string badge, hint;
             int badge_kind = 0;
             if (it->type == Item::Type::Setting) {
@@ -399,33 +392,53 @@ namespace dov {
                 else if (it->live) { badge = "Applies right away"; badge_kind = 1; }
                 else { badge = "Applies after a restart"; badge_kind = 3; }
             }
-            ImVec2 hs = hint.empty() ? ImVec2(0, 0) : measure(reg, px(22), hint, wrap);
-            if (!hint.empty()) h += hs.y + px(12);
-            if (!badge.empty()) h += px(40) + px(10);
-            ImVec2 ws = it->where.empty() ? ImVec2(0, 0) : measure(reg, px(19), it->where, wrap);
-            if (!it->where.empty()) h += ws.y + px(6);
-            h += pad;
 
-            dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y0 + h), col(PANEL, 0.80f * alpha), px(14));
-            dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y0 + px(5)), col(TEAL, 0.95f * alpha), px(14), ImDrawFlags_RoundCornersTop);
+            // At HS times the menu's own size, smaller (down to 1) for a text too long for the
+            // space down to the footer.
+            float sc = HS;
+            auto hp = [&](float v) { return v * U * sc; };
+            const float y0 = list_top() + px(6), limit = H - px(40);
+            float pad, wrap, h;
+            ImVec2 ts, bs, hs, ws;
+            for (;;) {
+                pad = hp(26);
+                wrap = x1 - x0 - pad * 2;
+                h = pad;
+                ts = measure(bold, hp(32), it->label, wrap);
+                h += ts.y + hp(12);
+                bs = measure(reg, hp(24), body, wrap);
+                h += bs.y + hp(18);
+                hs = hint.empty() ? ImVec2(0, 0) : measure(reg, hp(22), hint, wrap);
+                if (!hint.empty()) h += hs.y + hp(12);
+                if (!badge.empty()) h += hp(40) + hp(10);
+                ws = it->where.empty() ? ImVec2(0, 0) : measure(reg, hp(19), it->where, wrap);
+                if (!it->where.empty()) h += ws.y + hp(6);
+                h += pad;
+                if (y0 + h <= limit || sc <= 1.0f)
+                    break;
+                sc = std::max(1.0f, sc - 0.1f);
+            }
+
+            dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y0 + h), col(PANEL, 0.80f * alpha), hp(14));
+            dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y0 + hp(5)), col(TEAL, 0.95f * alpha), hp(14), ImDrawFlags_RoundCornersTop);
             float y = y0 + pad;
-            text(dl, bold, px(32), x0 + pad, y, rgba(255, 255, 255, alpha), it->label, wrap);
-            y += ts.y + px(12);
-            text(dl, reg, px(24), x0 + pad, y, rgba(0xE4, 0xEC, 0xF4, alpha), body, wrap);
-            y += bs.y + px(18);
+            text(dl, bold, hp(32), x0 + pad, y, rgba(255, 255, 255, alpha), it->label, wrap);
+            y += ts.y + hp(12);
+            text(dl, reg, hp(24), x0 + pad, y, rgba(0xE4, 0xEC, 0xF4, alpha), body, wrap);
+            y += bs.y + hp(18);
             if (!hint.empty()) {
-                text(dl, reg, px(22), x0 + pad, y, col(AMBER, alpha), hint, wrap);
-                y += hs.y + px(12);
+                text(dl, reg, hp(22), x0 + pad, y, col(AMBER, alpha), hint, wrap);
+                y += hs.y + hp(12);
             }
             if (!badge.empty()) {
-                const ImVec2 bsz = measure(bold, px(21), badge);
+                const ImVec2 bsz = measure(bold, hp(21), badge);
                 const int* c = badge_kind == 1 ? TEAL_D : badge_kind == 2 ? AMBER : GREY;
-                para(dl, x0 + pad, y, bsz.x + px(34), px(36), px(10), col(c, 0.95f * alpha));
-                text(dl, bold, px(21), x0 + pad + px(20), y + (px(36) - bsz.y) * 0.5f, badge_kind == 2 ? col(NAVY, alpha) : rgba(255, 255, 255, alpha), badge);
-                y += px(40) + px(10);
+                para(dl, x0 + pad, y, bsz.x + hp(34), hp(36), hp(10), col(c, 0.95f * alpha));
+                text(dl, bold, hp(21), x0 + pad + hp(20), y + (hp(36) - bsz.y) * 0.5f, badge_kind == 2 ? col(NAVY, alpha) : rgba(255, 255, 255, alpha), badge);
+                y += hp(40) + hp(10);
             }
             if (!it->where.empty())
-                text(dl, reg, px(19), x0 + pad, y, rgba(0x9F, 0xB3, 0xC6, alpha), it->where, wrap);
+                text(dl, reg, hp(19), x0 + pad, y, rgba(0x9F, 0xB3, 0xC6, alpha), it->where, wrap);
         }
 
         // ------------------------------------------------ header and footer
@@ -747,5 +760,6 @@ namespace dov {
     void Ui::frame(const Input& in, float w, float h, ImDrawList* dl) { m->frame(in, w, h, dl); }
     void Ui::flush() { m->flush(); }
     void Ui::set_row_scale(float scale) { m->RS = scale < 0.5f ? 0.5f : scale > 3.0f ? 3.0f : scale; }
+    void Ui::set_help_scale(float scale) { m->HS = scale < 0.5f ? 0.5f : scale > 3.0f ? 3.0f : scale; }
     bool Ui::animating() const { return m->animating || m->save_timer >= 0.0f; }
 }

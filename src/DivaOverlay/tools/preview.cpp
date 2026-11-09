@@ -127,6 +127,8 @@ int main(int argc, char** argv) {
     dov::Ui ui(model, host, bold, reg);
     if (const char* rs = getenv("OV_ROW_SCALE"))
         ui.set_row_scale((float)atof(rs));
+    if (const char* hs = getenv("OV_HELP_SCALE"))
+        ui.set_help_scale((float)atof(hs));
     ui.open();
 
     lfs::SoftCanvas cv;
@@ -184,6 +186,7 @@ int main(int argc, char** argv) {
     snap("home");
     press(&dov::Input::ok);           // Stereo 3D
     idle(30);
+    snap("stereo_top");               // its first setting: the longest help text
     for (int i = 0; i < 5; i++) press(&dov::Input::down);
     idle(30);
     snap("stereo");
