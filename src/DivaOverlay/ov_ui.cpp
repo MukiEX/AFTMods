@@ -63,6 +63,7 @@ namespace dov {
         ImFont* reg;
         std::vector<Page> stack;
         float U = 1.0f, W = 1920, H = 1080;
+        float RS = 1.5f;   // rows (buttons) and their text, relative to the rest of the menu
         float open_t = 0;                    // 0..1 menu opening
         float save_timer = -1;
         int pending = 0;
@@ -80,6 +81,7 @@ namespace dov {
         Impl(Model& m, UiHost h, ImFont* b, ImFont* r) : model(m), host(std::move(h)), bold(b), reg(r) {}
 
         float px(float v) const { return v * U; }
+        float rp(float v) const { return v * U * RS; }   // inside the rows
 
         // ------------------------------------------------ pages
         Page make_home() {
@@ -210,7 +212,7 @@ namespace dov {
         struct RowGeo { float y, h; };   // content coordinates
         float list_top() const { return px(178); }
         float list_bottom() const { return H - px(112); }
-        float row_h(const ItemPtr& it) const { return it->type == Item::Type::Header ? px(50) : px(74); }
+        float row_h(const ItemPtr& it) const { return it->type == Item::Type::Header ? rp(50) : rp(74); }
 
         std::vector<RowGeo> geometry(const Page& p) const {
             std::vector<RowGeo> g;
@@ -270,9 +272,9 @@ namespace dov {
 
         // value box geometry inside a row (screen coordinates)
         Rect value_box(float rx, float ry, float rw, float rh) const {
-            const float bw = std::min(px(300), rw * 0.42f), inset = px(9);
+            const float bw = std::min(rp(300), rw * 0.42f), inset = rp(9);
             Rect r;
-            r.x0 = rx + rw - bw - px(16);
+            r.x0 = rx + rw - bw - rp(16);
             r.x1 = r.x0 + bw;
             r.y0 = ry + inset;
             r.y1 = ry + rh - inset;
@@ -281,89 +283,89 @@ namespace dov {
 
         // ------------------------------------------------ one row
         void draw_row(ImDrawList* dl, const ItemPtr& it, float rx, float ry, float rw, float rh, float sel_amt, float alpha) {
-            const float sk = skew();
+            const float sk = skew() * RS;
             if (it->type == Item::Type::Header) {
                 std::string a = it->label, b;
                 size_t tab = a.find('\t');
                 if (tab != std::string::npos) { b = a.substr(tab + 1); a = a.substr(0, tab); }
-                const float ty = ry + rh - px(38);
+                const float ty = ry + rh - rp(38);
                 // a slanted tag like the game's section labels
-                const float tw = measure(bold, px(25), a).x + px(40);
-                para(dl, rx - px(6), ty, tw, px(32), px(12), col(TEAL_D, 0.92f * alpha));
-                text(dl, bold, px(25), rx + px(14), ty + px(2), rgba(255, 255, 255, alpha), a);
+                const float tw = measure(bold, rp(25), a).x + rp(40);
+                para(dl, rx - rp(6), ty, tw, rp(32), rp(12), col(TEAL_D, 0.92f * alpha));
+                text(dl, bold, rp(25), rx + rp(14), ty + rp(2), rgba(255, 255, 255, alpha), a);
                 if (!b.empty())
-                    text(dl, reg, px(21), rx + tw + px(16), ty + px(5), rgba(255, 255, 255, 0.82f * alpha), b);
+                    text(dl, reg, rp(21), rx + tw + rp(16), ty + rp(5), rgba(255, 255, 255, 0.82f * alpha), b);
                 return;
             }
             const bool enabled = it->type != Item::Type::Setting || it->is_enabled();
-            const float shift = px(16) * sel_amt;
+            const float shift = rp(16) * sel_amt;
             rx += shift;
             // glow and body
             if (sel_amt > 0.01f) {
                 for (int k = 3; k >= 1; k--) {
-                    const float g = px(3.0f * k);
-                    para_line(dl, rx - g, ry - g, rw + g * 2, rh + g * 2, sk, col(TEAL, 0.18f * sel_amt * alpha / k), px(3));
+                    const float g = rp(3.0f * k);
+                    para_line(dl, rx - g, ry - g, rw + g * 2, rh + g * 2, sk, col(TEAL, 0.18f * sel_amt * alpha / k), rp(3));
                 }
             }
             ImU32 fill = rgba(255, 255, 255, (0.80f + 0.17f * sel_amt) * alpha);
             if (it->type == Item::Type::Action && it->accent)
                 fill = rgba(255, 0xE2, 0xA8, (0.86f + 0.12f * sel_amt) * alpha);
             para(dl, rx, ry, rw, rh, sk, fill);
-            para_line(dl, rx, ry, rw, rh, sk, col(sel_amt > 0.5f ? TEAL : TEAL_D, (0.55f + 0.45f * sel_amt) * alpha), px(sel_amt > 0.5f ? 3.0f : 1.6f));
+            para_line(dl, rx, ry, rw, rh, sk, col(sel_amt > 0.5f ? TEAL : TEAL_D, (0.55f + 0.45f * sel_amt) * alpha), rp(sel_amt > 0.5f ? 3.0f : 1.6f));
             // the selection marker: a teal wedge at the left end
             if (sel_amt > 0.01f) {
-                ImVec2 w[4] = { { rx + px(4) + sk * 0.9f, ry + px(6) }, { rx + px(16) + sk * 0.9f, ry + px(6) },
-                                { rx + px(16) + px(1), ry + rh - px(6) }, { rx + px(4) + px(1), ry + rh - px(6) } };
+                ImVec2 w[4] = { { rx + rp(4) + sk * 0.9f, ry + rp(6) }, { rx + rp(16) + sk * 0.9f, ry + rp(6) },
+                                { rx + rp(16) + rp(1), ry + rh - rp(6) }, { rx + rp(4) + rp(1), ry + rh - rp(6) } };
                 dl->AddConvexPolyFilled(w, 4, col(TEAL, sel_amt * alpha));
             }
 
-            const float label_x = rx + sk * 0.5f + px(34);
-            const float label_size = px(30);
+            const float label_x = rx + sk * 0.5f + rp(34);
+            const float label_size = rp(30);
             const ImU32 label_c = col(NAVY, (enabled ? 1.0f : 0.42f) * alpha);
-            float label_w = rw - px(60);
+            float label_w = rw - rp(60);
 
             if (it->type == Item::Type::Setting) {
                 Rect vb = value_box(rx, ry, rw, rh);
-                label_w = vb.x0 - label_x - px(12);
+                label_w = vb.x0 - label_x - rp(12);
                 const bool on_off = it->opt && (it->opt->kind == lfs::Kind::Bool || it->opt->kind == lfs::Kind::Plugin);
                 ImU32 box = col(GREY, 0.92f * alpha * (enabled ? 1.0f : 0.5f));
                 if (on_off && it->opt->b && enabled) box = col(TEAL_D, 0.95f * alpha);
                 para(dl, vb.x0, vb.y0, vb.x1 - vb.x0, vb.y1 - vb.y0, sk * (vb.y1 - vb.y0) / rh, box);
                 const float bh = vb.y1 - vb.y0, bsk = sk * bh / rh;
-                const std::string v = fit(bold, px(26), it->value_text(), vb.x1 - vb.x0 - px(70));
-                const ImVec2 vs = measure(bold, px(26), v);
+                const std::string v = fit(bold, rp(26), it->value_text(), vb.x1 - vb.x0 - rp(70));
+                const ImVec2 vs = measure(bold, rp(26), v);
                 const float cx = (vb.x0 + vb.x1) * 0.5f + bsk * 0.5f;
-                text(dl, bold, px(26), cx - vs.x * 0.5f, vb.y0 + (bh - vs.y) * 0.5f, rgba(255, 255, 255, (enabled ? 1.0f : 0.6f) * alpha), v);
+                text(dl, bold, rp(26), cx - vs.x * 0.5f, vb.y0 + (bh - vs.y) * 0.5f, rgba(255, 255, 255, (enabled ? 1.0f : 0.6f) * alpha), v);
                 if (it->steppable() && enabled) {
                     const float a = (0.55f + 0.45f * sel_amt) * alpha;
-                    tri(dl, vb.x0 + bsk * 0.5f + px(20), vb.y0 + bh * 0.5f, px(11), -1, rgba(255, 255, 255, a));
-                    tri(dl, vb.x1 + bsk * 0.5f - px(20), vb.y0 + bh * 0.5f, px(11), 1, rgba(255, 255, 255, a));
+                    tri(dl, vb.x0 + bsk * 0.5f + rp(20), vb.y0 + bh * 0.5f, rp(11), -1, rgba(255, 255, 255, a));
+                    tri(dl, vb.x1 + bsk * 0.5f - rp(20), vb.y0 + bh * 0.5f, rp(11), 1, rgba(255, 255, 255, a));
                 }
                 // changed, waiting for a restart
                 if (it->pending_restart()) {
-                    dl->AddCircleFilled(ImVec2(vb.x0 - px(14), vb.y0 + bh * 0.5f), px(6), col(AMBER, alpha));
-                    label_w -= px(18);
+                    dl->AddCircleFilled(ImVec2(vb.x0 - rp(14), vb.y0 + bh * 0.5f), rp(6), col(AMBER, alpha));
+                    label_w -= rp(18);
                 }
             }
             else if (it->type == Item::Type::Section) {
-                const float ax = rx + rw + sk * 0.5f - px(34);
-                tri(dl, ax, ry + rh * 0.5f, px(12), 1, col(TEAL_D, alpha));
+                const float ax = rx + rw + sk * 0.5f - rp(34);
+                tri(dl, ax, ry + rh * 0.5f, rp(12), 1, col(TEAL_D, alpha));
                 if (!it->help.empty()) {
                     const float max_w = rw * 0.46f;
-                    const std::string sub = fit(reg, px(21), it->help, max_w);
-                    const ImVec2 ss = measure(reg, px(21), sub);
-                    text(dl, reg, px(21), ax - px(22) - ss.x, ry + (rh - ss.y) * 0.5f, col(GREY, 0.95f * alpha), sub);
-                    label_w = ax - px(22) - ss.x - label_x - px(16);
+                    const std::string sub = fit(reg, rp(21), it->help, max_w);
+                    const ImVec2 ss = measure(reg, rp(21), sub);
+                    text(dl, reg, rp(21), ax - rp(22) - ss.x, ry + (rh - ss.y) * 0.5f, col(GREY, 0.95f * alpha), sub);
+                    label_w = ax - rp(22) - ss.x - label_x - rp(16);
                 }
             }
             else if (it->type == Item::Type::Action && it == restart_item && pending > 0) {
                 char buf[64];
                 snprintf(buf, sizeof(buf), pending == 1 ? "1 change waiting" : "%d changes waiting", pending);
-                const ImVec2 ss = measure(bold, px(22), buf);
-                text(dl, bold, px(22), rx + rw + sk * 0.5f - px(30) - ss.x, ry + (rh - ss.y) * 0.5f, rgba(0xB8, 0x5C, 0x00, alpha), buf);
-                label_w = rw - ss.x - px(90);
+                const ImVec2 ss = measure(bold, rp(22), buf);
+                text(dl, bold, rp(22), rx + rw + sk * 0.5f - rp(30) - ss.x, ry + (rh - ss.y) * 0.5f, rgba(0xB8, 0x5C, 0x00, alpha), buf);
+                label_w = rw - ss.x - rp(90);
             }
-            const std::string label = fit(bold, label_size, it->label, std::max(px(40), label_w));
+            const std::string label = fit(bold, label_size, it->label, std::max(rp(40), label_w));
             const ImVec2 ls = measure(bold, label_size, label);
             text(dl, bold, label_size, label_x, ry + (rh - ls.y) * 0.5f, label_c, label);
         }
@@ -538,7 +540,7 @@ namespace dov {
                 if (!selectable(p.rows[i])) continue;
                 const float ry = top + g[i].y - p.scroll;
                 if (y < ry || y >= ry + g[i].h) continue;
-                const float rx = arc_x(ry + g[i].h * 0.5f) + ((int)i == p.sel ? px(16) : 0.0f);
+                const float rx = arc_x(ry + g[i].h * 0.5f) + ((int)i == p.sel ? rp(16) : 0.0f);
                 if (x < rx - px(10) || x > rx + row_width() + skew() + px(10)) continue;
                 if (zone) {
                     *zone = 0;
@@ -575,7 +577,7 @@ namespace dov {
 
             // wheel
             if (in.wheel != 0.0f) {
-                p.scroll_target -= in.wheel * px(74) * 1.5f;
+                p.scroll_target -= in.wheel * rp(74) * 1.5f;
                 p.scroll_target = std::max(0.0f, p.scroll_target);
                 device = Device::Pointer;
             }
@@ -657,7 +659,7 @@ namespace dov {
             const float view_h = list_bottom() - list_top();
             const float content_h = g.empty() ? 0 : g.back().y + g.back().h;
             if (!g.empty() && !dragging && device != Device::Pointer) {
-                const float sy = g[p.sel].y, sh = g[p.sel].h, m = px(74) * 1.6f;
+                const float sy = g[p.sel].y, sh = g[p.sel].h, m = rp(74) * 1.6f;
                 if (sy - m < p.scroll_target) p.scroll_target = sy - m;
                 if (sy + sh + m > p.scroll_target + view_h) p.scroll_target = sy + sh + m - view_h;
             }
@@ -694,7 +696,7 @@ namespace dov {
                 // selection amount follows the animated selection position
                 float sel_amt = 0.0f;
                 if ((int)i == p.sel) {
-                    const float d = std::fabs(p.sel_y - g[i].y) / px(74);
+                    const float d = std::fabs(p.sel_y - g[i].y) / rp(74);
                     sel_amt = std::max(0.0f, 1.0f - d);
                 }
                 // fade rows near the list's ends
@@ -744,5 +746,6 @@ namespace dov {
 
     void Ui::frame(const Input& in, float w, float h, ImDrawList* dl) { m->frame(in, w, h, dl); }
     void Ui::flush() { m->flush(); }
+    void Ui::set_row_scale(float scale) { m->RS = scale < 0.5f ? 0.5f : scale > 3.0f ? 3.0f : scale; }
     bool Ui::animating() const { return m->animating || m->save_timer >= 0.0f; }
 }

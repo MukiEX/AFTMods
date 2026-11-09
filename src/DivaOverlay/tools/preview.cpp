@@ -125,6 +125,8 @@ int main(int argc, char** argv) {
     host.close = [&]() { closed = true; fprintf(stderr, "  closed\n"); };
     host.restart = [&]() { fprintf(stderr, "  restart requested\n"); };
     dov::Ui ui(model, host, bold, reg);
+    if (const char* rs = getenv("OV_ROW_SCALE"))
+        ui.set_row_scale((float)atof(rs));
     ui.open();
 
     lfs::SoftCanvas cv;

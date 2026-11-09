@@ -47,6 +47,8 @@ namespace dov {
         void frame(const Input& in, float w, float h, ImDrawList* dl);
         // Saves anything changed (also done on its own shortly after each change).
         void flush();
+        // Size of the rows (buttons) and their text against the rest of the menu (default 1.5).
+        void set_row_scale(float scale);
         // Something is still moving (keep drawing frames).
         bool animating() const;
 
