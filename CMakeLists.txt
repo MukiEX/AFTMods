@@ -102,6 +102,10 @@ set(DIVAGL_SOURCES
     task_movie.cpp texture.cpp wrap.cpp
     DivaGL.rc common.asm)
 list(TRANSFORM DIVAGL_SOURCES PREPEND ${GL}/)
+# DivaGL.rc embeds res/ft_shaders.farc (the shaders DivaGL loads). Ninja's resource-compiler
+# dependency scan only follows #include, so without this an edited farc isn't rebuilt into
+# the DVA and the old shaders keep running.
+set_source_files_properties(${GL}/DivaGL.rc PROPERTIES OBJECT_DEPENDS ${AFT_ROOT}/res/ft_shaders.farc)
 
 add_library(DivaGL SHARED ${DIVAGL_SOURCES})
 aft_plugin(DivaGL)
