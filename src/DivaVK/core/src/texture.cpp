@@ -168,22 +168,6 @@ namespace dvk {
         ici.samples = (VkSampleCountFlagBits)s;
         ici.tiling = VK_IMAGE_TILING_OPTIMAL;
         ici.usage = usage;
-        // DIVAVK_NO_COMPRESSION=1 (a test): colour render targets made so a mobile GPU's
-        // framebuffer compression (Adreno's UBWC) is unlikely to be used: mutable format and,
-        // where the format allows it, storage use. For the Odin 3's right-eye triangle, where
-        // one triangle of a copy reads back as a flat colour or a stretched corner.
-        static int no_compress = -1;
-        if (no_compress < 0) {
-            const char* e = env("DIVAVK_NO_COMPRESSION");
-            no_compress = e && e[0] == '1';
-            if (no_compress)
-                log("Render targets: made without framebuffer compression where possible (DIVAVK_NO_COMPRESSION=1)");
-        }
-        if (no_compress && t->renderable && !fi->depth && !fi->stencil) {
-            ici.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
-            if (ff & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
-                ici.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
-        }
         ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         VmaAllocationCreateInfo aci = {};
         aci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;

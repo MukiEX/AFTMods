@@ -322,7 +322,6 @@ static void pv_cache_save(render_data_context& rend_data_ctx, int32_t eye) {
         OutputDebugStringA(buf);
     }
     pv_blit(rctx->screen_buffer.get_fb(), pv_cache_fb[slot][eye], w, h, w, h);
-    dvk_dump_gl_texture(pv_cache_tex[slot][eye], eye ? "pvpic_saved_right" : "pvpic_saved_left");   // (a frame dump only)
     pv_cache_valid[slot][eye] = true;
 }
 
@@ -399,11 +398,7 @@ static void pv_cache_restore(render_data_context& rend_data_ctx, int32_t eye) {
     const int32_t w = pv_cache_w[pv_front], h = pv_cache_h[pv_front];
     const int32_t sw = rctx->screen_width, sh = rctx->screen_height;
     const GLuint screen = rctx->screen_buffer.get_fb();
-    // (a frame dump only) the picture as the game thread sees it just before copying it
-    dvk_dump_gl_texture(pv_cache_tex[pv_front][eye], eye ? "restore_src_right" : "restore_src_left");
     pv_blit(pv_cache_fb[pv_front][eye], screen, w, h, sw, sh);
-    dvk_dump_gl_texture(rctx->screen_buffer.m_txhd_color ? rctx->screen_buffer.get_texture_glid() : 0,
-        eye ? "restore_dst_right" : "restore_dst_left");
     // the HUD is drawn into the screen buffer next: leave it bound, as the render state is told
     glBindFramebuffer(GL_FRAMEBUFFER, screen);
     rend_data_ctx.state.bind_framebuffer(screen);
@@ -624,22 +619,6 @@ static void pv_thread_draw() {
         }
         stereo_eye_reset();
         ms_eye[eye] = pv_ms_since(te);
-        /* Each eye in a submission of its own (DIVA_PV_FLUSH_PER_EYE=1, a test).
-           On the Odin 3 with Qualcomm's driver the second eye's saved picture reached the game
-           thread with one triangle-shaped half never written (stale: an older picture, or the
-           texture's first contents), while the first eye's always arrived whole and mono never
-           failed. Splitting the copy into 4x4 squares left the same single diagonal, so it isn't
-           the copy's triangles; a third copy after it didn't help either. With a flush here
-           every eye's save is the first one of its submission. Result: both eyes broke, so it
-           is off (DIVA_PV_FLUSH_PER_EYE=1 for the test): an eye is whole when the next eye's
-           drawing follows its save in the same submission. */
-        static int per_eye = -1;
-        if (per_eye < 0) {
-            const char* e = getenv("DIVA_PV_FLUSH_PER_EYE");
-            per_eye = e && e[0] == '1';
-        }
-        if (per_eye && eye + 1 < t.eyes)
-            dvk_flush();
     }
     r->render_manager_cam = center_cam;
     rend->taa = taa;
@@ -665,34 +644,6 @@ static void pv_thread_draw() {
         rend_data_ctx.state.finish();
     }
 
-    /* After the last eye's save, the PV's own picture (the screen buffer it was copied from)
-       is cleared. On the Odin 3 with Qualcomm's driver an eye's saved picture reached the game
-       thread whole only when the next eye's drawing followed its save in the same submission:
-       the left always did, the right (followed by little) never did, and with a submission
-       after each eye both broke. A 1x1 clear and a third copy after the right eye didn't
-       help; drawing into the source again, as the next eye does, is what's left to try.
-       DIVA_PV_TAIL_PASS=0 leaves it out. */
-    if (t.eyes > 1) {
-        static int tail = -1;
-        if (tail < 0) {
-            const char* e = getenv("DIVA_PV_TAIL_PASS");
-            tail = !(e && e[0] == '0');
-        }
-        if (tail && rctx->screen_buffer.get_fb()) {
-            GLint prev_draw = 0, prev_read = 0;
-            glGetIntegervDLL(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
-            glGetIntegervDLL(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
-            glBindFramebuffer(GL_FRAMEBUFFER, rctx->screen_buffer.get_fb());
-            const GLfloat black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-            glClearBufferfv(GL_COLOR, 0, black);
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)prev_read);
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)prev_draw);
-        }
-    }
-
-    // (a frame dump only) the picture as handed over, to compare with right after its save
-    for (int32_t e = 0; e < t.eyes; e++)
-        dvk_dump_gl_texture(pv_cache_tex[pv_save_slot][e], e ? "pvpic_at_end_right" : "pvpic_at_end_left");
     dvk_dump_end();
     const uint64_t ticket = dvk_flush();
     pv_thread_t::pic_t& pic = t.pic[t.number % PV_SLOTS];

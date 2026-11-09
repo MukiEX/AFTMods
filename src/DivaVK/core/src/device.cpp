@@ -782,19 +782,6 @@ namespace dvk {
         vkBeginCommandBuffer(f.upload_cmd, &bi);
         vkBeginCommandBuffer(f.cmd, &bi);
         vkCmdResetQueryPool(f.cmd, f.query_pool, 0, 1024);
-        // and the reading side: whatever earlier submissions (any context, any queue) wrote,
-        // visible to this one, past any cache still holding older contents (see submit_frame;
-        // DIVAVK_END_BARRIER=0 leaves this out too)
-        {
-            const char* e = env("DIVAVK_END_BARRIER");
-            if (!(e && e[0] == '0')) {
-                VkMemoryBarrier mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
-                mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
-                mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-                vkCmdPipelineBarrier(f.cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                    0, 1, &mb, 0, nullptr, 0, nullptr);
-            }
-        }
         if (f.ts_pool) {
             vkCmdResetQueryPool(f.cmd, f.ts_pool, 0, 2);
             vkCmdWriteTimestamp(f.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, f.ts_pool, 0);
@@ -967,24 +954,6 @@ namespace dvk {
                 0, 1, &mb, 0, nullptr, 0, nullptr);
         }
         vkEndCommandBuffer(f.upload_cmd);
-        // Everything this submission wrote made available to everything after it, explicitly,
-        // whoever reads it (another context, another queue, the host). The semaphore signal
-        // should already do this; on the Odin 3 with Qualcomm's driver the PV thread's last
-        // picture of a submission reached the game thread with a stale half, as if its last
-        // writes stayed in a GPU cache (pictures followed by more drawing arrived whole).
-        // DIVAVK_END_BARRIER=0 leaves it out.
-        static int end_barrier = -1;
-        if (end_barrier < 0) {
-            const char* e = env("DIVAVK_END_BARRIER");
-            end_barrier = !(e && e[0] == '0');
-        }
-        if (end_barrier) {
-            VkMemoryBarrier mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
-            mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
-            mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
-            vkCmdPipelineBarrier(f.cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
-        }
         if (f.ts_written)
             vkCmdWriteTimestamp(f.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, f.ts_pool, 1);
         vkEndCommandBuffer(f.cmd);

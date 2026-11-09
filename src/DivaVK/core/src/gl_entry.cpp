@@ -1433,10 +1433,6 @@ static const ProcEntry s_procs[] = {
 static std::mutex s_blit_m;
 static GLuint s_blit_prog = 0, s_blit_samp[2] = {};
 static int s_blit_state = 0;   // 0 untried, 1 ready, -1 off or failed
-/* DIVAVK_BLIT_GRID=n (a test): each blit drawn as n x n squares instead of one, to see which
-   of them the Odin 3's driver leaves out (the right eye's PV picture had one of its two
-   triangles never written) */
-static int s_blit_grid = 1;
 static thread_local GLuint s_blit_ubo = 0;
 
 static bool blit_draw_ready() {
@@ -1451,15 +1447,14 @@ static bool blit_draw_ready() {
         }
     static const char* VS =
         "#version 430 core\n"
-        "layout(std140, binding = 15) uniform DvkBlit { vec4 dst; vec4 src; vec4 size; } u;\n"
         "void main() {\n"
-        "    // squares of two triangles each (0,1,2 and 2,1,3 of their corners), u.size.w a side,\n"
-        "    // exactly covering the viewport: no oversized triangle for the GPU to clip\n"
+        "    // two triangles exactly covering the viewport (0,1,2 and 2,1,3 of its corners), not\n"
+        "    // one oversized triangle: that one is clipped to the viewport by the GPU, and the\n"
+        "    // Odin 3 (Adreno 830) showed a picture copied with it only on one side of the\n"
+        "    // viewport's diagonal (the right eye's PV picture in SBS)\n"
         "    const int c[6] = int[6](0, 1, 2, 2, 1, 3);\n"
-        "    int n = max(int(u.size.w), 1);\n"
-        "    int cell = gl_VertexIndex / 6;\n"
-        "    int k = c[gl_VertexIndex % 6];\n"
-        "    vec2 p = (vec2(float(cell % n), float(cell / n)) + vec2(float(k & 1), float(k >> 1))) / float(n);\n"
+        "    int k = c[gl_VertexIndex];\n"
+        "    vec2 p = vec2(float(k & 1), float(k >> 1));\n"
         "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
         "}\n";
     static const char* FS =
@@ -1507,10 +1502,6 @@ static bool blit_draw_ready() {
     }
     s_blit_prog = prog;
     s_blit_state = 1;
-    if (const char* e = env("DIVAVK_BLIT_GRID")) {
-        s_blit_grid = std::min(std::max(atoi(e), 1), 32);
-        log("Colour blits: drawn as %dx%d squares (DIVAVK_BLIT_GRID)", s_blit_grid, s_blit_grid);
-    }
     log("Colour blits: drawn (a render pass, not a transfer; DIVAVK_BLIT_DRAW=0 for transfers)");
     return true;
 }
@@ -1571,7 +1562,7 @@ static bool blit_color_by_draw(Context& c, GLint sx0, GLint sy0, GLint sx1, GLin
     const float block[12] = {
         (float)dx0, (float)dy0, (float)dx1, (float)dy1,
         (float)sx0, (float)sy0, (float)sx1, (float)sy1,
-        (float)t->width, (float)t->height, linear ? 1.0f : 0.0f, (float)s_blit_grid,
+        (float)t->width, (float)t->height, linear ? 1.0f : 0.0f, 0.0f,
     };
     dvk_push_gl_state();   // everything below is undone by the pop
     const GLuint read = c.read_fbo, draw = c.draw_fbo;
@@ -1596,7 +1587,7 @@ static bool blit_color_by_draw(Context& c, GLint sx0, GLint sy0, GLint sx1, GLin
     dvk_glUseProgram(s_blit_prog);
     dvk_glBindVertexArray(0);
     dvk_glViewport(std::min(dx0, dx1), std::min(dy0, dy1), std::abs(dx1 - dx0), std::abs(dy1 - dy0));
-    dvk_glDrawArrays(GL_TRIANGLES, 0, 6 * s_blit_grid * s_blit_grid);
+    dvk_glDrawArrays(GL_TRIANGLES, 0, 6);
     dvk_pop_gl_state();
     return true;
 }

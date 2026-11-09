@@ -81,8 +81,6 @@ void dvk_request_frame_dump(const char* dir);
    was requested. */
 void dvk_dump_begin(void);
 void dvk_dump_end(void);
-/* While a frame dump is being written on this thread's context: one GL texture as it is now. */
-void dvk_dump_gl_texture(unsigned int name, const char* what);
 void dvk_get_stats(dvk_stats* out);
 /* One context's counters (NULL = the first context). */
 void dvk_context_get_stats(dvk_context ctx, dvk_stats* out);
