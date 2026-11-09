@@ -50,7 +50,7 @@ gets the game window and DivaOverlay stays off.
 ## How it's drawn
 
 The menu is Dear ImGui draw lists (no ImGui windows). DivaLinux draws them on the GPU over each
-frame before it's presented (`src/DivaLinux/overlay.cpp`, `overlay_gl.h`'s `DrawMesh`), at the
+frame before it's presented (`src/DivaLinux/overlay/compositor.cpp`, `overlay_gl.cpp`'s `DrawMesh`), at the
 picture's full size, in both halves in side-by-side 3D; a frame costs a few thousand vertices
 and three draw calls, so the game runs at full speed with the menu open. If that fails the menu
 falls back to LauncherFS's CPU renderer (at most 1080 lines tall, blended like the launcher's

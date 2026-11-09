@@ -23,7 +23,7 @@
 #include <dlfcn.h>
 #include <vulkan/vulkan.h>
 #include "movie_yuv.hpp"
-#include "../overlay_gl.h"
+#include "../overlay/overlay_gl.hpp"
 
 #ifndef DIVAVK_SHADER_DIR
 #define DIVAVK_SHADER_DIR "res/ft_shaders"

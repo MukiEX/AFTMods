@@ -143,7 +143,11 @@ if(AFTMODS_BUILD_DIVALINUX)
         ${DIVALINUX_MOVIE_SOURCES}
         ${AFT_ROOT}/src/DivaLinux/io_trace.cpp
         ${AFT_ROOT}/src/DivaLinux/vfs.cpp
-        ${AFT_ROOT}/src/DivaLinux/overlay.cpp
+        ${AFT_ROOT}/src/DivaLinux/overlay/compositor.cpp
+        ${AFT_ROOT}/src/DivaLinux/overlay/cursor.cpp
+        ${AFT_ROOT}/src/DivaLinux/overlay/launcher_api.cpp
+        ${AFT_ROOT}/src/DivaLinux/overlay/layout.cpp
+        ${AFT_ROOT}/src/DivaLinux/overlay/overlay_gl.cpp
         ${AFT_ROOT}/src/DivaLinux/stages.cpp
         ${AFT_ROOT}/src/DivaLinux/common/iat_patch.cpp
         ${AFT_ROOT}/src/DivaLinux/common/util.cpp

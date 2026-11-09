@@ -1,4 +1,4 @@
-// The in-game overlay interface DivaLinux.dva exports (src/DivaLinux/overlay.cpp in AFTMods).
+// The in-game overlay interface DivaLinux.dva exports (src/DivaLinux/overlay/launcher_api.cpp in AFTMods).
 //
 // Plain C, so this MinGW-built launcher and the MSVC-built DivaLinux agree on it. The launcher
 // registers a callback with DivaLinux_SetOverlay; DivaLinux calls it on the game's render

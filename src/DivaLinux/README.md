@@ -84,8 +84,8 @@ launcher's in-game menu reads the mouse the same way.
 
 Launcher.dva can run as a menu over the game instead of a window before it (Options >
 In-game menu). DivaLinux draws it: the launcher registers with `DivaLinux_SetOverlay`
-(`overlay.cpp`), and before each present DivaLinux asks it for the menu's current picture and
-blends it over the frame (`overlay_gl.h`, saving and restoring all GL state like the movie
+(`overlay/launcher_api.cpp`), and before each present DivaLinux asks it for the menu's current picture and
+blends it over the frame (`overlay/overlay_gl.cpp`, saving and restoring all GL state like the movie
 converter). In side-by-side 3D a copy goes into each eye's half, so the menu sits on the screen
 plane. See `src/LauncherFS/README.md` for using it.
 
@@ -244,7 +244,7 @@ Set `DIVAVK_VALIDATION=1` in the environment to enable the Khronos validation la
 | `movie/movie.cpp` | Installs the player on the game's `CreatePlayer` factory |
 | `io_trace.cpp` | The `[debug] io_trace` file I/O trace |
 | `vfs.cpp` | `[loading]`: the lookup cache and archive reading |
-| `overlay.cpp`, `overlay_gl.h` | Draws the launcher's in-game menu and the mouse pointer over the frame; tested in `src/DivaVK/tests` |
+| `overlay/` | Draws the launcher's in-game menu, DivaOverlay and the mouse pointer over the frame: `compositor.cpp` (per frame), `launcher_api.cpp` (the launcher's C ABI), `layout.cpp` (flat / side-by-side placement, where the game sees the mouse), `cursor.cpp` (the pointer), `overlay_gl.*` (the GL drawing; tested in `src/DivaVK/tests`) |
 | `../../tools/divalinux_pack.py` | Makes `rom.zip` and `mdata\<pack>.zip` |
 | `src/DivaVK/core/src/xr.cpp` | OpenXR output (virtual screen), tested against `src/DivaVK/tests/mock_xr_runtime.cpp` |
 

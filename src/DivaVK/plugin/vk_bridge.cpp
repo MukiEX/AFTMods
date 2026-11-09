@@ -216,7 +216,7 @@ static HDC WINAPI bridge_wglGetCurrentDC() { return s_current ? s_hdc : nullptr;
 static BOOL WINAPI bridge_wglShareLists(HGLRC, HGLRC) { return TRUE; }
 
 #ifdef DIVALINUX
-extern "C" void divalinux_overlay_before_swap(HWND hwnd); // src/DivaLinux/overlay.cpp
+extern "C" void divalinux_overlay_before_swap(HWND hwnd); // src/DivaLinux/overlay/compositor.cpp
 #endif
 
 static BOOL WINAPI bridge_SwapBuffers(HDC) {

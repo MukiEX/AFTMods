@@ -1,8 +1,8 @@
 // DivaOverlay inside DivaLinux.dva: opens the menu over the running game and feeds it input.
 //
-// DivaLinux's overlay hook (src/DivaLinux/overlay.cpp) calls divaoverlay_frame before every
+// DivaLinux's overlay hook (src/DivaLinux/overlay/compositor.cpp) calls divaoverlay_frame before every
 // present; while the menu is open its Dear ImGui draw lists are drawn on the GPU over the frame
-// (overlay_gl.h's DrawMesh, in both halves in side-by-side 3D). If that fails, it falls back to
+// (overlay/overlay_gl.cpp's DrawMesh, in both halves in side-by-side 3D). If that fails, it falls back to
 // LauncherFS's CPU renderer and hands DivaLinux the picture to blend.
 //
 // Two hosts:
@@ -38,7 +38,7 @@
 #include "ov_ui.hpp"
 #include "ini.hpp"
 #include "soft_render.hpp"
-#include "../DivaLinux/overlay_gl.h"
+#include "../DivaLinux/overlay/overlay_gl.hpp"
 
 static_assert(sizeof(ImDrawIdx) == 2, "the GPU path draws 16-bit indices");
 
@@ -49,7 +49,7 @@ extern const unsigned int dov_font_regular_size;
 
 extern "C" void divavk_log_text(const char* text);                 // DivaLinux.log (vk_bridge.cpp)
 extern "C" BOOL SetOptionInt(const char* name, int value);         // DivaGL (dllmain.cpp)
-extern "C" void divalinux_cursor_install(const wchar_t* config_file); // overlay.cpp
+extern "C" void divalinux_cursor_install(const wchar_t* config_file); // overlay/cursor.cpp
 extern "C" bool dvk_xr_active(void);                                // DivaVK (xr.cpp)
 
 // ------------------------------------------------------------ files (Win32; the runtime maps them)
@@ -231,7 +231,7 @@ namespace {
         dov::Device device = dov::Device::Pad;
         POINT last_cursor{ -100000, -100000 };
         bool restart_requested = false;
-        // GPU drawing (DivaLinux's overlay_gl.h through DivaVK)
+        // GPU drawing (DivaLinux's overlay/overlay_gl.cpp through DivaVK)
         OverlayGL::Compositor gl;
         uint32_t next_tex_id = 0;
         std::vector<OverlayGL::Vertex> vtx;
