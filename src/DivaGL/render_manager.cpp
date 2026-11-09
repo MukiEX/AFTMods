@@ -624,17 +624,19 @@ static void pv_thread_draw() {
         }
         stereo_eye_reset();
         ms_eye[eye] = pv_ms_since(te);
-        /* Each eye in a submission of its own (DIVA_PV_FLUSH_PER_EYE=0: one for the picture).
+        /* Each eye in a submission of its own (DIVA_PV_FLUSH_PER_EYE=1, a test).
            On the Odin 3 with Qualcomm's driver the second eye's saved picture reached the game
            thread with one triangle-shaped half never written (stale: an older picture, or the
            texture's first contents), while the first eye's always arrived whole and mono never
            failed. Splitting the copy into 4x4 squares left the same single diagonal, so it isn't
            the copy's triangles; a third copy after it didn't help either. With a flush here
-           every eye's save is the first one of its submission. */
+           every eye's save is the first one of its submission. Result: both eyes broke, so it
+           is off (DIVA_PV_FLUSH_PER_EYE=1 for the test): an eye is whole when the next eye's
+           drawing follows its save in the same submission. */
         static int per_eye = -1;
         if (per_eye < 0) {
             const char* e = getenv("DIVA_PV_FLUSH_PER_EYE");
-            per_eye = !(e && e[0] == '0');
+            per_eye = e && e[0] == '1';
         }
         if (per_eye && eye + 1 < t.eyes)
             dvk_flush();
@@ -663,44 +665,28 @@ static void pv_thread_draw() {
         rend_data_ctx.state.finish();
     }
 
-    /* A third "eye" after the last real one: the PV picture copied once more, the same way
-       the eyes are saved, into a scratch texture nobody shows. On the Odin 3 with Qualcomm's
-       driver the right eye's saved picture came out with one triangle never written, though
-       the PV thread's own readback had it whole; mono (a single save) never did, and a 1x1
-       clear after the last save didn't help. If it is the second/last copy out of the PV's
-       picture that goes wrong, it now goes wrong where it can't be seen (a suggestion from
-       the Odin's owner). DIVA_PV_TAIL_PASS=0 leaves it out. */
+    /* After the last eye's save, the PV's own picture (the screen buffer it was copied from)
+       is cleared. On the Odin 3 with Qualcomm's driver an eye's saved picture reached the game
+       thread whole only when the next eye's drawing followed its save in the same submission:
+       the left always did, the right (followed by little) never did, and with a submission
+       after each eye both broke. A 1x1 clear and a third copy after the right eye didn't
+       help; drawing into the source again, as the next eye does, is what's left to try.
+       DIVA_PV_TAIL_PASS=0 leaves it out. */
     if (t.eyes > 1) {
         static int tail = -1;
-        static GLuint tail_tex = 0, tail_fb = 0;
-        static int32_t tail_w = 0, tail_h = 0;
         if (tail < 0) {
             const char* e = getenv("DIVA_PV_TAIL_PASS");
             tail = !(e && e[0] == '0');
         }
-        const int32_t w = rctx->screen_buffer.get_width(), h = rctx->screen_buffer.get_height();
-        if (tail && w > 0 && h > 0) {
-            if (!tail_fb || w != tail_w || h != tail_h) {
-                GLint prev_draw = 0, prev_read = 0, prev_tex = 0;
-                glGetIntegervDLL(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
-                glGetIntegervDLL(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
-                glGetIntegervDLL(GL_TEXTURE_BINDING_2D, &prev_tex);
-                if (!tail_tex)
-                    glGenTexturesDLL(1, &tail_tex);
-                glBindTextureDLL(GL_TEXTURE_2D, tail_tex);
-                glTexParameteriDLL(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
-                glTexImage2DDLL(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-                glBindTextureDLL(GL_TEXTURE_2D, (GLuint)prev_tex);
-                if (!tail_fb)
-                    glGenFramebuffers(1, &tail_fb);
-                glBindFramebuffer(GL_FRAMEBUFFER, tail_fb);
-                glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tail_tex, 0);
-                glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)prev_read);
-                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)prev_draw);
-                tail_w = w;
-                tail_h = h;
-            }
-            pv_blit(rctx->screen_buffer.get_fb(), tail_fb, w, h, w, h);
+        if (tail && rctx->screen_buffer.get_fb()) {
+            GLint prev_draw = 0, prev_read = 0;
+            glGetIntegervDLL(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
+            glGetIntegervDLL(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
+            glBindFramebuffer(GL_FRAMEBUFFER, rctx->screen_buffer.get_fb());
+            const GLfloat black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+            glClearBufferfv(GL_COLOR, 0, black);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)prev_read);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)prev_draw);
         }
     }
 
