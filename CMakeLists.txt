@@ -142,6 +142,8 @@ if(AFTMODS_BUILD_DIVALINUX)
         ${AFT_ROOT}/src/DivaLinux/vfs.cpp
         ${AFT_ROOT}/src/DivaLinux/overlay.cpp
         ${AFT_ROOT}/src/DivaLinux/stages.cpp
+        ${AFT_ROOT}/src/DivaLinux/common/iat_patch.cpp
+        ${AFT_ROOT}/src/DivaLinux/common/util.cpp
         ${DIVAGL_SOURCES})
     aft_plugin(DivaLinux)
     target_compile_definitions(DivaLinux PRIVATE DIVAVK DIVALINUX)

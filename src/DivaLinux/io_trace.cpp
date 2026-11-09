@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <wchar.h>
 #include <algorithm>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -27,7 +28,8 @@
 
 #pragma intrinsic(_ReturnAddress)
 
-extern "C" void divavk_log_text(const char* text);
+#include "common/iat_patch.hpp"
+#include "common/util.hpp"
 
 namespace {
     // ------------------------------------------------------------ hooked functions
@@ -135,24 +137,6 @@ namespace {
     double g_start_ms = 0.0;
     int g_burst_number = 0;
 
-    double NowMs() {
-        static LARGE_INTEGER freq = {};
-        if (!freq.QuadPart)
-            QueryPerformanceFrequency(&freq);
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        return now.QuadPart * 1000.0 / freq.QuadPart;
-    }
-
-    std::wstring Widen(const char* s) {
-        if (!s)
-            return std::wstring();
-        int n = MultiByteToWideChar(CP_ACP, 0, s, -1, nullptr, 0);
-        std::wstring w(n > 0 ? n - 1 : 0, L'\0');
-        if (n > 1)
-            MultiByteToWideChar(CP_ACP, 0, s, -1, &w[0], n);
-        return w;
-    }
 
     // Lower case, backslashes, relative to the game folder when inside it.
     std::wstring Normalize(const wchar_t* path) {
@@ -186,7 +170,7 @@ namespace {
     }
 
     void Record(Fn f, const std::wstring& raw_path, bool miss, double t, uint64_t bytes = 0) {
-        double now = NowMs();
+        double now = dl::now_ms();
         std::wstring path = raw_path.empty() ? std::wstring() : Normalize(raw_path.c_str());
         AcquireSRWLockExclusive(&g_stats_lock);
         Burst& b = g_burst;
@@ -213,23 +197,6 @@ namespace {
         ReleaseSRWLockExclusive(&g_stats_lock);
     }
 
-    void Log(const char* format, ...) {
-        char buf[1024];
-        va_list args;
-        va_start(args, format);
-        vsnprintf(buf, sizeof(buf), format, args);
-        va_end(args);
-        divavk_log_text(buf);
-    }
-
-    std::string Narrow(const std::wstring& w) {
-        int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
-        std::string s(n > 0 ? n - 1 : 0, '\0');
-        if (n > 1)
-            WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, &s[0], n, nullptr, nullptr);
-        return s;
-    }
-
     void Report(Burst& b) {
         uint64_t calls = 0, misses = 0;
         double ms = 0.0, miss_ms = 0.0;
@@ -241,7 +208,7 @@ namespace {
         }
         double read_ms = b.fn[F_ReadFile].ms + b.fn[F_fread].ms;
         g_burst_number++;
-        Log("I/O trace, burst %d (%.1f s to %.1f s after start, %.1f s long): %llu calls taking %.1f s "
+        dl::log("I/O trace, burst %d (%.1f s to %.1f s after start, %.1f s long): %llu calls taking %.1f s "
             "(%llu missed, %.1f s); %.1f MB read in %.1f s",
             g_burst_number, (b.first_ms - g_start_ms) / 1000.0, (b.last_ms - g_start_ms) / 1000.0,
             (b.last_ms - b.first_ms) / 1000.0, (unsigned long long)calls, ms / 1000.0,
@@ -251,7 +218,7 @@ namespace {
             const Counter& c = b.fn[f];
             if (!c.calls)
                 continue;
-            Log("  %-20s %8llu calls %9.1f ms (%.3f ms each); %llu missed, %.1f ms (%.3f ms each)",
+            dl::log("  %-20s %8llu calls %9.1f ms (%.3f ms each); %llu missed, %.1f ms (%.3f ms each)",
                 FN_NAMES[f], (unsigned long long)c.calls, c.ms, c.ms / c.calls, (unsigned long long)c.misses,
                 c.miss_ms, c.misses ? c.miss_ms / c.misses : 0.0);
         }
@@ -262,11 +229,11 @@ namespace {
         std::string line = "  busiest folders:";
         for (size_t i = 0; i < folders.size() && i < 12; i++) {
             char item[256];
-            snprintf(item, sizeof(item), " %s %llu (%llu missed) %.0f ms;", Narrow(folders[i].first).c_str(),
+            snprintf(item, sizeof(item), " %s %llu (%llu missed) %.0f ms;", dl::narrow(folders[i].first).c_str(),
                 (unsigned long long)folders[i].second.calls, (unsigned long long)folders[i].second.misses, folders[i].second.ms);
             line += item;
         }
-        Log("%s %zu folders in all", line.c_str(), folders.size());
+        dl::log("%s %zu folders in all", line.c_str(), folders.size());
 
         std::vector<std::pair<std::wstring, uint32_t>> names(b.missed_names.begin(), b.missed_names.end());
         std::sort(names.begin(), names.end(),
@@ -275,14 +242,14 @@ namespace {
             line = "  most-missed names:";
             for (size_t i = 0; i < names.size() && i < 12; i++) {
                 char item[256];
-                snprintf(item, sizeof(item), " %s x%u;", Narrow(names[i].first).c_str(), names[i].second);
+                snprintf(item, sizeof(item), " %s x%u;", dl::narrow(names[i].first).c_str(), names[i].second);
                 line += item;
             }
-            Log("%s %zu different names missed", line.c_str(), names.size());
+            dl::log("%s %zu different names missed", line.c_str(), names.size());
         }
 
         for (const Slow& s : b.slowest)
-            Log("  slow: %.1f ms %s %s", s.ms, FN_NAMES[s.fn], Narrow(s.path).c_str());
+            dl::log("  slow: %.1f ms %s %s", s.ms, FN_NAMES[s.fn], dl::narrow(s.path).c_str());
     }
 
     // Writes a burst's summary once the game has been quiet for two seconds.
@@ -292,7 +259,7 @@ namespace {
             Burst done;
             bool report = false;
             AcquireSRWLockExclusive(&g_stats_lock);
-            if (g_burst.active && NowMs() - g_burst.last_ms > 2000.0) {
+            if (g_burst.active && dl::now_ms() - g_burst.last_ms > 2000.0) {
                 done = std::move(g_burst);
                 g_burst = Burst();
                 report = true;
@@ -308,107 +275,107 @@ namespace {
     template <typename T> T Orig(Fn f, void* ra) { return (T)OriginalFor(f, ra); }
 
     HANDLE WINAPI Hook_CreateFileA(LPCSTR n, DWORD a, DWORD s, LPSECURITY_ATTRIBUTES sa, DWORD c, DWORD fl, HANDLE t) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         HANDLE h = Orig<decltype(&CreateFileA)>(F_CreateFileA, _ReturnAddress())(n, a, s, sa, c, fl, t);
         DWORD e = GetLastError();
-        Record(F_CreateFileA, Widen(n), h == INVALID_HANDLE_VALUE, NowMs() - t0);
+        Record(F_CreateFileA, dl::widen_acp(n), h == INVALID_HANDLE_VALUE, dl::now_ms() - t0);
         SetLastError(e);
         return h;
     }
     HANDLE WINAPI Hook_CreateFileW(LPCWSTR n, DWORD a, DWORD s, LPSECURITY_ATTRIBUTES sa, DWORD c, DWORD fl, HANDLE t) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         HANDLE h = Orig<decltype(&CreateFileW)>(F_CreateFileW, _ReturnAddress())(n, a, s, sa, c, fl, t);
         DWORD e = GetLastError();
-        Record(F_CreateFileW, n ? n : L"", h == INVALID_HANDLE_VALUE, NowMs() - t0);
+        Record(F_CreateFileW, n ? n : L"", h == INVALID_HANDLE_VALUE, dl::now_ms() - t0);
         SetLastError(e);
         return h;
     }
     DWORD WINAPI Hook_GetFileAttributesA(LPCSTR n) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         DWORD r = Orig<decltype(&GetFileAttributesA)>(F_GetFileAttributesA, _ReturnAddress())(n);
         DWORD e = GetLastError();
-        Record(F_GetFileAttributesA, Widen(n), r == INVALID_FILE_ATTRIBUTES, NowMs() - t0);
+        Record(F_GetFileAttributesA, dl::widen_acp(n), r == INVALID_FILE_ATTRIBUTES, dl::now_ms() - t0);
         SetLastError(e);
         return r;
     }
     DWORD WINAPI Hook_GetFileAttributesW(LPCWSTR n) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         DWORD r = Orig<decltype(&GetFileAttributesW)>(F_GetFileAttributesW, _ReturnAddress())(n);
         DWORD e = GetLastError();
-        Record(F_GetFileAttributesW, n ? n : L"", r == INVALID_FILE_ATTRIBUTES, NowMs() - t0);
+        Record(F_GetFileAttributesW, n ? n : L"", r == INVALID_FILE_ATTRIBUTES, dl::now_ms() - t0);
         SetLastError(e);
         return r;
     }
     BOOL WINAPI Hook_GetFileAttributesExA(LPCSTR n, GET_FILEEX_INFO_LEVELS l, LPVOID i) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         BOOL r = Orig<decltype(&GetFileAttributesExA)>(F_GetFileAttributesExA, _ReturnAddress())(n, l, i);
         DWORD e = GetLastError();
-        Record(F_GetFileAttributesExA, Widen(n), !r, NowMs() - t0);
+        Record(F_GetFileAttributesExA, dl::widen_acp(n), !r, dl::now_ms() - t0);
         SetLastError(e);
         return r;
     }
     BOOL WINAPI Hook_GetFileAttributesExW(LPCWSTR n, GET_FILEEX_INFO_LEVELS l, LPVOID i) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         BOOL r = Orig<decltype(&GetFileAttributesExW)>(F_GetFileAttributesExW, _ReturnAddress())(n, l, i);
         DWORD e = GetLastError();
-        Record(F_GetFileAttributesExW, n ? n : L"", !r, NowMs() - t0);
+        Record(F_GetFileAttributesExW, n ? n : L"", !r, dl::now_ms() - t0);
         SetLastError(e);
         return r;
     }
     HANDLE WINAPI Hook_FindFirstFileA(LPCSTR n, LPWIN32_FIND_DATAA d) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         HANDLE h = Orig<decltype(&FindFirstFileA)>(F_FindFirstFileA, _ReturnAddress())(n, d);
         DWORD e = GetLastError();
-        Record(F_FindFirstFileA, Widen(n), h == INVALID_HANDLE_VALUE, NowMs() - t0);
+        Record(F_FindFirstFileA, dl::widen_acp(n), h == INVALID_HANDLE_VALUE, dl::now_ms() - t0);
         SetLastError(e);
         return h;
     }
     HANDLE WINAPI Hook_FindFirstFileW(LPCWSTR n, LPWIN32_FIND_DATAW d) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         HANDLE h = Orig<decltype(&FindFirstFileW)>(F_FindFirstFileW, _ReturnAddress())(n, d);
         DWORD e = GetLastError();
-        Record(F_FindFirstFileW, n ? n : L"", h == INVALID_HANDLE_VALUE, NowMs() - t0);
+        Record(F_FindFirstFileW, n ? n : L"", h == INVALID_HANDLE_VALUE, dl::now_ms() - t0);
         SetLastError(e);
         return h;
     }
     HANDLE WINAPI Hook_FindFirstFileExA(LPCSTR n, FINDEX_INFO_LEVELS l, LPVOID d, FINDEX_SEARCH_OPS o, LPVOID f, DWORD fl) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         HANDLE h = Orig<decltype(&FindFirstFileExA)>(F_FindFirstFileExA, _ReturnAddress())(n, l, d, o, f, fl);
         DWORD e = GetLastError();
-        Record(F_FindFirstFileExA, Widen(n), h == INVALID_HANDLE_VALUE, NowMs() - t0);
+        Record(F_FindFirstFileExA, dl::widen_acp(n), h == INVALID_HANDLE_VALUE, dl::now_ms() - t0);
         SetLastError(e);
         return h;
     }
     HANDLE WINAPI Hook_FindFirstFileExW(LPCWSTR n, FINDEX_INFO_LEVELS l, LPVOID d, FINDEX_SEARCH_OPS o, LPVOID f, DWORD fl) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         HANDLE h = Orig<decltype(&FindFirstFileExW)>(F_FindFirstFileExW, _ReturnAddress())(n, l, d, o, f, fl);
         DWORD e = GetLastError();
-        Record(F_FindFirstFileExW, n ? n : L"", h == INVALID_HANDLE_VALUE, NowMs() - t0);
+        Record(F_FindFirstFileExW, n ? n : L"", h == INVALID_HANDLE_VALUE, dl::now_ms() - t0);
         SetLastError(e);
         return h;
     }
     BOOL WINAPI Hook_FindNextFileA(HANDLE h, LPWIN32_FIND_DATAA d) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         BOOL r = Orig<decltype(&FindNextFileA)>(F_FindNextFileA, _ReturnAddress())(h, d);
         DWORD e = GetLastError();
-        Record(F_FindNextFileA, std::wstring(), false, NowMs() - t0);
+        Record(F_FindNextFileA, std::wstring(), false, dl::now_ms() - t0);
         SetLastError(e);
         return r;
     }
     BOOL WINAPI Hook_FindNextFileW(HANDLE h, LPWIN32_FIND_DATAW d) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         BOOL r = Orig<decltype(&FindNextFileW)>(F_FindNextFileW, _ReturnAddress())(h, d);
         DWORD e = GetLastError();
-        Record(F_FindNextFileW, std::wstring(), false, NowMs() - t0);
+        Record(F_FindNextFileW, std::wstring(), false, dl::now_ms() - t0);
         SetLastError(e);
         return r;
     }
     BOOL WINAPI Hook_ReadFile(HANDLE h, LPVOID b, DWORD n, LPDWORD read, LPOVERLAPPED o) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         DWORD local = 0;
         BOOL r = Orig<decltype(&ReadFile)>(F_ReadFile, _ReturnAddress())(h, b, n, read ? read : (o ? nullptr : &local), o);
         DWORD e = GetLastError();
-        Record(F_ReadFile, std::wstring(), !r && e != ERROR_IO_PENDING, NowMs() - t0, r ? (read ? *read : local) : 0);
+        Record(F_ReadFile, std::wstring(), !r && e != ERROR_IO_PENDING, dl::now_ms() - t0, r ? (read ? *read : local) : 0);
         SetLastError(e);
         return r;
     }
@@ -427,69 +394,69 @@ namespace {
     typedef size_t (__cdecl* P_fread)(void*, size_t, size_t, FILE*);
 
     FILE* __cdecl Hook_fopen(const char* n, const char* m) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         FILE* f = Orig<P_fopen>(F_fopen, _ReturnAddress())(n, m);
-        Record(F_fopen, Widen(n), !f, NowMs() - t0);
+        Record(F_fopen, dl::widen_acp(n), !f, dl::now_ms() - t0);
         return f;
     }
     FILE* __cdecl Hook_wfopen(const wchar_t* n, const wchar_t* m) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         FILE* f = Orig<P_wfopen>(F_wfopen, _ReturnAddress())(n, m);
-        Record(F_wfopen, n ? n : L"", !f, NowMs() - t0);
+        Record(F_wfopen, n ? n : L"", !f, dl::now_ms() - t0);
         return f;
     }
     int __cdecl Hook_fopen_s(FILE** o, const char* n, const char* m) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         int r = Orig<P_fopen_s>(F_fopen_s, _ReturnAddress())(o, n, m);
-        Record(F_fopen_s, Widen(n), r != 0, NowMs() - t0);
+        Record(F_fopen_s, dl::widen_acp(n), r != 0, dl::now_ms() - t0);
         return r;
     }
     int __cdecl Hook_wfopen_s(FILE** o, const wchar_t* n, const wchar_t* m) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         int r = Orig<P_wfopen_s>(F_wfopen_s, _ReturnAddress())(o, n, m);
-        Record(F_wfopen_s, n ? n : L"", r != 0, NowMs() - t0);
+        Record(F_wfopen_s, n ? n : L"", r != 0, dl::now_ms() - t0);
         return r;
     }
     FILE* __cdecl Hook_fsopen(const char* n, const char* m, int s) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         FILE* f = Orig<P_fsopen>(F_fsopen, _ReturnAddress())(n, m, s);
-        Record(F_fsopen, Widen(n), !f, NowMs() - t0);
+        Record(F_fsopen, dl::widen_acp(n), !f, dl::now_ms() - t0);
         return f;
     }
     FILE* __cdecl Hook_wfsopen(const wchar_t* n, const wchar_t* m, int s) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         FILE* f = Orig<P_wfsopen>(F_wfsopen, _ReturnAddress())(n, m, s);
-        Record(F_wfsopen, n ? n : L"", !f, NowMs() - t0);
+        Record(F_wfsopen, n ? n : L"", !f, dl::now_ms() - t0);
         return f;
     }
     int __cdecl Hook_stat(const char* n, void* st) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         int r = Orig<P_stat>(F_stat, _ReturnAddress())(n, st);
-        Record(F_stat, Widen(n), r != 0, NowMs() - t0);
+        Record(F_stat, dl::widen_acp(n), r != 0, dl::now_ms() - t0);
         return r;
     }
     int __cdecl Hook_wstat(const wchar_t* n, void* st) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         int r = Orig<P_wstat>(F_wstat, _ReturnAddress())(n, st);
-        Record(F_wstat, n ? n : L"", r != 0, NowMs() - t0);
+        Record(F_wstat, n ? n : L"", r != 0, dl::now_ms() - t0);
         return r;
     }
     int __cdecl Hook_access(const char* n, int m) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         int r = Orig<P_access>(F_access, _ReturnAddress())(n, m);
-        Record(F_access, Widen(n), r != 0, NowMs() - t0);
+        Record(F_access, dl::widen_acp(n), r != 0, dl::now_ms() - t0);
         return r;
     }
     int __cdecl Hook_waccess(const wchar_t* n, int m) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         int r = Orig<P_waccess>(F_waccess, _ReturnAddress())(n, m);
-        Record(F_waccess, n ? n : L"", r != 0, NowMs() - t0);
+        Record(F_waccess, n ? n : L"", r != 0, dl::now_ms() - t0);
         return r;
     }
     size_t __cdecl Hook_fread(void* b, size_t s, size_t c, FILE* f) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         size_t r = Orig<P_fread>(F_fread, _ReturnAddress())(b, s, c, f);
-        Record(F_fread, std::wstring(), false, NowMs() - t0, (uint64_t)r * s);
+        Record(F_fread, std::wstring(), false, dl::now_ms() - t0, (uint64_t)r * s);
         return r;
     }
 
@@ -509,54 +476,37 @@ namespace {
     std::vector<HMODULE> g_seen;
 
     int PatchModule(HMODULE module) {
-        uint8_t* base = (uint8_t*)module;
-        IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + ((IMAGE_DOS_HEADER*)base)->e_lfanew);
-        IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-        if (!dir.VirtualAddress)
-            return 0;
         int patched = 0;
-        for (IMAGE_IMPORT_DESCRIPTOR* imp = (IMAGE_IMPORT_DESCRIPTOR*)(base + dir.VirtualAddress); imp->Name; imp++) {
-            if (!IsFileDll((const char*)(base + imp->Name)) || !imp->OriginalFirstThunk)
-                continue;
-            IMAGE_THUNK_DATA* names = (IMAGE_THUNK_DATA*)(base + imp->OriginalFirstThunk);
-            IMAGE_THUNK_DATA* slots = (IMAGE_THUNK_DATA*)(base + imp->FirstThunk);
-            for (; names->u1.AddressOfData; names++, slots++) {
-                if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal))
-                    continue;
-                const char* name = (const char*)((IMAGE_IMPORT_BY_NAME*)(base + names->u1.AddressOfData))->Name;
-                int f = -1;
-                for (const ImportName& in : IMPORTS)
-                    if (!strcmp(in.name, name)) {
-                        f = in.fn;
-                        break;
-                    }
-                // Two CRT _stat variants with different struct layouts must not share one
-                // original: only the first spelling seen for F_stat/F_wstat is hooked.
-                void* current = (void*)slots->u1.Function;
-                if (f < 0 || current == HOOKS[f])
-                    continue;
-                AcquireSRWLockExclusive(&g_orig_lock);
-                bool conflict = false;
-                if (!g_shared[f])
-                    g_shared[f] = current;
-                else if (g_shared[f] != current) {
-                    if (f == F_stat || f == F_wstat)
-                        conflict = true; // a different _stat variant: leave it alone
-                    else {
-                        g_mixed[f] = true;
-                        g_orig[f].push_back({ module, current });
-                    }
+        dl::for_each_import(module, IsFileDll, [&](const char*, const char* name, ULONG_PTR* slot) {
+            int f = -1;
+            for (const ImportName& in : IMPORTS)
+                if (!strcmp(in.name, name)) {
+                    f = in.fn;
+                    break;
                 }
-                ReleaseSRWLockExclusive(&g_orig_lock);
-                if (conflict)
-                    continue;
-                DWORD old;
-                VirtualProtect(&slots->u1.Function, sizeof(void*), PAGE_READWRITE, &old);
-                slots->u1.Function = (ULONG_PTR)HOOKS[f];
-                VirtualProtect(&slots->u1.Function, sizeof(void*), old, &old);
-                patched++;
+            // Two CRT _stat variants with different struct layouts must not share one
+            // original: only the first spelling seen for F_stat/F_wstat is hooked.
+            void* current = (void*)*slot;
+            if (f < 0 || current == HOOKS[f])
+                return;
+            AcquireSRWLockExclusive(&g_orig_lock);
+            bool conflict = false;
+            if (!g_shared[f])
+                g_shared[f] = current;
+            else if (g_shared[f] != current) {
+                if (f == F_stat || f == F_wstat)
+                    conflict = true; // a different _stat variant: leave it alone
+                else {
+                    g_mixed[f] = true;
+                    g_orig[f].push_back({ module, current });
+                }
             }
-        }
+            ReleaseSRWLockExclusive(&g_orig_lock);
+            if (conflict)
+                return;
+            dl::write_slot(slot, HOOKS[f]);
+            patched++;
+        });
         return patched;
     }
 }
@@ -564,32 +514,14 @@ namespace {
 // Hooks the file functions of every loaded module outside the Windows folder (the game,
 // GLUT, PD Loader and its plugins). Safe to call again: modules already done are skipped.
 extern "C" void divalinux_io_trace_patch_modules() {
-    if (!g_enabled)
+    if (!g_enabled || g_game_dir.empty())
         return;
-    wchar_t windir[MAX_PATH];
-    UINT wn = GetWindowsDirectoryW(windir, MAX_PATH);
-    HMODULE mods[1024];
-    DWORD needed = 0;
-    if (!K32EnumProcessModules(GetCurrentProcess(), mods, sizeof(mods), &needed))
-        return;
-    DWORD count = std::min<DWORD>(needed / sizeof(HMODULE), 1024);
-    for (DWORD i = 0; i < count; i++) {
-        HMODULE m = mods[i];
-        if (m == g_self || std::find(g_seen.begin(), g_seen.end(), m) != g_seen.end())
-            continue;
-        g_seen.push_back(m);
-        wchar_t path[MAX_PATH * 2];
-        DWORD n = GetModuleFileNameW(m, path, (DWORD)(sizeof(path) / sizeof(path[0])));
-        if (!n || (wn && n > wn && !_wcsnicmp(path, windir, wn) && (path[wn] == L'\\' || path[wn] == L'/')))
-            continue; // system DLLs
-        if (g_game_dir.empty() || n <= g_game_dir.size() || _wcsnicmp(path, g_game_dir.c_str(), g_game_dir.size()))
-            continue; // only the game and its plugins: not overlays (OBS, Fences) or drivers loaded into it
+    // only the game and its plugins: not overlays (OBS, Fences) or drivers loaded into it
+    dl::for_each_new_module(g_seen, g_self, g_game_dir, [](HMODULE m, const wchar_t* path) {
         int patched = PatchModule(m);
-        if (patched) {
-            const wchar_t* base = wcsrchr(path, L'\\');
-            Log("I/O trace: %d file functions hooked in %s", patched, Narrow(base ? base + 1 : path).c_str());
-        }
-    }
+        if (patched)
+            dl::log("I/O trace: %d file functions hooked in %s", patched, dl::narrow(dl::module_file_name(path)).c_str());
+    });
 }
 
 extern "C" void divalinux_io_trace_install(HMODULE self, const wchar_t* config_file) {
@@ -597,7 +529,7 @@ extern "C" void divalinux_io_trace_install(HMODULE self, const wchar_t* config_f
         return;
     g_enabled = true;
     g_self = self;
-    g_start_ms = NowMs();
+    g_start_ms = dl::now_ms();
 
     wchar_t dir[MAX_PATH * 2];
     DWORD n = GetModuleFileNameW(nullptr, dir, (DWORD)(sizeof(dir) / sizeof(dir[0])));
@@ -611,7 +543,7 @@ extern "C" void divalinux_io_trace_install(HMODULE self, const wchar_t* config_f
     }
     g_game_dir = d;
 
-    Log("I/O trace on ([debug] io_trace=1): a summary is logged after each burst of file activity");
+    dl::log("I/O trace on ([debug] io_trace=1): a summary is logged after each burst of file activity");
     divalinux_io_trace_patch_modules();
     CloseHandle(CreateThread(nullptr, 0, ReporterThread, nullptr, 0, nullptr));
 }

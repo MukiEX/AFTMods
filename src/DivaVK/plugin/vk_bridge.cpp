@@ -15,6 +15,7 @@
 */
 
 #include <windows.h>
+#include "../../DivaLinux/common/iat_patch.hpp"
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -439,51 +440,30 @@ static FARPROC WINAPI bridge_GetProcAddress(HMODULE module, LPCSTR name) {
     return s_real_GetProcAddress(module, name);
 }
 
-static int patch_imports(HMODULE module, const char* label) {
-    if (!module)
-        return 0;
-    uint8_t* base = (uint8_t*)module;
-    IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
-    IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
-    IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-    if (!dir.VirtualAddress)
-        return 0;
+static bool is_bridge_dll(const char* dll) {
+    return !_stricmp(dll, "opengl32.dll") || !_stricmp(dll, "gdi32.dll") || !_stricmp(dll, "kernel32.dll");
+}
 
+static int patch_imports(HMODULE module, const char* label) {
     int patched = 0, unresolved = 0;
-    for (IMAGE_IMPORT_DESCRIPTOR* imp = (IMAGE_IMPORT_DESCRIPTOR*)(base + dir.VirtualAddress); imp->Name; imp++) {
-        const char* dll = (const char*)(base + imp->Name);
+    dl::for_each_import(module, is_bridge_dll, [&](const char* dll, const char* name, ULONG_PTR* slot) {
         bool gl = !_stricmp(dll, "opengl32.dll");
         bool gdi = !_stricmp(dll, "gdi32.dll");
-        bool k32 = !_stricmp(dll, "kernel32.dll");
-        if (!gl && !gdi && !k32)
-            continue;
-        if (!imp->OriginalFirstThunk)
-            continue; // bound imports without names; nothing we can match
-
-        IMAGE_THUNK_DATA* names = (IMAGE_THUNK_DATA*)(base + imp->OriginalFirstThunk);
-        IMAGE_THUNK_DATA* slots = (IMAGE_THUNK_DATA*)(base + imp->FirstThunk);
-        for (; names->u1.AddressOfData; names++, slots++) {
-            if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal))
-                continue;
-            const char* name = (const char*)((IMAGE_IMPORT_BY_NAME*)(base + names->u1.AddressOfData))->Name;
-            // Never redirect our own GetProcAddress: bridge_GetProcAddress (and volk) call it.
-            void* fn = gl ? resolve_gl(name)
-                : gdi ? lookup(s_gdi, sizeof(s_gdi) / sizeof(s_gdi[0]), name)
-                : (module != s_self && s_real_GetProcAddress && !strcmp(name, "GetProcAddress")
-                    ? (void*)&bridge_GetProcAddress : nullptr);
-            if (!fn) {
-                if (gl)
-                    unresolved++;
-                continue;
-            }
-            DWORD old;
-            VirtualProtect(&slots->u1.Function, sizeof(void*), PAGE_READWRITE, &old);
-            slots->u1.Function = (ULONG_PTR)fn;
-            VirtualProtect(&slots->u1.Function, sizeof(void*), old, &old);
-            patched++;
+        // Never redirect our own GetProcAddress: bridge_GetProcAddress (and volk) call it.
+        void* fn = gl ? resolve_gl(name)
+            : gdi ? lookup(s_gdi, sizeof(s_gdi) / sizeof(s_gdi[0]), name)
+            : (module != s_self && s_real_GetProcAddress && !strcmp(name, "GetProcAddress")
+                ? (void*)&bridge_GetProcAddress : nullptr);
+        if (!fn) {
+            if (gl)
+                unresolved++;
+            return;
         }
-    }
-    bridge_logf("%s: %d imports redirected%s", label, patched, unresolved ? " (some unresolved)" : "");
+        dl::write_slot(slot, fn);
+        patched++;
+    });
+    if (module)
+        bridge_logf("%s: %d imports redirected%s", label, patched, unresolved ? " (some unresolved)" : "");
     return patched;
 }
 
@@ -503,51 +483,19 @@ static void patch_all_modules() {
     divalinux_vfs_patch_modules();     // plugins loaded since the last call (file layer first,
     divalinux_io_trace_patch_modules();     // so the trace wraps it)
 #endif
-    wchar_t windir[MAX_PATH];
-    UINT wn = GetWindowsDirectoryW(windir, MAX_PATH);
-    HMODULE mods[1024];
-    DWORD needed = 0;
-    if (!K32EnumProcessModules(GetCurrentProcess(), mods, sizeof(mods), &needed))
-        return;
-    DWORD count = needed / sizeof(HMODULE);
-    if (count > 1024)
-        count = 1024;
-    for (DWORD i = 0; i < count; i++) {
-        HMODULE m = mods[i];
-        bool seen = false;
-        for (HMODULE p : s_patched)
-            if (p == m) { seen = true; break; }
-        if (seen)
-            continue;
-        s_patched.push_back(m);
-        wchar_t path[MAX_PATH * 2];
-        DWORD n = GetModuleFileNameW(m, path, (DWORD)(sizeof(path) / sizeof(path[0])));
-        if (!n)
-            continue;
-        if (wn && n > wn && !_wcsnicmp(path, windir, wn) && (path[wn] == L'\\' || path[wn] == L'/'))
-            continue; // system DLLs (including opengl32 itself)
-        const wchar_t* base = wcsrchr(path, L'\\');
-        base = base ? base + 1 : path;
+    dl::for_each_new_module(s_patched, nullptr, std::wstring(), [](HMODULE m, const wchar_t* path) {
+        const wchar_t* base = dl::module_file_name(path);
         // The launcher draws its own window with the real OpenGL before the game starts.
         if (!_wcsicmp(base, L"Launcher.dva"))
-            continue;
+            return;
+        // Modules importing opengl32/gdi32, or kernel32 (a plugin that fetches GL functions
+        // with GetProcAddress needs patching too). patch_imports logs every module it's given.
+        if (!dl::imports_from(m, is_bridge_dll))
+            return;
         char label[MAX_PATH];
         WideCharToMultiByte(CP_UTF8, 0, base, -1, label, sizeof(label), nullptr, nullptr);
-        // patch_imports logs every module; keep the log readable by only logging hits
-        uint8_t* b = (uint8_t*)m;
-        IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(b + ((IMAGE_DOS_HEADER*)b)->e_lfanew);
-        if (!nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress)
-            continue;
-        bool imports_gl = false;
-        for (IMAGE_IMPORT_DESCRIPTOR* imp = (IMAGE_IMPORT_DESCRIPTOR*)(b + nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress); imp->Name; imp++) {
-            const char* dll = (const char*)(b + imp->Name);
-            if (!_stricmp(dll, "opengl32.dll") || !_stricmp(dll, "gdi32.dll")) { imports_gl = true; break; }
-            // A plugin that fetches GL functions with GetProcAddress needs patching too
-            if (!_stricmp(dll, "opengl32.dll") || !_stricmp(dll, "kernel32.dll")) imports_gl = true;
-        }
-        if (imports_gl)
-            patch_imports(m, label);
-    }
+        patch_imports(m, label);
+    });
 }
 
 // ---------------------------------------------------------------- game tables

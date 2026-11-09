@@ -44,7 +44,8 @@
 #include <unordered_map>
 #include <vector>
 
-extern "C" void divavk_log_text(const char* text);
+#include "common/iat_patch.hpp"
+#include "common/util.hpp"
 
 namespace {
     // ------------------------------------------------------------ real functions
@@ -151,47 +152,6 @@ namespace {
     volatile LONG64 g_bytes = 0;
     double g_list_ms = 0.0;
 
-    double NowMs() {
-        static LARGE_INTEGER freq = {};
-        if (!freq.QuadPart)
-            QueryPerformanceFrequency(&freq);
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        return now.QuadPart * 1000.0 / freq.QuadPart;
-    }
-
-    void Log(const char* format, ...) {
-        char buf[768];
-        va_list args;
-        va_start(args, format);
-        vsnprintf(buf, sizeof(buf), format, args);
-        va_end(args);
-        divavk_log_text(buf);
-    }
-
-    std::string Narrow(const std::wstring& w) {
-        int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
-        std::string s(n > 0 ? n - 1 : 0, '\0');
-        if (n > 1)
-            WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, &s[0], n, nullptr, nullptr);
-        return s;
-    }
-
-    std::wstring WidenAcp(const char* s) {
-        if (!s)
-            return std::wstring();
-        int n = MultiByteToWideChar(CP_ACP, 0, s, -1, nullptr, 0);
-        std::wstring w(n > 0 ? n - 1 : 0, L'\0');
-        if (n > 1)
-            MultiByteToWideChar(CP_ACP, 0, s, -1, &w[0], n);
-        return w;
-    }
-
-    void Lower(std::wstring& s) {
-        for (wchar_t& c : s)
-            c = (wchar_t)towlower(c);
-    }
-
     // ------------------------------------------------------------ paths
 
     // Absolute, lower case, backslashes. False for paths outside rom\ and mdata\ (and rom /
@@ -206,7 +166,7 @@ namespace {
         if (!n || n >= sizeof(buf) / sizeof(buf[0]))
             return false;
         full.assign(buf, n);
-        Lower(full);
+        dl::lower(full);
         if (full.compare(0, g_base.size(), g_base) != 0)
             return false;
         const wchar_t* rest = full.c_str() + g_base.size();
@@ -248,7 +208,7 @@ namespace {
             return false;
         dir = full;
         pattern = pat;
-        Lower(pattern);
+        dl::lower(pattern);
         return true;
     }
 
@@ -323,7 +283,7 @@ namespace {
     // Adds folder `rel` (archive-relative, as in the archive, backslashes) and its parents.
     void AddArchiveDirs(Archive* a, const std::wstring& rel) {
         std::wstring lower = rel;
-        Lower(lower);
+        dl::lower(lower);
         ArchiveDir(a->root);
         size_t pos = 0;
         while (pos < rel.size()) {
@@ -350,12 +310,12 @@ namespace {
         a->file = real_CreateFileW(a->path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr,
             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_RANDOM_ACCESS, nullptr);
         if (a->file == INVALID_HANDLE_VALUE) {
-            Log("Archive %s: can't open it (error %lu)", Narrow(a->path).c_str(), GetLastError());
+            dl::log("Archive %s: can't open it (error %lu)", dl::narrow(a->path).c_str(), GetLastError());
             return false;
         }
         LARGE_INTEGER size;
         if (!real_GetFileSizeEx(a->file, &size) || size.QuadPart < 22) {
-            Log("Archive %s: too small to be a zip", Narrow(a->path).c_str());
+            dl::log("Archive %s: too small to be a zip", dl::narrow(a->path).c_str());
             return false;
         }
         a->file_size = (uint64_t)size.QuadPart;
@@ -365,7 +325,7 @@ namespace {
         uint64_t tail_size = std::min<uint64_t>(a->file_size, 65557 + 20);
         std::vector<uint8_t> tail((size_t)tail_size);
         if (!ReadAt(a->file, a->file_size - tail_size, tail.data(), (DWORD)tail_size)) {
-            Log("Archive %s: read error", Narrow(a->path).c_str());
+            dl::log("Archive %s: read error", dl::narrow(a->path).c_str());
             return false;
         }
         int64_t eocd = -1;
@@ -375,7 +335,7 @@ namespace {
                 break;
             }
         if (eocd < 0) {
-            Log("Archive %s: not a zip (no end of central directory)", Narrow(a->path).c_str());
+            dl::log("Archive %s: not a zip (no end of central directory)", dl::narrow(a->path).c_str());
             return false;
         }
         const uint8_t* e = &tail[(size_t)eocd];
@@ -385,7 +345,7 @@ namespace {
             uint8_t z[56];
             if (eocd < 20 || U32(&tail[(size_t)eocd - 20]) != 0x07064b50
                 || !ReadAt(a->file, U64(&tail[(size_t)eocd - 20 + 8]), z, sizeof(z)) || U32(z) != 0x06064b50) {
-                Log("Archive %s: broken zip64 end record", Narrow(a->path).c_str());
+                dl::log("Archive %s: broken zip64 end record", dl::narrow(a->path).c_str());
                 return false;
             }
             count = U64(z + 32);
@@ -393,12 +353,12 @@ namespace {
             cd_offset = U64(z + 48);
         }
         if (cd_offset + cd_size > a->file_size || cd_size > 512ull << 20) {
-            Log("Archive %s: central directory out of range", Narrow(a->path).c_str());
+            dl::log("Archive %s: central directory out of range", dl::narrow(a->path).c_str());
             return false;
         }
         std::vector<uint8_t> cd((size_t)cd_size);
         if (cd_size && !ReadAt(a->file, cd_offset, cd.data(), (DWORD)cd_size)) {
-            Log("Archive %s: read error in the central directory", Narrow(a->path).c_str());
+            dl::log("Archive %s: read error in the central directory", dl::narrow(a->path).c_str());
             return false;
         }
 
@@ -408,7 +368,7 @@ namespace {
         size_t p = 0;
         for (uint64_t i = 0; i < count; i++) {
             if (p + 46 > cd.size() || U32(&cd[p]) != 0x02014b50) {
-                Log("Archive %s: broken central directory", Narrow(a->path).c_str());
+                dl::log("Archive %s: broken central directory", dl::narrow(a->path).c_str());
                 return false;
             }
             const uint8_t* c = &cd[p];
@@ -416,7 +376,7 @@ namespace {
             uint64_t csize = U32(c + 20), usize = U32(c + 24), header = U32(c + 42);
             size_t nlen = U16(c + 28), xlen = U16(c + 30), clen = U16(c + 32);
             if (p + 46 + nlen + xlen + clen > cd.size()) {
-                Log("Archive %s: broken central directory", Narrow(a->path).c_str());
+                dl::log("Archive %s: broken central directory", dl::narrow(a->path).c_str());
                 return false;
             }
             std::string name8((const char*)c + 46, nlen);
@@ -437,9 +397,9 @@ namespace {
 
             bool dir = !name8.empty() && name8.back() == '/';
             if (!dir && (method != 0 || (flags & 1) || csize != usize)) {
-                Log("Archive %s: %s is %s; DivaLinux reads only stored (uncompressed) zips, so the folder is used "
+                dl::log("Archive %s: %s is %s; DivaLinux reads only stored (uncompressed) zips, so the folder is used "
                     "instead. Repack with tools/divalinux_pack.py, or 7-Zip with compression level 0 (Store).",
-                    Narrow(a->path).c_str(), name8.c_str(), (flags & 1) ? "encrypted" : "compressed");
+                    dl::narrow(a->path).c_str(), name8.c_str(), (flags & 1) ? "encrypted" : "compressed");
                 return false;
             }
             int wn = MultiByteToWideChar(CP_UTF8, 0, name8.c_str(), (int)name8.size(), nullptr, 0);
@@ -509,7 +469,7 @@ namespace {
             std::wstring parent = a->root;
             if (!parent_rel.empty()) {
                 std::wstring l = parent_rel;
-                Lower(l);
+                dl::lower(l);
                 parent += L"\\" + l;
             }
             a->items.emplace_back(a, r.header, r.size, index++);
@@ -523,11 +483,11 @@ namespace {
             e.size = r.size;
             e.item = &a->items.back();
             std::wstring key = file;
-            Lower(key);
+            dl::lower(key);
             ArchiveDir(parent).entries[key] = e;
         }
-        Log("Archive %s: %zu files, replaces the %s folder", Narrow(a->path).c_str(), a->items.size(),
-            Narrow(a->root.substr(g_base.size())).c_str());
+        dl::log("Archive %s: %zu files, replaces the %s folder", dl::narrow(a->path).c_str(), a->items.size(),
+            dl::narrow(a->root.substr(g_base.size())).c_str());
         return true;
     }
 
@@ -581,7 +541,7 @@ namespace {
                 if (file.size() <= 4 || _wcsicmp(file.c_str() + file.size() - 4, L".zip"))
                     continue;
                 std::wstring name = file.substr(0, file.size() - 4), lower = name;
-                Lower(lower);
+                dl::lower(lower);
                 add(mdata_real + L"\\" + file, g_base + L"mdata\\" + lower, name);
             } while (real_FindNextFileW(h, &fd));
             real_FindClose(h);
@@ -591,7 +551,7 @@ namespace {
     // ------------------------------------------------------------ listings
 
     void List(Dir& d, const std::wstring& key) {
-        double t0 = NowMs();
+        double t0 = dl::now_ms();
         WIN32_FIND_DATAW fd;
         HANDLE h = real_FindFirstFileExW((d.real_path + L"\\*").c_str(), FindExInfoBasic, &fd,
             FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
@@ -613,7 +573,7 @@ namespace {
                 e.written = fd.ftLastWriteTime;
                 e.size = (uint64_t)fd.nFileSizeHigh << 32 | fd.nFileSizeLow;
                 std::wstring k = e.name;
-                Lower(k);
+                dl::lower(k);
                 d.entries.emplace(std::move(k), std::move(e));
             } while (real_FindNextFileW(h, &fd));
             real_FindClose(h);
@@ -633,7 +593,7 @@ namespace {
                 e.created = e.accessed = e.written = a->written;
                 d.entries[a->root.substr(slash + 1)] = e;
             }
-        g_list_ms += NowMs() - t0;
+        g_list_ms += dl::now_ms() - t0;
     }
 
     // The listing of folder `dir` (lower case), made on first use. Caller holds g_lock
@@ -904,7 +864,7 @@ namespace {
         if (data < 0) {
             uint8_t h[30];
             if (!ReadAt(a->file, item->header_offset, h, sizeof(h)) || U32(h) != 0x04034b50) {
-                Log("Archive %s: bad local header for %s", Narrow(a->path).c_str(), Narrow(e.name).c_str());
+                dl::log("Archive %s: bad local header for %s", dl::narrow(a->path).c_str(), dl::narrow(e.name).c_str());
                 SetLastError(ERROR_FILE_CORRUPT);
                 return INVALID_HANDLE_VALUE;
             }
@@ -992,7 +952,7 @@ namespace {
     HANDLE FindFirstA(bool full, LPCSTR path, FINDEX_INFO_LEVELS level, LPVOID data, FINDEX_SEARCH_OPS op, LPVOID filter, DWORD flags) {
         FindCtxA ctx = { path, level, data, op, filter, flags };
         FindState* s = nullptr;
-        Answer a = data && path ? FindFirst(WidenAcp(path).c_str(), level, op, filter, flags, full, &s) : PASS;
+        Answer a = data && path ? FindFirst(dl::widen_acp(path).c_str(), level, op, filter, flags, full, &s) : PASS;
         if (a == FOUND)
             FillA((WIN32_FIND_DATAA*)data, s->entries[s->next++]);
         return FinishFind(a, s, PassFindA, &ctx);
@@ -1077,7 +1037,7 @@ namespace {
 
     DWORD WINAPI Hook_GetFileAttributesA(LPCSTR path) {
         bool pass;
-        DWORD r = path ? AttributesCommon(WidenAcp(path).c_str(), &pass) : (pass = true, 0);
+        DWORD r = path ? AttributesCommon(dl::widen_acp(path).c_str(), &pass) : (pass = true, 0);
         return pass ? real_GetFileAttributesA(path) : r;
     }
 
@@ -1118,7 +1078,7 @@ namespace {
     }
 
     BOOL WINAPI Hook_GetFileAttributesExA(LPCSTR path, GET_FILEEX_INFO_LEVELS level, LPVOID info) {
-        int r = path ? AttributesExCommon(WidenAcp(path).c_str(), level, info) : -1;
+        int r = path ? AttributesExCommon(dl::widen_acp(path).c_str(), level, info) : -1;
         return r < 0 ? real_GetFileAttributesExA(path, level, info) : r;
     }
 
@@ -1141,7 +1101,7 @@ namespace {
     HANDLE CreateA(bool full, LPCSTR path, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa, DWORD disposition, DWORD flags, HANDLE templ) {
         bool pass = true;
         HANDLE h = INVALID_HANDLE_VALUE;
-        std::wstring w = WidenAcp(path);
+        std::wstring w = dl::widen_acp(path);
         if (path)
             h = CreateFileCommon(w.c_str(), access, disposition, flags, full, &pass);
         if (!pass)
@@ -1406,44 +1366,25 @@ namespace {
 
     std::vector<HMODULE> g_seen;
 
-    bool IsKernelDll(const char* dll) {
-        return !_stricmp(dll, "kernel32.dll") || !_stricmp(dll, "kernelbase.dll") || !_strnicmp(dll, "api-ms-win-core-", 16);
-    }
-
     int PatchModule(HMODULE module, int* skipped, std::string* partial) {
-        uint8_t* base = (uint8_t*)module;
-        IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + ((IMAGE_DOS_HEADER*)base)->e_lfanew);
-        IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-        if (!dir.VirtualAddress)
-            return 0;
-
         struct Slot { ULONG_PTR* where; int hook; };
         std::vector<Slot> slots;
         bool have[H_COUNT] = {};
-        for (IMAGE_IMPORT_DESCRIPTOR* imp = (IMAGE_IMPORT_DESCRIPTOR*)(base + dir.VirtualAddress); imp->Name; imp++) {
-            if (!IsKernelDll((const char*)(base + imp->Name)) || !imp->OriginalFirstThunk)
-                continue;
-            IMAGE_THUNK_DATA* names = (IMAGE_THUNK_DATA*)(base + imp->OriginalFirstThunk);
-            IMAGE_THUNK_DATA* thunks = (IMAGE_THUNK_DATA*)(base + imp->FirstThunk);
-            for (; names->u1.AddressOfData; names++, thunks++) {
-                if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal))
+        dl::for_each_import(module, dl::is_kernel_dll, [&](const char*, const char* name, ULONG_PTR* slot) {
+            for (int i = 0; i < H_COUNT; i++) {
+                if (strcmp(name, g_hooks[i].name))
                     continue;
-                const char* name = (const char*)((IMAGE_IMPORT_BY_NAME*)(base + names->u1.AddressOfData))->Name;
-                for (int i = 0; i < H_COUNT; i++) {
-                    if (strcmp(name, g_hooks[i].name))
-                        continue;
-                    void* current = (void*)thunks->u1.Function;
-                    if (current != *g_hooks[i].real) {
-                        if (current != g_hooks[i].hook && current != g_hooks[i].lookups_only)
-                            (*skipped)++; // someone else's hook: leave it
-                        break;
-                    }
-                    slots.push_back({ &thunks->u1.Function, i });
-                    have[i] = true;
-                    break;
+                void* current = (void*)*slot;
+                if (current != *g_hooks[i].real) {
+                    if (current != g_hooks[i].hook && current != g_hooks[i].lookups_only)
+                        (*skipped)++; // someone else's hook: leave it
+                    return;
                 }
+                slots.push_back({ slot, i });
+                have[i] = true;
+                return;
             }
-        }
+        });
 
         // What this module can be given: our find handles need its FindClose and FindNextFile*
         // hooked, archive members its ReadFile and CloseHandle.
@@ -1458,10 +1399,7 @@ namespace {
                 hook = g_hooks[s.hook].lookups_only;
                 *partial += std::string(*partial == "" ? "" : ", ") + g_hooks[s.hook].name;
             }
-            DWORD old;
-            VirtualProtect(s.where, sizeof(void*), PAGE_READWRITE, &old);
-            *s.where = (ULONG_PTR)hook;
-            VirtualProtect(s.where, sizeof(void*), old, &old);
+            dl::write_slot(s.where, hook);
             patched++;
         }
         return patched;
@@ -1475,7 +1413,7 @@ namespace {
             if (now == last)
                 continue;
             last = now;
-            Log("Files: %ld misses and %ld hits answered from memory, %ld lookups passed to Wine, %ld folders "
+            dl::log("Files: %ld misses and %ld hits answered from memory, %ld lookups passed to Wine, %ld folders "
                 "listed in %.0f ms; %ld searches answered; %ld archive members opened, %.1f MB read from archives",
                 (long)g_misses, (long)g_hits, (long)g_passed, (long)g_listed, g_list_ms, (long)g_enumerated,
                 (long)g_opened, g_bytes / 1048576.0);
@@ -1486,34 +1424,16 @@ namespace {
 extern "C" void divalinux_vfs_patch_modules() {
     if (!g_enabled)
         return;
-    wchar_t windir[MAX_PATH];
-    UINT wn = GetWindowsDirectoryW(windir, MAX_PATH);
-    HMODULE mods[1024];
-    DWORD needed = 0;
-    if (!K32EnumProcessModules(GetCurrentProcess(), mods, sizeof(mods), &needed))
-        return;
-    DWORD count = std::min<DWORD>(needed / sizeof(HMODULE), 1024);
-    for (DWORD i = 0; i < count; i++) {
-        HMODULE m = mods[i];
-        if (m == g_self || std::find(g_seen.begin(), g_seen.end(), m) != g_seen.end())
-            continue;
-        g_seen.push_back(m);
-        wchar_t path[MAX_PATH * 2];
-        DWORD n = GetModuleFileNameW(m, path, (DWORD)(sizeof(path) / sizeof(path[0])));
-        if (!n || (wn && n > wn && !_wcsnicmp(path, windir, wn) && (path[wn] == L'\\' || path[wn] == L'/')))
-            continue; // system DLLs
-        if (n <= g_base.size() || _wcsnicmp(path, g_base.c_str(), g_base.size()))
-            continue; // only the game and its plugins: not overlays (OBS, Fences) or drivers loaded into it
+    // only the game and its plugins: not overlays (OBS, Fences) or drivers loaded into it
+    dl::for_each_new_module(g_seen, g_self, g_base, [](HMODULE m, const wchar_t* path) {
         int skipped = 0;
         std::string partial;
         int patched = PatchModule(m, &skipped, &partial);
-        if (patched || skipped) {
-            const wchar_t* base = wcsrchr(path, L'\\');
-            Log("Files: %d functions hooked in %s%s%s%s", patched, Narrow(base ? base + 1 : path).c_str(),
+        if (patched || skipped)
+            dl::log("Files: %d functions hooked in %s%s%s%s", patched, dl::narrow(dl::module_file_name(path)).c_str(),
                 skipped ? " (some already hooked by another plugin; those are left alone)" : "",
                 partial.empty() ? "" : "; lookups only for ", partial.c_str());
-        }
-    }
+    });
 }
 
 extern "C" void divalinux_vfs_install(HMODULE self, const wchar_t* config_file) {
@@ -1526,7 +1446,7 @@ extern "C" void divalinux_vfs_install(HMODULE self, const wchar_t* config_file) 
     HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
     for (HookDef& h : g_hooks)
         if (!(*h.real = (void*)GetProcAddress(k32, h.name))) {
-            Log("File layer off: kernel32 has no %s", h.name);
+            dl::log("File layer off: kernel32 has no %s", h.name);
             return;
         }
     g_find_base = (uint8_t*)VirtualAlloc(nullptr, FIND_SLOTS * 16, MEM_RESERVE, PAGE_NOACCESS);
@@ -1538,12 +1458,12 @@ extern "C" void divalinux_vfs_install(HMODULE self, const wchar_t* config_file) 
     std::wstring real(full, fn);
     size_t slash = real.find_last_of(L'\\');
     if (slash == std::wstring::npos) {
-        Log("File layer off: couldn't find the game folder");
+        dl::log("File layer off: couldn't find the game folder");
         return;
     }
     g_base_real = real.substr(0, slash);
     g_base_dir = g_base_real;
-    Lower(g_base_dir);
+    dl::lower(g_base_dir);
     g_base = g_base_dir + L"\\";
 
     if (g_archives)
@@ -1556,7 +1476,7 @@ extern "C" void divalinux_vfs_install(HMODULE self, const wchar_t* config_file) 
 
     g_enabled = true;
     g_self = self;
-    Log("Files: lookup cache %s, %zu archive%s in use ([loading] lookup_cache / archives)", g_cache ? "on" : "off",
+    dl::log("Files: lookup cache %s, %zu archive%s in use ([loading] lookup_cache / archives)", g_cache ? "on" : "off",
         loaded, loaded == 1 ? "" : "s");
     divalinux_vfs_patch_modules();
     CloseHandle(CreateThread(nullptr, 0, ReporterThread, nullptr, 0, nullptr));
