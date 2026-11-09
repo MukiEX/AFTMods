@@ -18,7 +18,7 @@
 #include "../shader_ft.hpp"
 #include "../sprite.hpp"
 #include "../stage.hpp"
-#include "../stereo.hpp"
+#include "../stereo.hpp"   // 3D stereo
 #include "../wrap.hpp"
 #include "draw_object.hpp"
 #include <Helpers.h>
@@ -2165,6 +2165,7 @@ namespace mdl {
         if (-camera_info.data.clip_near < min_depth || -camera_info.data.clip_far > max_depth)
             return 0;
 
+        // 3D stereo: cull_radius below
         // Widen the side planes so objects visible to either stereo eye survive culling.
         const float_t cull_radius = radius + stereo_cull_margin((float_t)-min_depth);
 

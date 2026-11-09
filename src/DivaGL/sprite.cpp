@@ -8,7 +8,7 @@
 #include "gl_state.hpp"
 #include "render_context.hpp"
 #include "shader_ft.hpp"
-#include "stereo.hpp"
+#include "stereo.hpp"   // 3D stereo
 #include <Helpers.h>
 
 struct sprite_vertex_data_uv0 {
@@ -168,6 +168,7 @@ static thread_local spr::SpriteManager::RenderData* sprite_manager_render_data_t
 #define sprite_manager_render_data \
     (sprite_manager_render_data_thread ? sprite_manager_render_data_thread : sprite_manager_render_data_main)
 
+// 3D stereo: VR HUD layer
 // Set while sprites are drawn into the HUD layer (a transparent target shown over the PV by
 // the headset's compositor): alpha has to build up as coverage, so the result is premultiplied.
 // Normal and screen-like blends accumulate alpha; additive leaves it (light just adds over the
@@ -420,6 +421,7 @@ namespace spr {
                 y_max = viewport_rect.height;
             }
 
+            // 3D stereo
             // Stereo: horizontal parallax for this sprite list (clip.x += offset * clip.w).
             // view_projection is stored transposed here, so row0 is clip x and row3 is clip w.
             // The shift would uncover a strip of whatever is behind (the PV) at one edge, so the
@@ -1230,6 +1232,7 @@ namespace spr {
             const GLenum* blend = spr_blend_param[draw_param.attrib.m.blend];
             GLenum alpha_src = blend[2];
             GLenum alpha_dst = blend[3];
+            // 3D stereo: VR HUD layer
             if (sprite_hud_layer_blend) {
                 const int32_t mode = draw_param.attrib.m.blend;
                 if (mode == 0 || mode == 1 || mode == 5) {

@@ -23,6 +23,7 @@ extern bool sv_task_movie_player_no_interop;
 
 extern bool sv_texture_skinning_buffer;
 
+// 3D stereo
 extern int32_t sv_stereo_mode;
 extern int32_t sv_stereo_separation;
 extern int32_t sv_stereo_convergence;
@@ -33,5 +34,5 @@ extern bool sv_stereo_bg_infinity;
 extern bool sv_stereo_shadow_once;
 extern int32_t sv_stereo_max_parallax;
 extern int32_t sv_pv_frame_skip;
-extern bool sv_vr_hud_layer;
+extern bool sv_vr_hud_layer;   // 3D stereo: VR HUD layer
 extern bool sv_perf_log;

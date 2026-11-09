@@ -25,7 +25,7 @@
 #include "sss.hpp"
 #include "stage_param.hpp"
 #include "static_var.hpp"
-#include "stereo.hpp"
+#include "stereo.hpp"   // 3D stereo
 #include "texture.hpp"
 #include <Helpers.h>
 #ifdef DIVAVK
@@ -221,7 +221,7 @@ static void pv_frame_begin() {
         }
     }
 
-    const bool have = pv_cache_valid[pv_front][0] && (!stereo_enabled() || pv_cache_valid[pv_front][1]);
+    const bool have = pv_cache_valid[pv_front][0] && (!stereo_enabled() || pv_cache_valid[pv_front][1]);   // 3D stereo: both eyes cached
     bool skip = false;
     if (pv_sync) {
         skip = have && pv_sync->skip;
@@ -325,6 +325,7 @@ static void pv_cache_save(render_data_context& rend_data_ctx, int32_t eye) {
     pv_cache_valid[slot][eye] = true;
 }
 
+// 3D stereo: VR HUD layer, to draw_hud_layer
 /* HUD layer ([vr] hud_layer): in a headset, the HUD (sprite list 0) isn't drawn into the
    picture but once per frame into a transparent target of its own, which DivaVK shows as a
    separate layer just in front of the PV. The PV picture (both eyes with SBS stereo) goes to
@@ -564,6 +565,7 @@ static void pv_thread_draw() {
     const double_t ms_pre = pv_ms_since(t0);
     double_t ms_eye[2] = {};
 
+    // 3D stereo: the eye loop below
     const bool stereo = t.eyes == 2;
     const cam_data center_cam = r->render_manager_cam;
     const int32_t taa = rend->taa;
@@ -938,7 +940,7 @@ static void pv_threaded_frame() {
         QueryPerformanceCounter(&p.handoff);
         pv_cache_valid[t.slot][0] = pv_cache_valid[t.slot][1] = false;
         pv_save_slot = t.slot;
-        t.eyes = stereo_enabled() ? 2 : 1;
+        t.eyes = stereo_enabled() ? 2 : 1;   // 3D stereo
         t.cam = rctx_main->render_manager_cam;
         pv_camera_snapshot_take();   // what the game's camera getters tell the PV thread
         pv_shadow_snapshot_take();   // and the shadow state it draws with
@@ -1168,7 +1170,7 @@ namespace rndr {
 
         gl_state.get();
         pv_frame_begin();
-        hud_layer_active = hud_layer_wanted();
+        hud_layer_active = hud_layer_wanted();   // 3D stereo: VR HUD layer
         LARGE_INTEGER render_start;
         QueryPerformanceCounter(&render_start);
         sprite_manager_pre_draw();
@@ -1210,12 +1212,14 @@ namespace rndr {
                 pv_sync->pv_busy = 0;
         }
 
+        // 3D stereo
         if (stereo_enabled())
             render_all_stereo();
         else
             render_all_passes();
 
         // The HUD once, outside the eye passes, into its own layer
+        // 3D stereo: VR HUD layer
         if (hud_layer_active)
             draw_hud_layer();
 #ifdef DIVAVK
@@ -1248,7 +1252,7 @@ namespace rndr {
     }
 
     void RenderManager::render_all_passes() {
-        const int32_t eye = stereo_eye_index();
+        const int32_t eye = stereo_eye_index();   // 3D stereo
         LARGE_INTEGER pass_start;
         QueryPerformanceCounter(&pass_start);
         const bool have_picture = pv_cache_fb[pv_front][eye] && pv_cache_valid[pv_front][eye];
@@ -1315,6 +1319,7 @@ namespace rndr {
         }
     }
 
+    // 3D stereo
     // Renders the full pipeline once per eye and composites the results side by side.
     void RenderManager::render_all_stereo() {
         rndr::Render* rend = render;
@@ -1478,6 +1483,7 @@ namespace rndr {
         }
 
         Shadow* shad = render_shadow();
+        // 3D stereo
         if (stereo_reuse_shadow_maps()) {
             // Second stereo eye: the shadow maps are rendered from the light's camera, so the
             // first eye's are exactly what this eye would draw. (The texproj part above uses
@@ -2002,7 +2008,7 @@ namespace rndr {
             cam_data screen_cam = cam;
             screen_cam.set_fov(32.2673416137695f * DEG_TO_RAD_FLOAT);
             screen_cam.calc_persp_proj_mat_offset(1.0f, render_get()->get_taa_offset()
-                + stereo_get_proj_offset(screen_cam.get_fov(), screen_cam.get_aspect()));
+                + stereo_get_proj_offset(screen_cam.get_fov(), screen_cam.get_aspect()));   // 3D stereo
             screen_cam.calc_view_proj_mat();
             rend_data_ctx.set_batch_scene_camera(screen_cam);
 
@@ -2068,6 +2074,7 @@ namespace rndr {
 
     void RenderManager::pass_sprite(render_data_context& rend_data_ctx) {
         rend_data_ctx.state.begin_event("pass_sprite");
+        // 3D stereo: VR HUD layer
         // With the HUD layer on, the HUD goes to its own target after the passes (draw_hud_layer)
         if (!hud_layer_active && sprite_manager_reqlist_count(0)) {
             rend_data_ctx.state.set_viewport(0, 0, render->screen_width, render->screen_height);
@@ -2106,7 +2113,7 @@ namespace rndr {
             gl_get_error_print();
         }
 
-        if (!stereo_in_eye_pass())
+        if (!stereo_in_eye_pass())   // 3D stereo
             fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), 0,
                 0, 0, rctx->screen_width, rctx->screen_height,
                 0, 0, rctx->screen_width, rctx->screen_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
@@ -2226,7 +2233,7 @@ HOOK(void, FASTCALL, render_manager_init_render_textures, 0x0000000140502560, in
 }
 
 HOOK(void, FASTCALL, render_manager_free_data, 0x0000000140502770) {
-    stereo_free();
+    stereo_free();   // 3D stereo
     if (reflect_full_ptr)
         reflect_full_ptr->free();
     render_manager_free_render_textures();

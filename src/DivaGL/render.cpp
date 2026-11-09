@@ -13,7 +13,7 @@
 #include "reflect_full.hpp"
 #include "render_context.hpp"
 #include "shader_ft.hpp"
-#include "stereo.hpp"
+#include "stereo.hpp"   // 3D stereo
 #include "texture.hpp"
 
 extern bool task_stage_is_modern;
@@ -203,7 +203,7 @@ namespace rndr {
             rend_data_ctx.state.bind_sampler(i, 0);
 
         // (the PV render thread's picture goes to its slot, never to the window)
-        if (!stereo_in_eye_pass() && !pv_render_thread_flag)
+        if (!stereo_in_eye_pass() && !pv_render_thread_flag)   // 3D stereo: not inside an eye pass
             fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), 0,
                 0, 0, rctx->screen_width, rctx->screen_height,
                 0, 0, rctx->screen_width, rctx->screen_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);

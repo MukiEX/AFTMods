@@ -8,7 +8,7 @@
 #include "object.hpp"
 #include "render.hpp"
 #include "render_context.hpp"
-#include "stereo.hpp"
+#include "stereo.hpp"   // 3D stereo
 #include <Helpers.h>
 
 HOOK(void, FASTCALL, init_projection_matrix, 0x00000001401F8E90) {
@@ -62,6 +62,7 @@ HOOK(void, FASTCALL, init_projection_matrix, 0x00000001401F8E90) {
     mat4_transpose(&pmat_pre2d, &camera_info.data.vpmat_pre2d);
 
     vec2 persp_scale = 1.0f;
+    // 3D stereo
     // No TAA jitter in stereo: TAA is off there and eye projections are rebuilt anyway.
     vec2 persp_offset = stereo_enabled() ? vec2(0.0f) : render_get()->get_taa_offset();
     mat4 proj;
@@ -80,7 +81,7 @@ HOOK(void, FASTCALL, ctrl_camera, 0x00000001401F8970) {
     camera_info.data.discontinuity2 = camera_info.data.discontinuity;
     camera_info.data.discontinuity = false;
     rctx->render_manager_cam.get();
-    stereo_update_camera(rctx->render_manager_cam);
+    stereo_update_camera(rctx->render_manager_cam);   // 3D stereo
 }
 
 /* Threaded PV: the PV render thread draws a picture over several of the game's frames, while
@@ -210,6 +211,7 @@ int32_t check_screen_aabb(const AABB* aabb, const mat4* mat) {
         max_depth = max_def(max_depth, -vtx[i].z);
     }
 
+    // 3D stereo
     // Widen the side planes so objects visible to either stereo eye survive culling.
     const float_t side_margin = stereo_cull_margin(max_depth);
 
