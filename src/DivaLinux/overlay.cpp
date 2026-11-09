@@ -62,6 +62,11 @@ static_assert(sizeof(void*) != 8 || (offsetof(DivaLinuxOverlayFrame, hwnd) == 8 
     "DivaLinuxOverlayFrame layout changed");
 
 extern "C" void divavk_log_text(const char* text); // DivaLinux.log (vk_bridge.cpp)
+// DivaOverlay (src/DivaOverlay/ov_host.cpp): the settings menu, when the launcher's in-game
+// menu isn't registered. Returns its picture while it's open.
+extern "C" bool divaoverlay_frame(HWND hwnd, int32_t lay_w, int32_t lay_h,
+    float mouse_ox, float mouse_oy, float mouse_sx, float mouse_sy,
+    const uint32_t** pixels, int32_t* width, int32_t* height, uint32_t* serial);
 
 static void overlay_log(const char* fmt, const char* arg) {
     char buf[512];
@@ -305,7 +310,7 @@ static void cursor_frame(HWND hwnd, const Layout& L) {
 // Called by the WGL bridge right before each present.
 extern "C" void divalinux_overlay_before_swap(HWND hwnd) {
     DivaLinuxOverlayFn fn = g_overlay_fn;
-    if ((!fn && !g_cursor_on) || g_compositor.Failed())
+    if (g_compositor.Failed())
         return;
     int32_t fb_w = 0, fb_h = 0;
     dvk_get_framebuffer_size(&fb_w, &fb_h);
@@ -345,6 +350,18 @@ extern "C" void divalinux_overlay_before_swap(HWND hwnd) {
             if (!g_compositor.Draw(img, L.rects, L.n) && !g_failed_logged) {
                 g_failed_logged = true;
                 overlay_log("In-game overlay can't be drawn: %s", g_compositor.error.c_str());
+            }
+        }
+    }
+    else {
+        const uint32_t* px = nullptr;
+        int32_t w = 0, h = 0;
+        uint32_t serial = 0;
+        if (divaoverlay_frame(hwnd, L.lay_w, L.lay_h, L.mouse_ox, L.mouse_oy, L.mouse_sx, L.mouse_sy, &px, &w, &h, &serial)) {
+            OverlayGL::Image img = { px, w, h, w, serial };
+            if (!g_compositor.Draw(img, L.rects, L.n) && !g_failed_logged) {
+                g_failed_logged = true;
+                overlay_log("Settings menu can't be drawn: %s", g_compositor.error.c_str());
             }
         }
     }

@@ -119,6 +119,21 @@ if(AFTMODS_BUILD_DIVALINUX)
     set(DIVAVK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     add_subdirectory(src/DivaVK)   # divavk_core + glslang
 
+    # DivaOverlay: the in-game settings menu (src/DivaOverlay), with LauncherFS's settings model,
+    # INI access and CPU renderer, and Dear ImGui.
+    set(LFS ${AFT_ROOT}/src/LauncherFS)
+    set(OV ${AFT_ROOT}/src/DivaOverlay)
+    add_library(DivaOverlay STATIC
+        ${OV}/ov_host.cpp ${OV}/ov_ui.cpp ${OV}/ov_model.cpp ${OV}/env_file.cpp ${OV}/res/ov_fonts.cpp
+        ${LFS}/src/model.cpp ${LFS}/src/ini.cpp ${LFS}/src/soft_render.cpp
+        ${LFS}/third_party/imgui/imgui.cpp ${LFS}/third_party/imgui/imgui_draw.cpp
+        ${LFS}/third_party/imgui/imgui_widgets.cpp ${LFS}/third_party/imgui/imgui_tables.cpp)
+    aft_settings(DivaOverlay)
+    target_compile_definitions(DivaOverlay PRIVATE NOMINMAX
+        IMGUI_DISABLE_WIN32_FUNCTIONS IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS)
+    target_compile_options(DivaOverlay PRIVATE /utf-8)
+    target_include_directories(DivaOverlay PRIVATE ${OV} ${LFS}/src ${LFS}/third_party/imgui ${LFS}/third_party/simpleini)
+
     add_library(DivaLinux SHARED
         ${AFT_ROOT}/src/DivaVK/plugin/vk_bridge.cpp
         ${AFT_ROOT}/src/DivaLinux/movie/movie.cpp
@@ -135,5 +150,5 @@ if(AFTMODS_BUILD_DIVALINUX)
     # FFmpeg's headers only for the movie player (it loads the DLLs at run time, no import libs).
     set_source_files_properties(${AFT_ROOT}/src/DivaLinux/movie/movie.cpp PROPERTIES
         INCLUDE_DIRECTORIES "${DIVALINUX_FFMPEG_INCLUDE_DIR}")
-    target_link_libraries(DivaLinux PRIVATE divavk_core glslang glslang-default-resource-limits winmm)
+    target_link_libraries(DivaLinux PRIVATE DivaOverlay divavk_core glslang glslang-default-resource-limits winmm)
 endif()

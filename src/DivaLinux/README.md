@@ -89,6 +89,15 @@ blends it over the frame (`overlay_gl.h`, saving and restoring all GL state like
 converter). In side-by-side 3D a copy goes into each eye's half, so the menu sits on the screen
 plane. See `src/LauncherFS/README.md` for using it.
 
+## Settings menu: DivaOverlay
+
+DivaLinux has its own in-game settings menu (`src/DivaOverlay`): F10, or View + Start on a
+controller, opens it over the game, styled like the game's Key Config screen. It edits
+`DivaLinux.ini`, PD Loader's `config.ini` & co. and, on Android, `divarecomp_env.txt`; stereo 3D,
+reflections and the pointer change straight away, the rest after **Restart game**. It's drawn the
+same way as the launcher's menu, and stays off while the launcher's in-game menu is on. `[overlay]
+enabled=0` turns it off, `key=` changes the key. See `src/DivaOverlay/README.md`.
+
 ## Faster loading and fewer files: `[loading]`
 
 DivaLinux can take over the game's file access in `rom\` and `mdata\` (`vfs.cpp`). This

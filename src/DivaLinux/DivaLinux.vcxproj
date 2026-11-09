@@ -63,7 +63,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;DEBUG;DIVAVK;DIVALINUX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(SolutionDir)extern\src;$(SolutionDir)src\DivaVK\core\include;$(SolutionDir)src\DivaVK\external\volk;$(DivaVKVulkanHeaders)\include;$(DivaLinuxFFmpegInclude)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)extern\src;$(SolutionDir)src\DivaVK\core\include;$(SolutionDir)src\DivaOverlay;$(SolutionDir)src\LauncherFS\src;$(SolutionDir)src\LauncherFS\third_party\imgui;$(SolutionDir)src\LauncherFS\third_party\simpleini;$(SolutionDir)src\DivaVK\external\volk;$(DivaVKVulkanHeaders)\include;$(DivaLinuxFFmpegInclude)</AdditionalIncludeDirectories>
       <ConformanceMode>true</ConformanceMode>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <OmitFramePointers>false</OmitFramePointers>
@@ -93,7 +93,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>MaxSpeed</Optimization>
       <PreprocessorDefinitions>WIN32;DIVAVK;DIVALINUX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(SolutionDir)extern\src;$(SolutionDir)src\DivaVK\core\include;$(SolutionDir)src\DivaVK\external\volk;$(DivaVKVulkanHeaders)\include;$(DivaLinuxFFmpegInclude)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)extern\src;$(SolutionDir)src\DivaVK\core\include;$(SolutionDir)src\DivaOverlay;$(SolutionDir)src\LauncherFS\src;$(SolutionDir)src\LauncherFS\third_party\imgui;$(SolutionDir)src\LauncherFS\third_party\simpleini;$(SolutionDir)src\DivaVK\external\volk;$(DivaVKVulkanHeaders)\include;$(DivaLinuxFFmpegInclude)</AdditionalIncludeDirectories>
       <ConformanceMode>true</ConformanceMode>
       <OmitFramePointers>false</OmitFramePointers>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -130,6 +130,54 @@
     <ClCompile Include="io_trace.cpp" />
     <ClCompile Include="vfs.cpp" />
     <ClCompile Include="overlay.cpp" />
+    <ClCompile Include="..\DivaOverlay\ov_host.cpp">
+      <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\DivaOverlay\ov_ui.cpp">
+      <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\DivaOverlay\ov_model.cpp">
+      <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\DivaOverlay\env_file.cpp">
+      <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\DivaOverlay\res\ov_fonts.cpp">
+      <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\LauncherFS\src\model.cpp">
+      <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\LauncherFS\src\ini.cpp">
+      <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\LauncherFS\src\soft_render.cpp">
+      <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\LauncherFS\third_party\imgui\imgui.cpp">
+      <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\LauncherFS\third_party\imgui\imgui_draw.cpp">
+      <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\LauncherFS\third_party\imgui\imgui_widgets.cpp">
+      <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\LauncherFS\third_party\imgui\imgui_tables.cpp">
+      <PreprocessorDefinitions>NOMINMAX;IMGUI_DISABLE_WIN32_FUNCTIONS;IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
     <ClCompile Include="..\DivaGL\camera_render.cpp" />
     <ClCompile Include="..\DivaGL\GL\array_buffer.cpp" />
     <ClCompile Include="..\DivaGL\GL\element_array_buffer.cpp" />
