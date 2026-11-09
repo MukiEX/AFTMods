@@ -7,6 +7,10 @@
 // rectangle given (two in side-by-side stereo, one per eye, so the menu sits on the screen
 // plane in both).
 //
+// DrawMesh does the same for UI that comes as triangles (DivaOverlay's Dear ImGui draw lists):
+// coloured, textured triangles with clip rectangles, drawn on the GPU, so the CPU only builds
+// the lists.
+//
 // Like movie_yuv.h, it runs on the game's render thread through DivaVK's GL functions between
 // dvk_push_gl_state and dvk_pop_gl_state, so the game and DivaGL's cached GL state never see
 // it. Platform-independent: DivaVK's Linux tests run it against SwiftShader.
@@ -16,6 +20,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string>
+#include <vector>
 
 #ifndef APIENTRY
 #ifdef _WIN32
@@ -45,7 +50,9 @@ namespace OverlayGL
 		O_BLEND = 0x0BE2, O_CULL_FACE = 0x0B44, O_DEPTH_TEST = 0x0B71, O_STENCIL_TEST = 0x0B90,
 		O_SCISSOR_TEST = 0x0C11, O_TRIANGLES = 0x0004, O_NO_ERROR = 0,
 		O_FUNC_ADD = 0x8006, O_SRC_ALPHA = 0x0302, O_ONE_MINUS_SRC_ALPHA = 0x0303, O_ONE = 1,
-		O_UNIFORM_BUFFER = 0x8A11, O_DYNAMIC_DRAW = 0x88E8,
+		O_UNIFORM_BUFFER = 0x8A11, O_DYNAMIC_DRAW = 0x88E8, O_STREAM_DRAW = 0x88E0,
+		O_ARRAY_BUFFER = 0x8892, O_ELEMENT_ARRAY_BUFFER = 0x8893, O_FLOAT = 0x1406, O_UNSIGNED_SHORT = 0x1403,
+		O_RGBA = 0x1908,
 	};
 
 	// One overlay image: 0xAARRGGBB words (B, G, R, A bytes in memory), top row first, not
@@ -62,6 +69,29 @@ namespace OverlayGL
 	struct Rect
 	{
 		int x, y, w, h;
+	};
+
+	// Triangles in layout pixels (top-down, like the image), coloured per vertex and multiplied
+	// by a texture: the layout of Dear ImGui's ImDrawVert.
+	struct Vertex
+	{
+		float x, y, u, v;
+		uint32_t rgba;          // R in the lowest byte, straight (not premultiplied) alpha
+	};
+	struct MeshCmd
+	{
+		uint32_t count;         // indices
+		uint32_t firstIndex;
+		int32_t baseVertex;
+		float clip[4];          // x0, y0, x1, y1 in layout pixels
+		uint32_t texture;       // an id given to SetTexture
+	};
+	struct Mesh
+	{
+		float layWidth, layHeight;
+		const Vertex* vertices; int vertexCount;
+		const uint16_t* indices; int indexCount;
+		const MeshCmd* cmds; int cmdCount;
 	};
 
 	enum PointerKind { POINTER_CROSSHAIR = 0, POINTER_LEEK = 1 };
@@ -134,6 +164,52 @@ namespace OverlayGL
 			return ok;
 		}
 
+		// A texture for meshes: RGBA8, rows top-first. Uploading again under the same id replaces it.
+		bool SetTexture(uint32_t id, int w, int h, const void* rgba)
+		{
+			if (failed || (!loaded && !Load()))
+				return false;
+			if (w <= 0 || h <= 0 || !rgba)
+				return true;
+			dvk_push_gl_state();
+			GLuint_* tex = nullptr;
+			for (auto& t : meshTextures)
+				if (t.id == id)
+					tex = &t.gl;
+			if (!tex)
+			{
+				meshTextures.push_back({ id, 0 });
+				tex = &meshTextures.back().gl;
+				glGenTextures_(1, tex);
+			}
+			glActiveTexture_(O_TEXTURE0);
+			glBindTexture_(O_TEXTURE_2D, *tex);
+			glBindBuffer_(O_PIXEL_UNPACK_BUFFER, 0);
+			glPixelStorei_(O_UNPACK_ALIGNMENT, 4);
+			glPixelStorei_(O_UNPACK_ROW_LENGTH, 0);
+			glTexImage2D_(O_TEXTURE_2D, 0, (GLint_)O_RGBA8, w, h, 0, O_RGBA, O_UNSIGNED_BYTE, rgba);
+			glTexParameteri_(O_TEXTURE_2D, O_TEXTURE_MIN_FILTER, O_LINEAR);
+			glTexParameteri_(O_TEXTURE_2D, O_TEXTURE_MAG_FILTER, O_LINEAR);
+			glTexParameteri_(O_TEXTURE_2D, O_TEXTURE_WRAP_S, O_CLAMP_TO_EDGE);
+			glTexParameteri_(O_TEXTURE_2D, O_TEXTURE_WRAP_T, O_CLAMP_TO_EDGE);
+			glTexParameteri_(O_TEXTURE_2D, O_TEXTURE_MAX_LEVEL, 0);
+			bool ok = CheckError("uploading an overlay texture");
+			dvk_pop_gl_state();
+			return ok;
+		}
+
+		bool DrawMesh(const Mesh& m, const Rect* rects, int rectCount)
+		{
+			if (failed || (!loaded && !Load()))
+				return false;
+			if (m.vertexCount <= 0 || m.indexCount <= 0 || m.cmdCount <= 0 || rectCount <= 0 || m.layWidth <= 0 || m.layHeight <= 0)
+				return true;
+			dvk_push_gl_state();
+			bool ok = MeshImpl(m, rects, rectCount) && CheckError("drawing the overlay's triangles");
+			dvk_pop_gl_state();
+			return ok;
+		}
+
 	private:
 		typedef void (APIENTRY* P_GenBuffers)(GLsizei_, GLuint_*);
 		typedef void (APIENTRY* P_BufferData)(GLenum_, ptrdiff_t, const void*, GLenum_);
@@ -174,6 +250,18 @@ namespace OverlayGL
 		typedef void (APIENTRY* P_ColorMask)(unsigned char, unsigned char, unsigned char, unsigned char);
 		typedef void (APIENTRY* P_DrawArrays)(GLenum_, GLint_, GLsizei_);
 		typedef GLenum_ (APIENTRY* P_GetError)(void);
+		typedef void (APIENTRY* P_GenVertexArrays)(GLsizei_, GLuint_*);
+		typedef void (APIENTRY* P_EnableVertexAttribArray)(GLuint_);
+		typedef void (APIENTRY* P_VertexAttribPointer)(GLuint_, GLint_, GLenum_, unsigned char, GLsizei_, const void*);
+		typedef void (APIENTRY* P_DrawElementsBaseVertex)(GLenum_, GLsizei_, GLenum_, const void*, GLint_);
+		P_GenVertexArrays glGenVertexArrays_ = nullptr;
+		P_EnableVertexAttribArray glEnableVertexAttribArray_ = nullptr;
+		P_VertexAttribPointer glVertexAttribPointer_ = nullptr;
+		P_DrawElementsBaseVertex glDrawElementsBaseVertex_ = nullptr;
+		struct MeshTexture { uint32_t id; GLuint_ gl; };
+		std::vector<MeshTexture> meshTextures;
+		std::vector<Vertex> ndc;   // the mesh's vertices in clip space
+		GLuint_ meshProgram = 0, meshVao = 0, meshVbo = 0, meshIbo = 0;
 
 		P_GenTextures glGenTextures_ = nullptr;
 		P_BindTexture glBindTexture_ = nullptr;
@@ -245,7 +333,130 @@ namespace OverlayGL
 				& Get(glColorMask_, "glColorMask") & Get(glDrawArrays_, "glDrawArrays")
 				& Get(glGetError_, "glGetError") & Get(glGenBuffers_, "glGenBuffers")
 				& Get(glBufferData_, "glBufferData") & Get(glBindBufferBase_, "glBindBufferBase")
-				& Get(glScissor_, "glScissor");
+				& Get(glScissor_, "glScissor")
+				& Get(glGenVertexArrays_, "glGenVertexArrays") & Get(glEnableVertexAttribArray_, "glEnableVertexAttribArray")
+				& Get(glVertexAttribPointer_, "glVertexAttribPointer") & Get(glDrawElementsBaseVertex_, "glDrawElementsBaseVertex");
+		}
+
+		bool CheckError(const char* what)
+		{
+			GLenum_ e = glGetError_();
+			if (e == O_NO_ERROR)
+				return true;
+			char buf[96];
+			snprintf(buf, sizeof(buf), "GL error 0x%04X while %s", e, what);
+			Fail(buf);
+			return false;
+		}
+
+		bool MeshProgram()
+		{
+			if (meshProgram)
+				return true;
+			static const char* VS =
+				"#version 430 core\n"
+				"layout(location = 0) in vec2 a_pos;\n"
+				"layout(location = 1) in vec2 a_uv;\n"
+				"layout(location = 2) in vec4 a_color;\n"
+				"layout(location = 0) out vec2 v_uv;\n"
+				"layout(location = 1) out vec4 v_color;\n"
+				"void main() {\n"
+				"    v_uv = a_uv;\n"
+				"    v_color = a_color;\n"
+				"    gl_Position = vec4(a_pos, 0.0, 1.0);\n"
+				"}\n";
+			static const char* FS =
+				"#version 430 core\n"
+				"layout(binding = 0) uniform sampler2D g_tex;\n"
+				"layout(location = 0) in vec2 v_uv;\n"
+				"layout(location = 1) in vec4 v_color;\n"
+				"layout(location = 0) out vec4 result;\n"
+				"void main() {\n"
+				"    result = v_color * texture(g_tex, v_uv);\n"
+				"}\n";
+			meshProgram = Link(VS, FS, "overlay mesh");
+			return meshProgram != 0;
+		}
+
+		bool MeshImpl(const Mesh& m, const Rect* rects, int rectCount)
+		{
+			if (!MeshProgram())
+				return false;
+			// Layout pixels to clip space on the CPU (the viewport then puts it in each rect).
+			ndc.resize((size_t)m.vertexCount);
+			const float sx = 2.0f / m.layWidth, sy = -2.0f / m.layHeight;
+			for (int i = 0; i < m.vertexCount; i++)
+			{
+				ndc[i] = m.vertices[i];
+				ndc[i].x = m.vertices[i].x * sx - 1.0f;
+				ndc[i].y = m.vertices[i].y * sy + 1.0f;
+			}
+			// Everything below is undone by dvk_pop_gl_state.
+			if (!meshVao)
+			{
+				glGenVertexArrays_(1, &meshVao);
+				glGenBuffers_(1, &meshVbo);
+				glGenBuffers_(1, &meshIbo);
+			}
+			glBindVertexArray_(meshVao);
+			glBindBuffer_(O_ARRAY_BUFFER, meshVbo);
+			glBufferData_(O_ARRAY_BUFFER, (ptrdiff_t)(ndc.size() * sizeof(Vertex)), ndc.data(), O_STREAM_DRAW);
+			glEnableVertexAttribArray_(0);
+			glEnableVertexAttribArray_(1);
+			glEnableVertexAttribArray_(2);
+			glVertexAttribPointer_(0, 2, O_FLOAT, 0, sizeof(Vertex), (const void*)offsetof(Vertex, x));
+			glVertexAttribPointer_(1, 2, O_FLOAT, 0, sizeof(Vertex), (const void*)offsetof(Vertex, u));
+			glVertexAttribPointer_(2, 4, O_UNSIGNED_BYTE, 1, sizeof(Vertex), (const void*)offsetof(Vertex, rgba));
+			glBindBuffer_(O_ELEMENT_ARRAY_BUFFER, meshIbo);
+			glBufferData_(O_ELEMENT_ARRAY_BUFFER, (ptrdiff_t)m.indexCount * 2, m.indices, O_STREAM_DRAW);
+
+			glBindFramebuffer_(O_DRAW_FRAMEBUFFER, 0);
+			glEnable_(O_BLEND);
+			glBlendEquation_(O_FUNC_ADD);
+			glBlendFuncSeparate_(O_SRC_ALPHA, O_ONE_MINUS_SRC_ALPHA, O_ONE, O_ONE_MINUS_SRC_ALPHA);
+			glDisable_(O_CULL_FACE);
+			glDisable_(O_DEPTH_TEST);
+			glDisable_(O_STENCIL_TEST);
+			glEnable_(O_SCISSOR_TEST);
+			glColorMask_(1, 1, 1, 1);
+			glUseProgram_(meshProgram);
+			glActiveTexture_(O_TEXTURE0);
+			glBindSampler_(0, 0);
+			for (int r = 0; r < rectCount; r++)
+			{
+				const Rect& R = rects[r];
+				if (R.w <= 0 || R.h <= 0)
+					continue;
+				glViewport_(R.x, R.y, R.w, R.h);
+				const float kx = R.w / m.layWidth, ky = R.h / m.layHeight;
+				uint32_t bound = 0xFFFFFFFFu;
+				for (int c = 0; c < m.cmdCount; c++)
+				{
+					const MeshCmd& cmd = m.cmds[c];
+					if (!cmd.count)
+						continue;
+					// the clip rect in framebuffer pixels (GL's origin is bottom left)
+					int x0 = R.x + (int)(cmd.clip[0] * kx), x1 = R.x + (int)(cmd.clip[2] * kx + 0.999f);
+					int y0 = R.y + R.h - (int)(cmd.clip[3] * ky + 0.999f), y1 = R.y + R.h - (int)(cmd.clip[1] * ky);
+					x0 = x0 < R.x ? R.x : x0; x1 = x1 > R.x + R.w ? R.x + R.w : x1;
+					y0 = y0 < R.y ? R.y : y0; y1 = y1 > R.y + R.h ? R.y + R.h : y1;
+					if (x1 <= x0 || y1 <= y0)
+						continue;
+					glScissor_(x0, y0, x1 - x0, y1 - y0);
+					if (cmd.texture != bound)
+					{
+						GLuint_ tex = 0;
+						for (auto& t : meshTextures)
+							if (t.id == cmd.texture)
+								tex = t.gl;
+						glBindTexture_(O_TEXTURE_2D, tex);
+						bound = cmd.texture;
+					}
+					glDrawElementsBaseVertex_(O_TRIANGLES, (GLsizei_)cmd.count, O_UNSIGNED_SHORT,
+						(const void*)(uintptr_t)(cmd.firstIndex * 2u), cmd.baseVertex);
+				}
+			}
+			return true;
 		}
 
 		GLuint_ Link(const char* vsSrc, const char* fsSrc, const char* what)

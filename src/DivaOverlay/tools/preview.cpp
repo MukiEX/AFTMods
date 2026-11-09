@@ -23,6 +23,8 @@
 #include <string>
 #include <sys/stat.h>
 #include <vector>
+#include <ctime>
+#include <cstdlib>
 
 extern const unsigned char dov_font_bold[];
 extern const unsigned int dov_font_bold_size;
@@ -169,6 +171,14 @@ int main(int argc, char** argv) {
     };
 
     idle(30);
+    if (getenv("OV_BENCH")) {
+        auto t = [] { timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6; };
+        double a = t(); for (int i = 0; i < 20; i++) idle(1); double b = t();
+        cv.resize(W, H);
+        double c = t(); for (int i = 0; i < 5; i++) { cv.clear(0); lfs::soft_render(cv, ImGui::GetDrawData()); } double d = t();
+        ImDrawData* dd = ImGui::GetDrawData(); size_t vb = 0; for (int i = 0; i < dd->CmdListsCount; i++) vb += dd->CmdLists[i]->VtxBuffer.Size;
+        fprintf(stderr, "bench: ui frame %.2f ms, soft_render %.2f ms, %zu vertices\n", (b - a) / 20, (d - c) / 5, vb);
+    }
     snap("home");
     press(&dov::Input::ok);           // Stereo 3D
     idle(30);

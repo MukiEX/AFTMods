@@ -1,8 +1,9 @@
 // DivaOverlay inside DivaLinux.dva: opens the menu over the running game and feeds it input.
 //
 // DivaLinux's overlay hook (src/DivaLinux/overlay.cpp) calls divaoverlay_frame before every
-// present; while the menu is open it returns the menu's picture, drawn on the CPU (LauncherFS's
-// ImGui renderer), and DivaLinux blends it over the frame (in both halves in side-by-side 3D).
+// present; while the menu is open its Dear ImGui draw lists are drawn on the GPU over the frame
+// (overlay_gl.h's DrawMesh, in both halves in side-by-side 3D). If that fails, it falls back to
+// LauncherFS's CPU renderer and hands DivaLinux the picture to blend.
 //
 // Two hosts:
 //   - Windows / Wine: F10 or View + Start opens it. While it's open the game sees no keyboard,
@@ -37,6 +38,9 @@
 #include "ov_ui.hpp"
 #include "ini.hpp"
 #include "soft_render.hpp"
+#include "../DivaLinux/overlay_gl.h"
+
+static_assert(sizeof(ImDrawIdx) == 2, "the GPU path draws 16-bit indices");
 
 extern const unsigned char dov_font_bold[];
 extern const unsigned int dov_font_bold_size;
@@ -227,6 +231,12 @@ namespace {
         dov::Device device = dov::Device::Pad;
         POINT last_cursor{ -100000, -100000 };
         bool restart_requested = false;
+        // GPU drawing (DivaLinux's overlay_gl.h through DivaVK)
+        OverlayGL::Compositor gl;
+        uint32_t next_tex_id = 0;
+        std::vector<OverlayGL::Vertex> vtx;
+        std::vector<uint16_t> idx;
+        std::vector<OverlayGL::MeshCmd> cmds;
     };
     State g;
     std::mutex g_lock;
@@ -301,7 +311,7 @@ namespace {
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = nullptr;
         io.LogFilename = nullptr;
-        io.BackendRendererName = "divaoverlay_soft";
+        io.BackendRendererName = "divaoverlay";
         io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures;
         ImFontConfig cfg;
         cfg.FontDataOwnedByAtlas = false;
@@ -486,14 +496,71 @@ extern "C" void divaoverlay_install(HMODULE self, const wchar_t* divalinux_ini) 
         ov_log("DivaOverlay: settings menu on (F10, or View + Start on a controller)");
 }
 
-// From DivaLinux's overlay hook before every present (the launcher's in-game menu isn't on).
-// Returns the menu's picture while it's open.
-extern "C" bool divaoverlay_frame(HWND hwnd, int32_t lay_w, int32_t lay_h,
+// ImGui's textures (the font atlas) to the GPU renderer.
+static void gpu_update_textures(ImDrawData* dd) {
+    if (!dd->Textures) return;
+    for (ImTextureData* t : *dd->Textures) {
+        if (t->Status == ImTextureStatus_WantCreate || t->Status == ImTextureStatus_WantUpdates) {
+            uint32_t id = t->TexID != ImTextureID_Invalid ? (uint32_t)(uintptr_t)t->TexID : ++g.next_tex_id;
+            if (t->Format == ImTextureFormat_RGBA32) {
+                if (!g.gl.SetTexture(id, t->Width, t->Height, t->GetPixels())) return;
+            }
+            else {   // Alpha8: white with the coverage in alpha
+                std::vector<uint8_t> rgba((size_t)t->Width * t->Height * 4);
+                const uint8_t* a = (const uint8_t*)t->GetPixels();
+                for (size_t k = 0; k < (size_t)t->Width * t->Height; k++) {
+                    rgba[k * 4] = rgba[k * 4 + 1] = rgba[k * 4 + 2] = 255;
+                    rgba[k * 4 + 3] = a[k];
+                }
+                if (!g.gl.SetTexture(id, t->Width, t->Height, rgba.data())) return;
+            }
+            t->SetTexID((ImTextureID)(uintptr_t)id);
+            t->SetStatus(ImTextureStatus_OK);
+        }
+        else if (t->Status == ImTextureStatus_WantDestroy && t->UnusedFrames > 0) {
+            t->SetTexID(ImTextureID_Invalid);
+            t->SetStatus(ImTextureStatus_Destroyed);
+        }
+    }
+}
+
+// Draws the frame's draw lists on the GPU, over the game's picture, in each rect.
+static bool gpu_draw(ImDrawData* dd, float lay_w, float lay_h, const OverlayGL::Rect* rects, int n) {
+    gpu_update_textures(dd);
+    if (g.gl.Failed()) return false;
+    g.vtx.clear(); g.idx.clear(); g.cmds.clear();
+    for (int l = 0; l < dd->CmdListsCount; l++) {
+        const ImDrawList* list = dd->CmdLists[l];
+        const uint32_t vbase = (uint32_t)g.vtx.size(), ibase = (uint32_t)g.idx.size();
+        for (const ImDrawVert& v : list->VtxBuffer)
+            g.vtx.push_back({ v.pos.x, v.pos.y, v.uv.x, v.uv.y, v.col });
+        g.idx.insert(g.idx.end(), list->IdxBuffer.begin(), list->IdxBuffer.end());
+        for (const ImDrawCmd& c : list->CmdBuffer) {
+            if (c.UserCallback || !c.ElemCount) continue;
+            OverlayGL::MeshCmd m;
+            m.count = c.ElemCount;
+            m.firstIndex = ibase + c.IdxOffset;
+            m.baseVertex = (int32_t)(vbase + c.VtxOffset);
+            m.clip[0] = c.ClipRect.x; m.clip[1] = c.ClipRect.y; m.clip[2] = c.ClipRect.z; m.clip[3] = c.ClipRect.w;
+            m.texture = (uint32_t)(uintptr_t)c.GetTexID();
+            g.cmds.push_back(m);
+        }
+    }
+    OverlayGL::Mesh mesh = { lay_w, lay_h, g.vtx.data(), (int)g.vtx.size(), g.idx.data(), (int)g.idx.size(), g.cmds.data(), (int)g.cmds.size() };
+    return g.gl.DrawMesh(mesh, rects, n);
+}
+
+// From DivaLinux's overlay hook before every present (the launcher's in-game menu isn't on),
+// with where the picture goes (one rect, or one per eye in side-by-side 3D).
+// Returns 0 when the menu is closed, 1 when it was drawn (on the GPU), 2 when its picture is
+// in *pixels for DivaLinux to blend (the CPU fallback, if the GPU path failed).
+extern "C" int divaoverlay_frame(HWND hwnd, int32_t lay_w, int32_t lay_h,
     float mouse_ox, float mouse_oy, float mouse_sx, float mouse_sy,
+    const OverlayGL::Rect* rects, int rect_count,
     const uint32_t** pixels, int32_t* width, int32_t* height, uint32_t* serial) {
     std::lock_guard<std::mutex> lock(g_lock);
     if (!g.installed || !g.enabled || lay_w <= 0 || lay_h <= 0)
-        return false;
+        return 0;
 
     if (!g.hwnd)
         find_runtime();   // in case the runtime set it up after DivaLinux loaded
@@ -534,12 +601,14 @@ extern "C" bool divaoverlay_frame(HWND hwnd, int32_t lay_w, int32_t lay_h,
             g.draining = false;
             g_block = false;
         }
-        return false;
+        return 0;
     }
 
     ImGui::SetCurrentContext(g.ctx);
-    // drawn at most 1080 lines tall (scaled up on the GPU; less work on the CPU)
-    const float scale = lay_h > 1080 ? 1080.0f / lay_h : 1.0f;
+    // On the GPU the menu is laid out at the picture's size; the CPU fallback draws at most
+    // 1080 lines (scaled up when blended).
+    const bool gpu = !g.gl.Failed();
+    const float scale = !gpu && lay_h > 1080 ? 1080.0f / lay_h : 1.0f;
     const int cw = std::max(1, (int)(lay_w * scale + 0.5f)), ch = std::max(1, (int)(lay_h * scale + 0.5f));
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
@@ -554,9 +623,23 @@ extern "C" bool divaoverlay_frame(HWND hwnd, int32_t lay_w, int32_t lay_h,
     g.ui->frame(in, (float)cw, (float)ch, ImGui::GetBackgroundDrawList());
     ImGui::Render();
     if (!g.open)
-        return false;   // closed by this frame's input
+        return 0;   // closed by this frame's input
 
     ImDrawData* dd = ImGui::GetDrawData();
+    if (gpu) {
+        if (gpu_draw(dd, (float)cw, (float)ch, rects, rect_count))
+            return 1;
+        ov_log("DivaOverlay: drawing on the GPU failed (%s); drawing on the CPU instead", g.gl.error.c_str());
+        g.hash = 0;
+        // the font atlas was uploaded to the GPU: have ImGui hand it over again for the CPU
+        if (dd->Textures)
+            for (ImTextureData* t : *dd->Textures)
+                if (t->Status == ImTextureStatus_OK) {
+                    t->SetTexID(ImTextureID_Invalid);
+                    t->SetStatus(ImTextureStatus_Destroyed);   // ImGui asks for it to be created again
+                }
+        return 0;   // next frame: the CPU path, laid out for it
+    }
     lfs::soft_update_textures(dd);
     g.canvas.resize(cw, ch);
     const uint64_t h = draw_data_hash(dd);
@@ -570,7 +653,7 @@ extern "C" bool divaoverlay_frame(HWND hwnd, int32_t lay_w, int32_t lay_h,
     *width = g.canvas.w;
     *height = g.canvas.h;
     *serial = g.serial;
-    return true;
+    return 2;
 }
 
 // The menu is open (DivaLinux leaves its pointer drawn over it).

@@ -63,9 +63,11 @@ static_assert(sizeof(void*) != 8 || (offsetof(DivaLinuxOverlayFrame, hwnd) == 8 
 
 extern "C" void divavk_log_text(const char* text); // DivaLinux.log (vk_bridge.cpp)
 // DivaOverlay (src/DivaOverlay/ov_host.cpp): the settings menu, when the launcher's in-game
-// menu isn't registered. Returns its picture while it's open.
-extern "C" bool divaoverlay_frame(HWND hwnd, int32_t lay_w, int32_t lay_h,
+// menu isn't registered. While it's open it draws itself into the rects on the GPU (1), or
+// hands back its picture for us to blend (2, its CPU fallback).
+extern "C" int divaoverlay_frame(HWND hwnd, int32_t lay_w, int32_t lay_h,
     float mouse_ox, float mouse_oy, float mouse_sx, float mouse_sy,
+    const OverlayGL::Rect* rects, int rect_count,
     const uint32_t** pixels, int32_t* width, int32_t* height, uint32_t* serial);
 
 static void overlay_log(const char* fmt, const char* arg) {
@@ -357,7 +359,8 @@ extern "C" void divalinux_overlay_before_swap(HWND hwnd) {
         const uint32_t* px = nullptr;
         int32_t w = 0, h = 0;
         uint32_t serial = 0;
-        if (divaoverlay_frame(hwnd, L.lay_w, L.lay_h, L.mouse_ox, L.mouse_oy, L.mouse_sx, L.mouse_sy, &px, &w, &h, &serial)) {
+        if (divaoverlay_frame(hwnd, L.lay_w, L.lay_h, L.mouse_ox, L.mouse_oy, L.mouse_sx, L.mouse_sy,
+                L.rects, L.n, &px, &w, &h, &serial) == 2) {
             OverlayGL::Image img = { px, w, h, w, serial };
             if (!g_compositor.Draw(img, L.rects, L.n) && !g_failed_logged) {
                 g_failed_logged = true;

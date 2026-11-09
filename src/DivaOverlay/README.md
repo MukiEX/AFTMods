@@ -49,9 +49,12 @@ gets the game window and DivaOverlay stays off.
 
 ## How it's drawn
 
-The menu is Dear ImGui draw lists (no ImGui windows), rasterised on the CPU by LauncherFS's
-renderer at most 1080 lines tall, and only when it changes. DivaLinux blends it over each frame
-before it's presented (`src/DivaLinux/overlay.cpp`), in both halves in side-by-side 3D. The font
+The menu is Dear ImGui draw lists (no ImGui windows). DivaLinux draws them on the GPU over each
+frame before it's presented (`src/DivaLinux/overlay.cpp`, `overlay_gl.h`'s `DrawMesh`), at the
+picture's full size, in both halves in side-by-side 3D; a frame costs a few thousand vertices
+and three draw calls, so the game runs at full speed with the menu open. If that fails the menu
+falls back to LauncherFS's CPU renderer (at most 1080 lines tall, blended like the launcher's
+menu), which is slow on phones: tens of milliseconds a frame while it animates. The font
 is M PLUS Rounded 1c (SIL Open Font License, `../LauncherFS/res/OFL.txt`), subset to Latin by
 `tools/make_fonts.py` into `res/ov_fonts.cpp`.
 

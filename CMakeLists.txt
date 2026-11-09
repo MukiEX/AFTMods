@@ -132,7 +132,8 @@ if(AFTMODS_BUILD_DIVALINUX)
     target_compile_definitions(DivaOverlay PRIVATE NOMINMAX
         IMGUI_DISABLE_WIN32_FUNCTIONS IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS)
     target_compile_options(DivaOverlay PRIVATE /utf-8)
-    target_include_directories(DivaOverlay PRIVATE ${OV} ${LFS}/src ${LFS}/third_party/imgui ${LFS}/third_party/simpleini)
+    target_include_directories(DivaOverlay PRIVATE ${OV} ${LFS}/src ${LFS}/third_party/imgui ${LFS}/third_party/simpleini
+        ${AFT_ROOT}/src/DivaVK/core/include)
 
     add_library(DivaLinux SHARED
         ${AFT_ROOT}/src/DivaVK/plugin/vk_bridge.cpp

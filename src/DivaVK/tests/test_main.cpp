@@ -1091,6 +1091,70 @@ static void test_movie_yuv() {
     glActiveTexture(GL_TEXTURE0);
 }
 
+// DivaOverlay's triangles (Dear ImGui draw lists) drawn over the finished frame.
+static void test_overlay_mesh() {
+    printf("overlay mesh\n");
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_BLEND);
+    glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(g_prog_color);
+    glViewport(3, 4, 50, 60);
+    glBindVertexArray(g_vao);
+    glActiveTexture(GL_TEXTURE2);
+    while (glGetError() != GL_NO_ERROR) {}
+
+    static OverlayGL::Compositor comp;
+    // 2x1 texture: left texel white, right texel half-transparent white
+    const uint8_t tex[8] = { 255, 255, 255, 255, 255, 255, 255, 128 };
+    CHECK(comp.SetTexture(7, 2, 1, tex), "texture: %s", comp.error.c_str());
+    // layout 64x48: an opaque red quad over the top-left quarter (left texel), and a green quad
+    // over the right half sampling the half-transparent texel, clipped to its top half
+    const float LW = 64, LH = 48;
+    OverlayGL::Vertex v[8] = {
+        { 0, 0, 0.25f, 0.5f, 0xFF0000FFu }, { 32, 0, 0.25f, 0.5f, 0xFF0000FFu }, { 32, 24, 0.25f, 0.5f, 0xFF0000FFu }, { 0, 24, 0.25f, 0.5f, 0xFF0000FFu },
+        { 32, 0, 0.75f, 0.5f, 0xFF00FF00u }, { 64, 0, 0.75f, 0.5f, 0xFF00FF00u }, { 64, 48, 0.75f, 0.5f, 0xFF00FF00u }, { 32, 48, 0.75f, 0.5f, 0xFF00FF00u },
+    };
+    const uint16_t idx[12] = { 0, 1, 2, 0, 2, 3, 0, 1, 2, 0, 2, 3 };
+    OverlayGL::MeshCmd cmds[2] = {
+        { 6, 0, 0, { 0, 0, LW, LH }, 7 },
+        { 6, 6, 4, { 0, 0, LW, LH / 2 }, 7 },   // second quad: same indices, base vertex 4
+    };
+    OverlayGL::Mesh m = { LW, LH, v, 8, idx, 12, cmds, 2 };
+    OverlayGL::Rect full = { 0, 0, W, H };
+    CHECK(comp.DrawMesh(m, &full, 1), "mesh draw failed: %s", comp.error.c_str());
+    // top-left quarter red (layout y is top-down: the top of the framebuffer)
+    CHECK_PIXEL(W / 4, H - H / 4, 255, 0, 0, 255);
+    // bottom-left: untouched blue
+    CHECK_PIXEL(W / 4, H / 4, 0, 0, 255, 255);
+    // right half, top: green at ~50% over blue; bottom: clipped away
+    CHECK_PIXEL(W - W / 4, H - H / 4, 0, 128, 127, 255);
+    CHECK_PIXEL(W - W / 4, H / 4, 0, 0, 255, 255);
+
+    // side by side: once per half
+    glClear(GL_COLOR_BUFFER_BIT);
+    OverlayGL::Rect halves[2] = { { 0, 0, W / 2, H }, { W / 2, 0, W / 2, H } };
+    CHECK(comp.DrawMesh(m, halves, 2), "mesh draw (SBS) failed: %s", comp.error.c_str());
+    CHECK_PIXEL(W / 8, H - H / 4, 255, 0, 0, 255);
+    CHECK_PIXEL(W / 2 + W / 8, H - H / 4, 255, 0, 0, 255);
+    CHECK_PIXEL(W / 2 + W / 2 - W / 8, H / 4, 0, 0, 255, 255);
+
+    GLint s[4] = {};
+    glGetIntegerv(GL_CURRENT_PROGRAM, s);
+    CHECK((GLuint)s[0] == g_prog_color, "program changed to %d", s[0]);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, s);
+    CHECK((GLuint)s[0] == g_vao, "vertex array changed to %d", s[0]);
+    glGetIntegerv(GL_VIEWPORT, s);
+    CHECK(s[0] == 3 && s[1] == 4 && s[2] == 50 && s[3] == 60, "viewport changed");
+    glGetIntegerv(GL_ACTIVE_TEXTURE, s);
+    CHECK(s[0] == GL_TEXTURE2, "active texture changed");
+    GLint scissor = 1;
+    glGetIntegerv(GL_SCISSOR_TEST, &scissor);
+    CHECK(scissor == 0, "scissor test left on");
+    CHECK(glGetError() == GL_NO_ERROR, "GL error after the mesh");
+    glActiveTexture(GL_TEXTURE0);
+}
+
 // The launcher's in-game menu image blended over the finished frame (DivaLinux overlay).
 static void test_overlay() {
     printf("overlay compositing\n");
@@ -1435,6 +1499,7 @@ int main(int argc, char** argv) {
     test_depth_feedback();
     test_movie_yuv();
     test_overlay();
+    test_overlay_mesh();
     test_present_loop();
     test_shared_context_thread();
     test_all_divagl_shaders();
