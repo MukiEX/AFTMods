@@ -181,7 +181,9 @@ vec3 prefilter(in const float coc_center_pixel, in const float depth_center) {
         }
     }
     c_t *= 1.0 / w_t;
-    c_t = pow(c_t, vec3(2.2));
+    // pow() of a negative number is undefined: Turnip gives NaN, which the blur passes after
+    // DOF spread over the whole picture (Hand in Hand's DOF shots went black). Clamp first.
+    c_t = pow(clamp(c_t, vec3(0.0), vec3(65000.0)), vec3(2.2));
     return c_t;
 }
 

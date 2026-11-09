@@ -57,7 +57,7 @@ vec4 median9(
 }
 
 vec3 tone_map(in const vec3 color, in const float exposure) {
-    return pow(color, vec3(1.0 / 2.2));
+    return pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
 }
 
 vec4 fetch_half(in const vec2 texcoord) {
@@ -100,8 +100,13 @@ vec4 upsample() {
 
 void main() {
     vec4 full_res = textureLod(g_full_res_color_sampler, frg_texcoord, 0.0);
-    full_res.rgb = pow(full_res.rgb, vec3(2.2));
+    // Clamp before pow(): pow() of a negative number is undefined (NaN under Turnip).
+    full_res.rgb = pow(clamp(full_res.rgb, vec3(0.0), vec3(65000.0)), vec3(2.2));
     vec4 half_res = upsample();
+    // An infinite or NaN half-resolution sample would poison mix() below; keep it finite.
+    half_res.rgb = min(half_res.rgb, vec3(65000.0));
+    if (any(isnan(half_res.rgb)))
+        half_res.rgb = full_res.rgb;
     half_res.a = textureLod(g_filtered_a_sampler, frg_texcoord, 0.0).r; //test
     float full_z = textureLod(g_full_res_depth_sampler, frg_texcoord, 0.0).r;
     float full_depth = calculate_depth_m_from_value_in_zbuffer(full_z);
@@ -125,6 +130,8 @@ void main() {
 #endif
     result.rgb = mix(half_res.rgb, full_res.rgb, combined_factor);
     result.rgb = max(tone_map(result.rgb, 1.0), vec3(0.0));
+    if (any(isnan(result.rgb)))
+        result.rgb = tone_map(full_res.rgb, 1.0);
 #if 1 // Fix alpha
     result.a = full_res.a;
 #else

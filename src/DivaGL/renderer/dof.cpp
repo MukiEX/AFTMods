@@ -30,6 +30,21 @@ int32_t dof_param_prefilter_tap_num = 8;
 int32_t dof_param_sample_division = 7;
 int32_t dof_param_upsample_tap_num = 8;
 
+/* DIVA_DOF=0 (a test): skip the PV's depth of field. Under Turnip, Hand in Hand goes black on
+   exactly the camera shots whose auth_3d turns depth of field on, so this tells whether the
+   DOF passes are what blacks the picture out. */
+static bool dof_disabled() {
+    static int v = -1;
+    if (v < 0) {
+        char buf[8];
+        const DWORD n = GetEnvironmentVariableA("DIVA_DOF", buf, sizeof(buf));
+        v = n && n < sizeof(buf) && buf[0] == '0';
+        if (v)
+            OutputDebugStringA("[DivaLinux] DIVA_DOF=0: depth of field is off\n");
+    }
+    return v > 0;
+}
+
 namespace renderer {
     template <int32_t sample_division>
     static void CalcTexcoord(vec2* data, const float_t size);
@@ -50,7 +65,7 @@ namespace renderer {
 
     // Inlined
     void DOF3::apply(render_data_context& rend_data_ctx, RenderTexture* rt, RenderTexture* buf_rt) {
-        if (dof_debug_data->flags & DOF_DEBUG_USE_UI_PARAMS) {
+        if ((dof_debug_data->flags & DOF_DEBUG_USE_UI_PARAMS) && !dof_disabled()) {
             if (dof_debug_data->flags & DOF_DEBUG_ENABLE_DOF) {
                 const float_t min_distance = get_camera_near_clip();
                 const float_t max_distance = get_camera_far_clip();
@@ -93,7 +108,7 @@ namespace renderer {
                 }
             }
         }
-        else if (dof_pv_data->enable && dof_pv_data->f2.ratio > 0.0f) {
+        else if (dof_pv_data->enable && dof_pv_data->f2.ratio > 0.0f && !dof_disabled()) {
             const float_t min_distance = get_camera_near_clip();
             const float_t max_distance = get_camera_far_clip();
             const float_t fuzzing_range = max_def(dof_pv_data->f2.fuzzing_range, 0.01f);

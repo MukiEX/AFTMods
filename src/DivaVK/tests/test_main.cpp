@@ -681,11 +681,22 @@ static void test_all_divagl_shaders() {
         CHECK(false, "cannot open %s", DIVAVK_SHADER_DIR);
         return;
     }
-    std::vector<std::string> verts;
+    // Each fragment shader with its own .vert, or else with "<prefix>_common.vert" (the DOF
+    // passes all share dof_common.vert).
+    std::vector<std::pair<std::string, std::string>> pairs;
     while (dirent* e = readdir(d)) {
         std::string n = e->d_name;
-        if (n.size() > 5 && n.substr(n.size() - 5) == ".vert")
-            verts.push_back(n.substr(0, n.size() - 5));
+        if (n.size() <= 5 || n.substr(n.size() - 5) != ".frag")
+            continue;
+        std::string base = n.substr(0, n.size() - 5);
+        std::string vert = base + ".vert";
+        if (read_file(std::string(DIVAVK_SHADER_DIR) + "/" + vert).empty()) {
+            size_t us = base.find('_');
+            vert = us == std::string::npos ? std::string() : base.substr(0, us) + "_common.vert";
+            if (vert.empty() || read_file(std::string(DIVAVK_SHADER_DIR) + "/" + vert).empty())
+                continue;
+        }
+        pairs.push_back({ vert, base });
     }
     closedir(d);
     // Every program also gets one draw into a small RGBA16F target, so a graphics pipeline
@@ -701,19 +712,21 @@ static void test_all_divagl_shaders() {
     dvk_stats before;
     dvk_get_stats(&before);
 
-    int linked = 0, total = 0;
+    int linked = 0, total = 0, drawn = 0;
     for (int value = 0; value <= 1; value++)
-    for (const std::string& base : verts) {
-        std::string fs_path = std::string(DIVAVK_SHADER_DIR) + "/" + base + ".frag";
-        if (read_file(fs_path).empty())
-            continue;
+    for (const auto& [vert, base] : pairs) {
         total++;
-        GLuint p = program(divagl_preprocess(base + ".vert", 16, value), divagl_preprocess(base + ".frag", 16, value));
+        GLuint p = program(divagl_preprocess(vert, 16, value), divagl_preprocess(base + ".frag", 16, value));
         if (p) {
             linked++;
-            glUseProgram(p);
-            glBindVertexArray(g_empty_vao);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+            // The shared-vertex-shader passes (DOF) loop on counts from their uniform buffer,
+            // which isn't set up here: link them only.
+            if (vert == base + ".vert") {
+                glUseProgram(p);
+                glBindVertexArray(g_empty_vao);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+                drawn++;
+            }
             glDeleteProgram(p);
         }
         else
@@ -723,7 +736,7 @@ static void test_all_divagl_shaders() {
     dvk_stats after;
     dvk_get_stats(&after);
     printf("  %llu pipelines created for them\n", (unsigned long long)(after.pipelines_created - before.pipelines_created));
-    CHECK(after.pipelines_created - before.pipelines_created == (uint64_t)linked, "pipeline creation failed for some programs");
+    CHECK(after.pipelines_created - before.pipelines_created == (uint64_t)drawn, "pipeline creation failed for some programs");
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, W, H);
     printf("  %d/%d programs linked\n", linked, total);
