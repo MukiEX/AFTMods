@@ -97,10 +97,13 @@ namespace lfs {
     }
 
     static void save_file(const wchar_t* path) {
+        // No byte order mark: PD Loader's plugins read these with GetPrivateProfileString, which
+        // takes one for part of the first line and loses the first section; so does DivaRecomp's
+        // build (pdloader_options.py), which then bakes in none of the Patches (Freeplay...).
 #ifdef _WIN32
-        s_ini.SaveFile(path);
+        s_ini.SaveFile(path, false);
 #else
-        s_ini.SaveFile(to_utf8(path).c_str());
+        s_ini.SaveFile(to_utf8(path).c_str(), false);
 #endif
     }
 
