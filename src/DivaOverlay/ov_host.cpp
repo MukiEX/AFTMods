@@ -105,7 +105,9 @@ namespace {
         volatile uint32_t restart;   // us: please restart the app (settings are saved)
         volatile uint32_t xr;        // runtime: showing in a headset
         volatile uint32_t seen;      // us: DivaOverlay is here (the runtime's open gestures work)
+        volatile uint32_t opened_by; // runtime (version 2): what the last toggle came from (DOV_SRC_*)
     };
+    enum { DOV_SRC_PAD = 0, DOV_SRC_XR = 1, DOV_SRC_SLIDER = 2, DOV_SRC_TOUCH = 3 };
 
     void ov_log(const char* fmt, ...) {
         char buf[512];
@@ -211,6 +213,7 @@ namespace {
         std::wstring ini, game_dir;
         RecompOverlayIO* io = nullptr;
         uint32_t toggles_seen = 0;
+        bool open_slider = false;    // the menu was opened from a slider controller
         int key = VK_F10;
         bool open = false, draining = false, toggle_was_down = false;
         bool ui_ready = false;
@@ -362,6 +365,7 @@ namespace {
         if (open) {
             if (!g.ui_ready) ui_init();
             ImGui::SetCurrentContext(g.ctx);
+            g.ui->set_slider_controls(g.open_slider);
             g.ui->open();
             g.serial++;
             g.hash = 0;
@@ -580,6 +584,8 @@ extern "C" int divaoverlay_frame(HWND hwnd, int32_t lay_w, int32_t lay_h,
         const uint32_t t = g.io->toggles;
         if (t != g.toggles_seen) {
             g.toggles_seen = t;
+            // opened from a slider controller: the menu shows how the controller drives it
+            g.open_slider = g.io->version >= 2 && g.io->opened_by == DOV_SRC_SLIDER;
             set_open(!g.open);
         }
     }

@@ -397,7 +397,7 @@ namespace dov {
             // space down to the footer.
             float sc = HS;
             auto hp = [&](float v) { return v * U * sc; };
-            const float y0 = list_top() + px(6), limit = H - px(40);
+            const float y0 = list_top() + px(6), limit = host.slider_controls ? controls_top() - px(14) : H - px(40);
             float pad, wrap, h;
             ImVec2 ts, bs, hs, ws;
             for (;;) {
@@ -439,6 +439,89 @@ namespace dov {
             }
             if (!it->where.empty())
                 text(dl, reg, hp(19), x0 + pad, y, rgba(0x9F, 0xB3, 0xC6, alpha), it->where, wrap);
+        }
+
+        // ------------------------------------------------ slider controller diagram
+        // Bottom right, under the help: the controller as the game's menus use it.
+        float controls_h() const { return px(290); }
+        float controls_top() const { return list_bottom() - controls_h(); }
+
+        void draw_controls(ImDrawList* dl, float alpha) {
+            const float x0 = std::max(W * 0.60f, px(62) + row_width() + px(110)), x1 = W - px(44);
+            if (x1 - x0 < px(260)) return;
+            const float y0 = controls_top(), y1 = list_bottom();
+            const float pad = px(22);
+            dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), col(PANEL, 0.80f * alpha), px(14));
+            dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y0 + px(5)), col(TEAL, 0.95f * alpha), px(14), ImDrawFlags_RoundCornersTop);
+            text(dl, bold, px(26), x0 + pad, y0 + px(16), rgba(255, 255, 255, alpha), "Slider controller");
+            const std::string close = "Select + Start: close";
+            const ImVec2 cs = measure(reg, px(20), close);
+            text(dl, reg, px(20), x1 - pad - cs.x, y0 + px(21), rgba(0x9F, 0xB3, 0xC6, alpha), close);
+
+            // the controller: a body with the slider along its top and four buttons under it
+            const float bx0 = x0 + pad, bx1 = x1 - pad, by0 = y0 + px(62), by1 = y1 - px(20);
+            dl->AddRectFilled(ImVec2(bx0, by0), ImVec2(bx1, by1), rgba(0x1C, 0x2A, 0x3A, 0.92f * alpha), px(18));
+            dl->AddRect(ImVec2(bx0, by0), ImVec2(bx1, by1), col(TEAL, 0.55f * alpha), px(18), 0, px(2));
+
+            // slider strip; its edges light up as up and down
+            const float sx0 = bx0 + px(18), sx1 = bx1 - px(18), sy0 = by0 + px(18), sy1 = sy0 + px(46);
+            const float edge = (sx1 - sx0) * 0.16f;
+            dl->AddRectFilled(ImVec2(sx0, sy0), ImVec2(sx1, sy1), rgba(0xD8, 0xE2, 0xEC, 0.85f * alpha), px(10));
+            for (float x = sx0 + edge; x < sx1 - edge - 1; x += (sx1 - sx0 - edge * 2) / 24.0f)
+                dl->AddLine(ImVec2(x, sy0 + px(10)), ImVec2(x, sy1 - px(10)), rgba(0x9F, 0xB3, 0xC6, 0.6f * alpha), px(1));
+            dl->AddRectFilled(ImVec2(sx0, sy0), ImVec2(sx0 + edge, sy1), col(TEAL, 0.95f * alpha), px(10), ImDrawFlags_RoundCornersLeft);
+            dl->AddRectFilled(ImVec2(sx1 - edge, sy0), ImVec2(sx1, sy1), col(TEAL, 0.95f * alpha), px(10), ImDrawFlags_RoundCornersRight);
+            auto edge_label = [&](float cx, bool up, const char* s) {
+                const ImVec2 ts = measure(bold, px(20), s);
+                const float w = px(16) + px(8) + ts.x, lx = cx - w * 0.5f, cy = (sy0 + sy1) * 0.5f;
+                const ImU32 c = rgba(255, 255, 255, alpha);
+                if (up) dl->AddTriangleFilled(ImVec2(lx + px(8), cy - px(7)), ImVec2(lx, cy + px(6)), ImVec2(lx + px(16), cy + px(6)), c);
+                else dl->AddTriangleFilled(ImVec2(lx, cy - px(6)), ImVec2(lx + px(16), cy - px(6)), ImVec2(lx + px(8), cy + px(7)), c);
+                text(dl, bold, px(20), lx + px(24), cy - ts.y * 0.5f, c, s);
+            };
+            edge_label(sx0 + edge * 0.5f, true, "Up");
+            edge_label(sx1 - edge * 0.5f, false, "Down");
+
+            // buttons: triangle, square, cross, circle
+            struct Btn { int kind; int c[3]; const char* label; int arrow; };
+            static const Btn btns[4] = {
+                { 0, { 0x3A, 0xC6, 0x8A }, "Change", -1 },
+                { 1, { 0xE8, 0x6A, 0xB8 }, "Change", 1 },
+                { 2, { 0x4A, 0x8C, 0xF0 }, "Back", 0 },
+                { 3, { 0xF0, 0x5A, 0x5A }, "Select", 0 },
+            };
+            const float r = px(30), cyb = sy1 + px(22) + r, step = (sx1 - sx0) / 4.0f;
+            for (int i = 0; i < 4; i++) {
+                const Btn& b = btns[i];
+                const float cx = sx0 + step * (i + 0.5f);
+                dl->AddCircleFilled(ImVec2(cx, cyb), r, col(b.c, 0.95f * alpha), 40);
+                dl->AddCircle(ImVec2(cx, cyb), r, rgba(255, 255, 255, 0.85f * alpha), 40, px(2.5f));
+                const ImU32 w = rgba(255, 255, 255, alpha);
+                const float s = r * 0.48f, t = px(3.5f);
+                switch (b.kind) {
+                case 0: { ImVec2 p[3] = { { cx, cyb - s }, { cx + s * 0.95f, cyb + s * 0.65f }, { cx - s * 0.95f, cyb + s * 0.65f } };
+                          dl->AddPolyline(p, 3, w, ImDrawFlags_Closed, t); break; }
+                case 1: dl->AddRect(ImVec2(cx - s * 0.8f, cyb - s * 0.8f), ImVec2(cx + s * 0.8f, cyb + s * 0.8f), w, 0, 0, t); break;
+                case 2: dl->AddLine(ImVec2(cx - s * 0.8f, cyb - s * 0.8f), ImVec2(cx + s * 0.8f, cyb + s * 0.8f), w, t);
+                        dl->AddLine(ImVec2(cx + s * 0.8f, cyb - s * 0.8f), ImVec2(cx - s * 0.8f, cyb + s * 0.8f), w, t); break;
+                default: dl->AddCircle(ImVec2(cx, cyb), s * 0.9f, w, 32, t); break;
+                }
+                // label under it, with an arrow for the value buttons
+                const ImVec2 ts = measure(bold, px(20), b.label);
+                const float aw = b.arrow ? px(12) + px(6) : 0.0f, lw = ts.x + aw;
+                float lx = cx - lw * 0.5f;
+                const float ly = cyb + r + px(10), acy = ly + ts.y * 0.5f;
+                const ImU32 lc = rgba(255, 255, 255, alpha);
+                if (b.arrow < 0) {
+                    dl->AddTriangleFilled(ImVec2(lx, acy), ImVec2(lx + px(12), acy - px(8)), ImVec2(lx + px(12), acy + px(8)), col(TEAL, alpha));
+                    lx += aw;
+                }
+                text(dl, bold, px(20), lx, ly, lc, b.label);
+                if (b.arrow > 0) {
+                    const float ax = lx + ts.x + px(6);
+                    dl->AddTriangleFilled(ImVec2(ax + px(12), acy), ImVec2(ax, acy - px(8)), ImVec2(ax, acy + px(8)), col(TEAL, alpha));
+                }
+            }
         }
 
         // ------------------------------------------------ header and footer
@@ -525,8 +608,8 @@ namespace dov {
                 x = prompt(dl, x, cy, "", "Drag to scroll", alpha, 3);
             }
             else {
-                x = prompt(dl, x, cy, host.pad_ps ? "\xE2\x97\x8B" : "B", "Select", alpha);
-                x = prompt(dl, x, cy, host.pad_ps ? "\xC3\x97" : "A", stack.size() > 1 ? "Back" : "Close", alpha);
+                x = prompt(dl, x, cy, host.pad_ps || host.slider_controls ? "\xE2\x97\x8B" : "B", "Select", alpha);
+                x = prompt(dl, x, cy, host.pad_ps || host.slider_controls ? "\xC3\x97" : "A", stack.size() > 1 ? "Back" : "Close", alpha);
                 if (setting) x = prompt(dl, x, cy, "", "Change", alpha, 2);
                 x = prompt(dl, x, cy, "L/R", "Page", alpha, 1);
                 if (!host.close_hint.empty()) x = prompt(dl, x, cy, host.close_hint.c_str(), "Close", alpha, 1);
@@ -728,6 +811,7 @@ namespace dov {
                 tri_down(dl, px(62) + rw * 0.5f, bot + px(4), alpha);
 
             if (!p.rows.empty()) draw_help(dl, p.rows[p.sel], alpha);
+            if (host.slider_controls) draw_controls(dl, alpha);
             draw_footer(dl, alpha);
         }
 
@@ -760,6 +844,7 @@ namespace dov {
     void Ui::frame(const Input& in, float w, float h, ImDrawList* dl) { m->frame(in, w, h, dl); }
     void Ui::flush() { m->flush(); }
     void Ui::set_row_scale(float scale) { m->RS = scale < 0.5f ? 0.5f : scale > 3.0f ? 3.0f : scale; }
+    void Ui::set_slider_controls(bool on) { m->host.slider_controls = on; }
     void Ui::set_help_scale(float scale) { m->HS = scale < 0.5f ? 0.5f : scale > 3.0f ? 3.0f : scale; }
     bool Ui::animating() const { return m->animating || m->save_timer >= 0.0f; }
 }

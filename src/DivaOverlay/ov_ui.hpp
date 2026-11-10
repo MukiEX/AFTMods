@@ -32,6 +32,7 @@ namespace dov {
         std::function<void()> restart;   // restart the game to apply the rest (saved first)
         std::string close_hint;          // how to close, e.g. "F10" or "Select + Start"
         bool pad_ps = false;             // PlayStation button names in the hints
+        bool slider_controls = false;    // opened from a slider controller: show how it drives the menu
     };
 
     class Ui {
@@ -51,6 +52,8 @@ namespace dov {
         void set_row_scale(float scale);
         // Size of the help panel's text against the rest of the menu (default 2).
         void set_help_scale(float scale);
+        // Opened from a slider controller: show its controls card and button names (until changed).
+        void set_slider_controls(bool on);
         // Something is still moving (keep drawing frames).
         bool animating() const;
 

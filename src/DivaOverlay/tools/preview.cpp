@@ -121,6 +121,7 @@ int main(int argc, char** argv) {
 
     dov::UiHost host;
     host.close_hint = windows ? "F10" : "Select+Start";
+    host.slider_controls = getenv("OV_SLIDER") != nullptr;
     bool closed = false;
     host.close = [&]() { closed = true; fprintf(stderr, "  closed\n"); };
     host.restart = [&]() { fprintf(stderr, "  restart requested\n"); };
