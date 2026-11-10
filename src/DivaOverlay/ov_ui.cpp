@@ -525,8 +525,8 @@ namespace dov {
                 x = prompt(dl, x, cy, "", "Drag to scroll", alpha, 3);
             }
             else {
-                x = prompt(dl, x, cy, host.pad_ps ? "\xE2\x97\x8B" : "A", "Select", alpha);
-                x = prompt(dl, x, cy, host.pad_ps ? "\xC3\x97" : "B", stack.size() > 1 ? "Back" : "Close", alpha);
+                x = prompt(dl, x, cy, host.pad_ps ? "\xE2\x97\x8B" : "B", "Select", alpha);
+                x = prompt(dl, x, cy, host.pad_ps ? "\xC3\x97" : "A", stack.size() > 1 ? "Back" : "Close", alpha);
                 if (setting) x = prompt(dl, x, cy, "", "Change", alpha, 2);
                 x = prompt(dl, x, cy, "L/R", "Page", alpha, 1);
                 if (!host.close_hint.empty()) x = prompt(dl, x, cy, host.close_hint.c_str(), "Close", alpha, 1);

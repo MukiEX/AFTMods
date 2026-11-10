@@ -429,7 +429,8 @@ namespace {
             const bool pad = pb != 0 || std::abs(lx) > 16000 || std::abs(ly) > 16000;
             in.up |= (pb & XI_UP) || ly > 16000; in.down |= (pb & XI_DOWN) || ly < -16000;
             in.left |= (pb & XI_LEFT) || lx < -16000; in.right |= (pb & XI_RIGHT) || lx > 16000;
-            in.ok |= (pb & XI_A) != 0; in.back |= (pb & XI_B) != 0;
+            // B confirms and A goes back, as in the game (its circle and cross)
+            in.ok |= (pb & XI_B) != 0; in.back |= (pb & XI_A) != 0;
             in.page_up |= (pb & XI_LB) != 0; in.page_down |= (pb & XI_RB) != 0;
             if (kb) g.device = dov::Device::Keys;
             else if (pad) g.device = dov::Device::Pad;
