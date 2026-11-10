@@ -146,8 +146,10 @@ void pv_frame_begin() {
             pv_sync_struct* s = (pv_sync_struct*)(uintptr_t)strtoull(buf, 0, 16);
             if (s && s->magic == 0x59535650u && s->version >= 1) {
                 pv_sync = s;
+#ifdef DIVAVK   // threaded PV needs DivaVK's shared contexts
                 if (s->version >= 2)
                     s->async_ok = 1;
+#endif
                 OutputDebugStringA(s->version >= 2
                     ? "[DivaLinux] PV frame skip: following the host's PV schedule (async PV supported)\n"
                     : "[DivaLinux] PV frame skip: following the host's PV schedule\n");
@@ -338,6 +340,9 @@ void pv_cache_restore(render_data_context& rend_data_ctx, int32_t eye) {
     glBindFramebuffer(GL_FRAMEBUFFER, screen);
     rend_data_ctx.state.bind_framebuffer(screen);
 }
+
+#ifdef DIVAVK
+// ---- threaded PV (needs DivaVK's shared contexts; the plain-OpenGL DivaGL.dva has stubs below)
 
 /* Threaded PV (a host with schedule version 2: the DivaRecomp runtime on Quest).
    The PV picture is drawn by a thread of its own, with a GL context of its own (DivaVK's
@@ -906,3 +911,29 @@ void pv_threaded_leave() {
     if (pv_sync)
         pv_sync->pv_busy = 0;
 }
+
+#else   // !DIVAVK: no threaded PV in the plain-OpenGL build
+
+Shadow* render_shadow() {
+    return render_manager.shadow_ptr;
+}
+
+bool pv_threaded_on() {
+    return false;
+}
+
+bool pv_threaded_active() {
+    return false;
+}
+
+void pv_threaded_frame() {
+}
+
+void pv_threaded_leave() {
+    pv_threaded_was = false;
+}
+
+void pv_thread_stop() {
+}
+
+#endif

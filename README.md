@@ -1,6 +1,8 @@
 # AFTMods
 Various mods for Hatsune Miku: Project DIVA Mega Mix+
 
+This is MukiEX's fork of korenkonder's AFTMods. [FORK_CHANGES.md](FORK_CHANGES.md) maps what it adds and every change to the original code.
+
 ## DivaGL
 Ports graphics of PDAFT 7.10 from legacy OpenGL to modern one. Works on Nvidia GPUs as well as on AMD and Intel GPUs (last statement needs testing).
 
