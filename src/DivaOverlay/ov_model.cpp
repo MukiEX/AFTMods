@@ -490,7 +490,7 @@ namespace dov {
                     L"player_name", L"level_name", L"level_plate_id", L"level_plate_effect", L"skin_equip",
                     L"btn_se_equip", L"slide_se_equip", L"chainslide_se_equip", L"slidertouch_se_equip", L"act_toggle",
                     L"border_great", L"border_excellent", L"border_rival", L"use_card", L"use_pv_module_equip",
-                    L"use_pv_skin_equip", L"use_pv_sfx_equip", L"gamemode_options" };
+                    L"use_pv_skin_equip", L"use_pv_sfx_equip", L"gamemode_options", L"difficulty" };
                 for (const wchar_t* k : used)
                     if (o.key == k)
                         return true;

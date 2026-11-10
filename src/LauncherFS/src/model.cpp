@@ -534,6 +534,8 @@ namespace lfs {
                 make_bool(L"use_pv_skin_equip", PLAYERDATA, PD, L"Song Specific Skins", L"Allows song-specific skin settings.\nValues stored in skins.ini", true, true),
                 make_bool(L"use_pv_sfx_equip", PLAYERDATA, PD, L"Song Specific Sound Effects", L"Allows song-specific sound effect settings.\nValues stored in sfx.ini", true, true),
                 make_bool(L"gamemode_options", PLAYERDATA, PD, L"Game Modifiers", L"Allows use of game mode modifiers (hi-speed, hidden, and sudden).", true, true),
+                make_choice(L"difficulty", PLAYERDATA, PD, L"Difficulty:", L"The difficulty the song selector starts on, as an arcade card keeps it; the last one you pick is saved here.\nRead by DivaPocket (Android); PD Loader on Windows ignores it.", 0,
+                    { L"Easy", L"Normal", L"Hard", L"Extreme", L"Extra Extreme" }, 0),
             };
             pages.push_back(pg);
         }
