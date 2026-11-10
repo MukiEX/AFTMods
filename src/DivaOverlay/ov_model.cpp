@@ -477,13 +477,20 @@ namespace dov {
         std::vector<lfs::Page> pages = lfs::build_builtin_pages(p, screen);
         std::vector<SectionPtr> out;
 
-        // Under the runtime, only what it reads (pdloader_compat.c): the window and internal
-        // resolution, the frame rate manager's motion rate, the fast loader, No Lyrics and the songs per credit.
+        // Under the runtime, only what it reads (pdloader_compat.c, player_data.c): the window and
+        // internal resolution, the frame rate manager's motion rate, the fast loader, No Lyrics,
+        // the songs per credit, the player data manager and score saver, and playerdata.ini
+        // (all but module_card_workaround).
         std::function<bool(const lfs::Option&)> keep;
         if (recomp)
             keep = [](const lfs::Option& o) {
                 static const wchar_t* used[] = { L"width", L"r.enable", L"r.width", L"frm.motion.rate",
-                    L"fast_loader", L"fast_loader_speed", L"frame_rate_manager", L"no_lyrics", L"normal_stages", L"protected_stages" };
+                    L"fast_loader", L"fast_loader_speed", L"frame_rate_manager", L"no_lyrics", L"normal_stages", L"protected_stages",
+                    L"player_data_manager", L"score_saver",
+                    L"player_name", L"level_name", L"level_plate_id", L"level_plate_effect", L"skin_equip",
+                    L"btn_se_equip", L"slide_se_equip", L"chainslide_se_equip", L"slidertouch_se_equip", L"act_toggle",
+                    L"border_great", L"border_excellent", L"border_rival", L"use_card", L"use_pv_module_equip",
+                    L"use_pv_skin_equip", L"use_pv_sfx_equip", L"gamemode_options" };
                 for (const wchar_t* k : used)
                     if (o.key == k)
                         return true;
