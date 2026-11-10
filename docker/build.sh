@@ -87,6 +87,9 @@ for attempt in 1 2 3 4; do
         exit 1
     fi
     echo "== Build stopped (attempt $attempt); retrying from where it left off"
+    # a link cut short leaves its .pdb corrupt (LNK1285) and every later link fails on it;
+    # the linker writes a new one
+    for t in $TARGETS; do rm -f "bin/$t.pdb" "bin/$t.ilk"; done
     JOBS=$(( JOBS > 2 ? JOBS / 2 : 1 ))
 done
 
