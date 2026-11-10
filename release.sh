@@ -91,6 +91,7 @@ cp out/DivaLinux.dva out/Launcher.dva "$LIN/plugins/"
 cp tools/divalinux_pack.py "$LIN/tools/"
 common "$LIN"
 cp src/DivaLinux/README.md "$LIN/docs/DivaLinux_README.md"
+cp src/DivaOverlay/README.md "$LIN/docs/DivaOverlay_README.md"
 for f in src/DivaVK/external/volk/LICENSE.md:volk.md src/DivaVK/external/vma/LICENSE.txt:VulkanMemoryAllocator.txt \
          src/DivaVK/external/openxr/LICENSE:OpenXR.txt .deps/glslang/LICENSE.txt:glslang.txt; do
     src=${f%%:*}; dst=${f##*:}
@@ -124,7 +125,8 @@ Unzip into the game folder (the one with diva.exe), so the DVAs land in plugins\
                          Wine), with SBS stereo, plus an FFmpeg movie player, faster loading
                          and zip archive support. It replaces DivaGL.dva, DivaVK.dva and
                          DivaMovie.dva: remove or disable those. Settings:
-                         plugins\\DivaLinux.ini (created on first run). Log:
+                         plugins\\DivaLinux.ini (created on first run), or the
+                         in-game settings menu: F10, or View + Start. Log:
                          plugins\\DivaLinux.log.
   plugins\\Launcher.dva   Fullscreen, controller-friendly launcher (draws on the CPU under
                          WinlatorXR).

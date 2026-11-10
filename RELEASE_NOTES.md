@@ -1,24 +1,41 @@
-# MukiEX's AFTMods fork: 0.1.1
+# MukiEX's AFTMods fork: 0.1.5
 
 Builds on korenkonder's AFTMods (DivaGL 0.11.0.0) for Hatsune Miku: Project DIVA Arcade
 Future Tone 7.10 under PD Loader. It has been played on a handful of setups (Windows with AMD,
-Steam Deck with Proton, Quest 3 with WinlatorXR) and nowhere else yet.
+Steam Deck with Proton, Quest 3 with WinlatorXR, and Quest 3 and an Odin 3 under the DivaPocket
+Android port) and nowhere else yet.
 
-## New in 0.1.1
+## New in 0.1.5
 
-- **Movies play from zip archives.** With `rom.zip` or `mdata\<pack>.zip` in place of the
-  folders, PV and attract movies inside them failed to open ("No such file or directory" in
-  `DivaLinux.log`), because FFmpeg opened movie files itself and didn't see the archives.
-  It now reads them through DivaLinux's file layer, so movies inside the zips play and can
-  seek.
-- **A movie that won't open no longer hangs the song.** The game waits for a movie it asked
-  for to become ready; when one failed, the song froze on its loading screen forever. A movie
-  that can't be opened is now logged and played as an empty one, and the song carries on.
-- **One package for Windows and Wine.** DivaLinux.dva runs fine on Windows too (with DivaGL.dva
-  and DivaMovie.dva removed), so the plain-OpenGL DivaGL.dva is no longer released, and the
-  separate Windows and Linux zips are now a single `AFTMods-<version>.zip`. If you used the
-  Windows package, replace `plugins\DivaGL.dva` with `plugins\DivaLinux.dva`; its settings go
-  in `plugins\DivaLinux.ini`, created from your `DivaGL.ini` on first run.
+- **An in-game settings menu.** Press F10, or View + Start on a controller, and a menu in the
+  style of the game's Key Config screen opens over the running game. It edits
+  `DivaLinux.ini` and PD Loader's `config.ini`, `components.ini`, `playerdata.ini` and
+  `keyconfig.ini` in one place, with the launcher's own pages and help. Stereo 3D,
+  reflections and the pointer change straight away; anything else is saved and applied with
+  **Restart game** from the menu. B selects and A goes back, as in the game. It's drawn on the
+  GPU, so the game keeps its frame rate while it's open. `[overlay]` in `DivaLinux.ini` turns
+  it off or changes the key.
+- **More songs per credit.** `Normal_Stages` and `Protected_Stages` in `config.ini`'s
+  `[Patches]` (1-10; 0 keeps the game's own) set how many songs a credit gives in Normal and
+  in Protected (ASSURE NEXT STAGE) mode. They're in the settings menu too. They stay off when
+  `Enhanced_Stage_Manager` is on.
+- **The HUD keeps its frame rate when the PV is heavy.** With `pv_frame_skip=1` (the
+  default), a frame whose PV ran late is followed by one that reuses the finished PV picture
+  and draws only a fresh HUD, so notes stay smooth. `2`-`4` draw the PV every 2nd-4th frame;
+  `0` turns it off.
+- **A pointer drawn into the picture.** DivaLinux draws the mouse pointer itself, where the
+  game sees the mouse: a leek by default, or a crosshair (`[cursor]`). It's in the right
+  place in both eyes in side-by-side 3D, where the Windows cursor never is.
+- **The launcher's in-game menu** can be drawn over the game by DivaLinux.
+- **VR: the HUD as its own layer** (`[vr] hud_layer=1`, experimental and off by default):
+  notes and gauges in front of the 3D picture. Screen effects that blend with the picture
+  underneath lose their effect on that layer.
+- **Fixes.** Depth of field could produce broken (NaN) pixels on Mesa's Turnip driver (Adreno);
+  sprites shifted for 3D could stop short of the screen edges; ini files saved by the
+  launcher started with a byte order mark, which made the first section unreadable to
+  PD Loader.
+- **FFmpeg for movies** now comes from the `aftmods-ffmpeg-ba987fe24` release of
+  github.com/MukiEX/FFmpeg-Builds (LGPL).
 
 ## What's in it
 
@@ -37,6 +54,9 @@ and DivaMovie
 - `rom.zip` and `mdata\<pack>.zip` (uncompressed) read in place of their folders, so a copy
   of the game is a few hundred files instead of tens of thousands. Make them with
   `tools/divalinux_pack.py`. Movies play from inside them too.
+- An in-game settings menu (F10 / View + Start) for DivaLinux's and PD Loader's settings.
+- Songs per credit for Normal and Protected mode.
+- A pointer drawn into the picture (leek or crosshair), right in both eyes in 3D.
 - Diagnostics: frame dump (Scroll Lock), a watchdog that reports stalls, movie playback
   statistics, and a file I/O trace (`[debug] io_trace=1`).
 
