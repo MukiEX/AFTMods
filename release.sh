@@ -160,17 +160,18 @@ PY
 
 # Changes since the previous release of this fork, or since the upstream commit it branched
 # from. Upstream has v-tags of its own (v0.8.0.0, four numbers): fork releases are vX.Y.Z or
-# vX.Y.Z-something, made after the fork point.
+# vX.Y.Z-something, on this branch (the fork's history doesn't share commits with upstream's master).
 UPSTREAM_BASE=e3555bbc391ab3afb497ec09b325d071c5eec0d1   # korenkonder/AFTMods master when forked
 PREV=""
 for t in $(git tag --list 'v*' --sort=-creatordate); do
     [ "$t" = "$VERSION" ] && continue
     echo "$t" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' || continue
-    git merge-base --is-ancestor "$UPSTREAM_BASE" "$t" 2>/dev/null || continue
+    git merge-base --is-ancestor "$t" HEAD 2>/dev/null || continue   # this branch's own releases
     PREV=$t
     break
 done
 BASE=${PREV:-$UPSTREAM_BASE}
+git merge-base --is-ancestor "$BASE" HEAD 2>/dev/null || BASE=$(git rev-list --max-parents=0 HEAD | tail -1)
 {
     cat RELEASE_NOTES.md
     echo
