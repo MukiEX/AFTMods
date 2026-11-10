@@ -237,7 +237,7 @@ Paths below are in `src/DivaLinux/` unless they start with `src/`.
 
 | Path | What |
 | --- | --- |
-| `src/DivaGL/` | The renderer; compiled with `DIVAVK` and `DIVALINUX` defined for this plugin. 3D stereo and VR live here (`stereo.cpp`, plus edits in upstream files, each marked `// 3D stereo`) |
+| `src/DivaGL/` | The renderer; compiled with `DIVAVK` and `DIVALINUX` defined for this plugin. Our own files there: `stereo.cpp` (3D stereo and VR) and `pv_render.cpp` (PV frame skip, the VR HUD layer, threaded PV). Every edit to korenkonder's files is marked with what it's for: `// 3D stereo`, `// threaded PV`, `// PV frame skip`, `// DivaLinux` or `// DivaVK` (see `FORK_CHANGES.md` at the top of the repository) |
 | `src/DivaVK/core/` | GL-on-Vulkan runtime (`divavk_core`) |
 | `src/DivaVK/core/src/xr.cpp` | OpenXR output (virtual screen), tested against `src/DivaVK/tests/mock_xr_runtime.cpp` |
 | `main.cpp` | Installs DivaLinux's own features (called from DivaGL's `DllMain`); each reads its own section of `DivaLinux.ini` |

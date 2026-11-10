@@ -29,7 +29,7 @@ static void trim_space(const char*& str, size_t& length);
 
 #ifdef DIVAVK
 // DivaLinux: same renderer on a Vulkan backend (src/DivaVK), plus the FFmpeg movie player
-// (src/DivaLinux/movie). Built only as DivaLinux.dva, for Wine/Proton.
+// (src/DivaLinux/movie). Built only as DivaLinux.dva (Windows, Wine/Proton, the Android runtime).
 extern "C" void divavk_bridge_install(HMODULE self);
 extern "C" void divavk_bridge_shutdown();
 extern "C" void divavk_log_text(const char* text);
@@ -73,7 +73,7 @@ LPCWSTR CONFIG_FILE = CONFIG_FILE_STRING.c_str();
 
 void FASTCALL divagl_main() {
 #ifdef DIVAVK
-    // Must run before GLUT creates its context so every GL/WGL import lands in DivaVK.
+    // DivaLinux: must run before GLUT creates its context so every GL/WGL import lands in DivaVK.
     divavk_bridge_install((HMODULE)dll_handle);
 #endif
 
@@ -103,7 +103,7 @@ void FASTCALL divagl_main() {
 bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserved) {
     switch (ul_reason_for_call) {
     case DLL_PROCESS_ATTACH:
-#ifdef DIVAVK
+#ifdef DIVAVK   // DivaLinux: DivaLinux.ini from DivaGL.ini / DivaVK.ini the first time
         divalinux_migrate_config((GetDirPath() + L"\\plugins\\").c_str(), CONFIG_FILE_STRING.c_str());
 #endif
         sv_reflect_full = GetPrivateProfileIntW(L"general", L"reflect_full", 0, CONFIG_FILE) > 0 ? true : false;
@@ -119,6 +119,7 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
         sv_texture_skinning_buffer = GetPrivateProfileIntW(L"experimentals",
             L"texture_skinning_buffer", 0, CONFIG_FILE) > 0 ? true : false;
 
+        // 3D stereo: [stereo]
         sv_stereo_mode = GetPrivateProfileIntW(L"stereo", L"stereo_mode", 0, CONFIG_FILE);
         sv_stereo_mode = clamp_def(sv_stereo_mode, 0, 2);
         sv_stereo_separation = clamp_def((int32_t)GetPrivateProfileIntW(L"stereo",
@@ -137,6 +138,7 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
             L"stereo_max_parallax", 20, CONFIG_FILE), 0, 200);
         sv_stereo_content_aspect = clamp_def((int32_t)GetPrivateProfileIntW(L"stereo",
             L"stereo_content_aspect", 1778, CONFIG_FILE), 0, 10000);
+        // PV frame skip and the frame-time log: [performance]; 3D stereo: VR HUD layer: [vr]
         sv_pv_frame_skip = clamp_def((int32_t)GetPrivateProfileIntW(L"performance",
             L"pv_frame_skip", 1, CONFIG_FILE), 0, 4);
         sv_perf_log = GetPrivateProfileIntW(L"performance",
@@ -145,7 +147,7 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
             L"hud_layer", 0, CONFIG_FILE) > 0 ? true : false;
 
 #ifdef DIVAVK
-        // No WGL_NV_DX_interop2 under Vulkan: always use the CPU upload path for videos.
+        // DivaLinux: no WGL_NV_DX_interop2 under Vulkan: always use the CPU upload path for videos.
         sv_task_movie_player_no_interop = true;
         divalinux_install(handle, CONFIG_FILE, GetDirPath().c_str());   // movie, pointer, menu, files...
 #endif
@@ -155,7 +157,7 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
         printf_divagl("Attach");
         divagl_main();
         break;
-#ifdef DIVAVK
+#ifdef DIVAVK   // DivaLinux
     case DLL_PROCESS_DETACH:
         divavk_bridge_shutdown();
         break;
@@ -165,12 +167,12 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
 }
 
 extern "C" __declspec(dllexport) LPCWSTR GetPluginName(void) {
-    return DIVAGL_PLUGIN_NAME;
+    return DIVAGL_PLUGIN_NAME;   // DivaLinux: "DivaLinux" when built as DivaLinux.dva
 }
 
 extern "C" __declspec(dllexport) LPCWSTR GetPluginDescription(void) {
-#ifdef DIVAVK
-    return L"DivaLinux: DivaGL by korenkonder on Vulkan, with an FFmpeg movie player (from DivaMovie).\nFor Wine/Proton; on Windows use DivaGL.";
+#ifdef DIVAVK   // DivaLinux
+    return L"DivaLinux: DivaGL by korenkonder on Vulkan, with an FFmpeg movie player (from DivaMovie).\nFor Windows and Wine/Proton.";
 #else
     return L"DivaGL Plugin by korenkonder";
 #endif
@@ -227,6 +229,7 @@ extern "C" __declspec(dllexport) BOOL SetOption(const char* str) {
         if (parse_bool(val, val_len, value))
             sv_texture_skinning_buffer = !!value;
     }
+    // 3D stereo: the stereo options, live (DivaOverlay sets them while the game runs)
     else if (!strncmp(name, "stereo_mode", name_len)) {
         int32_t value = 0;
         if (parse_int(val, value))
@@ -289,6 +292,7 @@ extern "C" __declspec(dllexport) BOOL SetOptionInt(const char* name, int value) 
         sv_task_movie_player_no_interop = !!value;
     else if (!strcmp(name, "texture_skinning_buffer"))
         sv_texture_skinning_buffer = !!value;
+    // 3D stereo
     else if (!strcmp(name, "stereo_mode"))
         sv_stereo_mode = clamp_def(value, 0, 2);
     else if (!strcmp(name, "stereo_separation"))
@@ -421,6 +425,7 @@ PluginConfig::PluginConfigOption config[] = {
             false,
         }
     },
+    // 3D stereo: the launcher's Stereo options
     {
         PluginConfig::CONFIG_DROPDOWN_INDEX,
         new PluginConfig::PluginConfigDropdownIndexData {
@@ -537,7 +542,7 @@ PluginConfig::PluginConfigOption config[] = {
             10000,
         }
     },
-#ifdef DIVAVK
+#ifdef DIVAVK   // DivaLinux: the launcher's Movie, Pointer, Performance and VR options
     {
         PluginConfig::CONFIG_BOOLEAN,
         new PluginConfig::PluginConfigBooleanData {

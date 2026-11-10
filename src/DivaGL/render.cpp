@@ -202,7 +202,7 @@ namespace rndr {
         for (int32_t i = 0; i < 8; i++)
             rend_data_ctx.state.bind_sampler(i, 0);
 
-        // (the PV render thread's picture goes to its slot, never to the window)
+        // threaded PV: the PV render thread's picture goes to its slot, never to the window
         if (!stereo_in_eye_pass() && !pv_render_thread_flag)   // 3D stereo: not inside an eye pass
             fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), 0,
                 0, 0, rctx->screen_width, rctx->screen_height,

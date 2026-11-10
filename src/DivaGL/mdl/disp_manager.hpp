@@ -552,8 +552,8 @@ namespace mdl {
     extern void disp_manager_patch();
 }
 
-// The calling thread's draw lists: the game's (at its fixed address), or a PV render
-// thread's own copy that the lists are handed to (pv_thread.cpp).
+// threaded PV: disp_manager is the calling thread's draw lists: the game's (at its fixed
+// address), or the PV render thread's own copy that the lists are handed to (pv_render.cpp).
 extern mdl::DispManager* disp_manager_main;
 extern thread_local mdl::DispManager* disp_manager_thread;
 struct disp_manager_ref {

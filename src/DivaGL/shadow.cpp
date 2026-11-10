@@ -450,7 +450,7 @@ HOOK(void, FASTCALL, Shadow__destroy, 0x00000001405E8350, Shadow* This) {
 
 // 0x1405E8680
 Shadow* get_shadow() {
-    extern Shadow* render_shadow();   // render_manager.cpp: the PV thread's copy there
+    extern Shadow* render_shadow();   // threaded PV: the PV thread's copy (pv_render.cpp)
     return pv_render_thread_flag ? render_shadow() : g_shadow;
 }
 

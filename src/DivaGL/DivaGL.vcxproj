@@ -190,6 +190,7 @@
     <ClCompile Include="stage_param.cpp" />
     <ClCompile Include="static_var.cpp" />
     <ClCompile Include="stereo.cpp" />
+    <ClCompile Include="pv_render.cpp" />
     <ClCompile Include="task_movie.cpp" />
     <ClCompile Include="texture.cpp" />
     <ClCompile Include="wrap.cpp" />
@@ -249,6 +250,7 @@
     <ClInclude Include="stage_param.hpp" />
     <ClInclude Include="static_var.hpp" />
     <ClInclude Include="stereo.hpp" />
+    <ClInclude Include="pv_render.hpp" />
     <ClInclude Include="task_movie.hpp" />
     <ClInclude Include="texture.hpp" />
     <ClInclude Include="wrap.hpp" />

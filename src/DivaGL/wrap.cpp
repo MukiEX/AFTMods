@@ -2550,14 +2550,14 @@ void wrap_addresses() {
     divagl_wglMakeCurrentGLUT = (PFNWGLMAKECURRENTGLUTPROC*)(glut_handle + 0x000000000002A430);
 }
 
-#ifdef DIVAVK
+#ifdef DIVAVK   // DivaVK: GL calls go to the Vulkan back end (DivaLinux/gl_bridge)
 extern "C" void divavk_bridge_fill_tables();
 #endif
 
 HOOK(void, FASTCALL, wglGetProcAddresses, 0x0000000140461B50) {
     originalwglGetProcAddresses();
 #ifdef DIVAVK
-    // Point every slot of the game's GL tables at DivaVK, whatever the game loaded.
+    // DivaVK: point every slot of the game's GL tables at DivaVK, whatever the game loaded.
     divavk_bridge_fill_tables();
 #endif
 
@@ -2593,7 +2593,7 @@ HOOK(void, FASTCALL, wglGetProcAddresses, 0x0000000140461B50) {
     REPLACE_FUNC(glTexImage2DDLL);
 
 #ifdef DIVAVK
-    // opengl32.dll's own exports have no context under DivaVK (they'd silently do nothing:
+    // DivaVK: opengl32.dll's own exports have no context under DivaVK (they'd silently do nothing:
     // the tone-map LUT lost its swizzle and stencil state was dropped). Ask DivaVK instead.
     glTexParameteriv = (PFNGLTEXPARAMETERIVPROC)wglGetProcAddressDLL("glTexParameteriv");
     glStencilMask = (PFNGLSTENCILMASKPROC)wglGetProcAddressDLL("glStencilMask");
@@ -2662,7 +2662,7 @@ HOOK(void, FASTCALL, wglGetProcAddresses, 0x0000000140461B50) {
 #undef REPLACE_FUNC
 
 #ifdef DIVAVK
-    // Some slots above were filled straight from opengl32.dll; send them to DivaVK too.
+    // DivaVK: some slots above were filled straight from opengl32.dll; send them to DivaVK too.
     divavk_bridge_fill_tables();
 #endif
 }

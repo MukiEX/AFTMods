@@ -98,7 +98,7 @@ set(DIVAGL_SOURCES
     clear_color.cpp auth_3d.cpp camera.cpp dllmain.cpp effect.cpp gl_state.cpp gl_rend_state.cpp
     hook.cpp light_param.cpp object.cpp print.cpp render.cpp render_context.cpp
     render_manager.cpp render_texture.cpp screen_shot.cpp shader.cpp shader_ft.cpp shadow.cpp
-    shared.cpp sprite.cpp sss.cpp stage.cpp stage_param.cpp static_var.cpp stereo.cpp
+    shared.cpp sprite.cpp sss.cpp stage.cpp stage_param.cpp static_var.cpp stereo.cpp pv_render.cpp
     task_movie.cpp texture.cpp wrap.cpp
     DivaGL.rc common.asm)
 list(TRANSFORM DIVAGL_SOURCES PREPEND ${GL}/)

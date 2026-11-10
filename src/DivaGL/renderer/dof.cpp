@@ -30,7 +30,7 @@ int32_t dof_param_prefilter_tap_num = 8;
 int32_t dof_param_sample_division = 7;
 int32_t dof_param_upsample_tap_num = 8;
 
-/* DIVA_DOF=0 turns the PV's depth of field off (DivaOverlay: Android > Graphics > Depth of
+/* DivaLinux: DIVA_DOF=0 turns the PV's depth of field off (DivaOverlay: Android > Graphics > Depth of
    field). It saves the DOF passes' GPU time on phones, and it's the fallback if a driver blacks
    out the shots that use DOF, as Turnip did with Hand in Hand before the DOF shaders clamped
    their pow() inputs (res/ft_shaders/dof_*). */
@@ -66,7 +66,7 @@ namespace renderer {
 
     // Inlined
     void DOF3::apply(render_data_context& rend_data_ctx, RenderTexture* rt, RenderTexture* buf_rt) {
-        if ((dof_debug_data->flags & DOF_DEBUG_USE_UI_PARAMS) && !dof_disabled()) {
+        if ((dof_debug_data->flags & DOF_DEBUG_USE_UI_PARAMS) && !dof_disabled()) {   // DivaLinux: DIVA_DOF
             if (dof_debug_data->flags & DOF_DEBUG_ENABLE_DOF) {
                 const float_t min_distance = get_camera_near_clip();
                 const float_t max_distance = get_camera_far_clip();
@@ -109,7 +109,7 @@ namespace renderer {
                 }
             }
         }
-        else if (dof_pv_data->enable && dof_pv_data->f2.ratio > 0.0f && !dof_disabled()) {
+        else if (dof_pv_data->enable && dof_pv_data->f2.ratio > 0.0f && !dof_disabled()) {   // DivaLinux: DIVA_DOF
             const float_t min_distance = get_camera_near_clip();
             const float_t max_distance = get_camera_far_clip();
             const float_t fuzzing_range = max_def(dof_pv_data->f2.fuzzing_range, 0.01f);

@@ -29,6 +29,8 @@ bool sv_stereo_swap_eyes = false;    // Right eye on the left (cross-eyed viewin
 int32_t sv_stereo_hud_parallax = 0;  // HUD parallax, 0.1% of image width (+ = behind screen)
 bool sv_stereo_bg_infinity = true;  // Push pre-3D sprites (2D backgrounds, PV movies) to infinity
 bool sv_stereo_shadow_once = true;
+
+// PV frame skip, logging and the VR HUD layer (DivaLinux.ini [performance], [vr])
 int32_t sv_pv_frame_skip = 1;      // [performance] PV (3D) drawn less often than the HUD: 0 off, 1 auto (only when a frame runs late), 2-4 = every Nth frame
 bool sv_perf_log = true;           // [performance] a frame-time line in the log every 10 seconds
 bool sv_vr_hud_layer = false;      // [vr] hud_layer: in a headset, the HUD as its own layer in front of the PV (off: see README)

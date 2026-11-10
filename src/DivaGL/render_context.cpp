@@ -13,6 +13,7 @@
 
 draw_state_struct& draw_state = *(draw_state_struct*)0x00000001411A32B0;
 
+// threaded PV: rctx is the calling thread's render context (render_context.hpp)
 thread_local bool pv_render_thread_flag;
 render_context* rctx_main;
 thread_local render_context* rctx_thread;
@@ -1262,7 +1263,7 @@ void render_context::free() {
     texture_release(empty_texture_2d);
 }
 
-// The PV render thread's context: its own buffers (made by the constructor on that thread)
+// threaded PV: the PV render thread's context: its own buffers (made by the constructor on that thread)
 // and targets, the main context's empty textures.
 void render_context::init_pv_thread(render_context* main) {
     empty_texture_2d = main->empty_texture_2d;

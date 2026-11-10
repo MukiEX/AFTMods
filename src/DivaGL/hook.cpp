@@ -36,7 +36,7 @@ static void APIENTRY gl_debug_output(GLenum source, GLenum type, uint32_t id,
     GLenum severity, GLsizei length, const char* message, const void* userParam);
 #endif
 
-extern bool pv_threaded_active();   // render_manager.cpp (threaded PV)
+extern bool pv_threaded_active();   // threaded PV (pv_render.cpp)
 extern void pv_thread_stop();
 
 HOOK(int32_t, FASTCALL, data_init, 0x0000000140192FF0) {
@@ -110,7 +110,7 @@ HOOK(int32_t, FASTCALL, data_free, 0x000000140192490) {
     rob_osage_test_free();
     color_change_dw_free();
     pv_game_free();
-    pv_thread_stop();
+    pv_thread_stop();   // threaded PV
     sprite_manager_free();
     Glitter::Free();
     rctx->free();
@@ -203,7 +203,7 @@ HOOK(bool, FASTCALL, rndr__Render__frame_texture_unload, 0x00000001404B30A0,
 }
 
 HOOK(void, FASTCALL, rndr__RenderManager__rndpass_pre_proc, 0x0000000140502C90) {
-    // With the PV on its own thread, that thread does all of this for each PV picture
+    // threaded PV: with the PV on its own thread, that thread does all of this for each picture
     if (pv_threaded_active())
         return;
     render_data_context rend_data_ctx(GL_REND_STATE_PRE_3D);
@@ -224,7 +224,7 @@ HOOK(void, FASTCALL, rndr__RenderManager__rndpass_post_proc, 0x0000000140502C70)
     render_data_context rend_data_ctx(GL_REND_STATE_POST_2D);
     rend_data_ctx.state.begin_event("rndpass_post_proc");
     rctx->post_proc();
-    if (!pv_threaded_active())
+    if (!pv_threaded_active())   // threaded PV: the PV thread post-processes its pictures
         render_manager.render->post_proc();
     render_manager.npr_mask = false;
     rend_data_ctx.state.end_event();

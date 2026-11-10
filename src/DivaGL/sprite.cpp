@@ -155,7 +155,7 @@ namespace spr {
     static void draw_sprite_scale(spr::SprArgs* args);
 }
 
-// The game's sprite manager, or on a PV render thread its own copy that the PV's sprite
+// threaded PV: sprite_manager is the game's sprite manager, or on the PV render thread its own copy that the PV's sprite
 // lists (1: surface, 2: before the 3D) are handed to (sprite_manager_handoff_pv_lists).
 static spr::SpriteManager* sprite_manager_main = (spr::SpriteManager*)0x000000014CC611C0;
 static thread_local spr::SpriteManager* sprite_manager_thread;
@@ -163,6 +163,7 @@ static thread_local spr::SpriteManager* sprite_manager_thread;
 
 extern bool sprite_break_sprite_vertex_limit;
 
+// threaded PV: the same for the vertex buffers
 static spr::SpriteManager::RenderData* sprite_manager_render_data_main;
 static thread_local spr::SpriteManager::RenderData* sprite_manager_render_data_thread;
 #define sprite_manager_render_data \
@@ -1242,7 +1243,7 @@ namespace spr {
             }
 
             rend_data_ctx.state.enable_blend();
-            rend_data_ctx.state.set_blend_func_separate(blend[0], blend[1], alpha_src, alpha_dst);
+            rend_data_ctx.state.set_blend_func_separate(blend[0], blend[1], alpha_src, alpha_dst);   // 3D stereo: VR HUD layer
         }
         else
             rend_data_ctx.state.disable_blend();
@@ -1420,11 +1421,12 @@ namespace spr {
 }
 
 void sprite_manager_init() {
-    if (!sprite_manager_render_data_main)
+    if (!sprite_manager_render_data_main)   // threaded PV: _main (was sprite_manager_render_data)
         sprite_manager_render_data_main = new spr::SpriteManager::RenderData;
 }
 
-// Requests in one list (all screens, all priorities) of the calling thread's manager.
+// 3D stereo (VR HUD layer) / threaded PV: requests in one list (all screens, all priorities) of the
+// calling thread's manager.
 size_t sprite_manager_reqlist_count(int32_t index) {
     if (index < 0 || index >= 4)
         return 0;
@@ -1435,7 +1437,7 @@ size_t sprite_manager_reqlist_count(int32_t index) {
     return count;
 }
 
-// PV render thread: its own manager and vertex buffers (GL objects of its own context).
+// threaded PV: the PV render thread's own manager and vertex buffers (GL objects of its own context).
 void sprite_manager_thread_init() {
     if (!sprite_manager_thread)
         sprite_manager_thread = new spr::SpriteManager();
@@ -1450,13 +1452,13 @@ void sprite_manager_thread_free() {
     sprite_manager_thread = 0;
 }
 
-static spr::SpriteManager* sprite_manager_pv = 0;   // the PV thread's, for the handoff
+static spr::SpriteManager* sprite_manager_pv = 0;   // threaded PV: the PV thread's, for the handoff
 
 void sprite_manager_thread_register() {
     sprite_manager_pv = sprite_manager_thread;
 }
 
-// Game thread, while the PV thread is idle: the PV's lists move to the PV thread's manager
+// threaded PV: game thread, while the PV thread is idle: the PV's lists move to the PV thread's manager
 // (swapped: the game's are left with the PV thread's emptied lists), with the settings the
 // draw uses. The game keeps filling its own lists every frame.
 void sprite_manager_handoff_pv_lists() {
@@ -1480,7 +1482,7 @@ void sprite_manager_handoff_pv_lists() {
     p->resolution_mode = g->resolution_mode;
 }
 
-// PV render thread, after drawing: its lists are done with.
+// threaded PV: PV render thread, after drawing: its lists are done with.
 void sprite_manager_thread_clear_lists() {
     spr::SpriteManager* p = sprite_manager_thread;
     if (!p)
@@ -1512,7 +1514,7 @@ void sprite_manager_set_res(double_t aspect, int32_t width, int32_t height) {
 }
 
 void sprite_manager_free() {
-    if (sprite_manager_render_data_main) {
+    if (sprite_manager_render_data_main) {   // threaded PV: _main
         delete sprite_manager_render_data_main;
         sprite_manager_render_data_main = 0;
     }

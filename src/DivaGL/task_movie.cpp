@@ -117,7 +117,7 @@ struct TaskMoviePlayerNoInterop {
 
 std::map<TaskMovie::Player*, TaskMoviePlayerNoInterop> task_movie_player_no_interop;
 
-#ifdef DIVALINUX
+#ifdef DIVALINUX   // DivaLinux: its FFmpeg movie player
 extern "C" bool divalinux_is_ffmpeg_player(const void* player);   // DivaLinux/movie/movie.cpp
 #endif
 
@@ -152,7 +152,7 @@ HOOK(bool, FASTCALL, TaskMovie__ctrl, 0x000000014041E570, TaskMovie* This) {
         }
 
 #ifdef DIVALINUX
-        // The FFmpeg player shares a GL texture; before its file is open it simply has none
+        // DivaLinux: the FFmpeg player shares a GL texture; before its file is open it simply has none
         // yet, which must not send it down the Direct3D 11 path below for good.
         const bool ffmpeg_player = This->player && divalinux_is_ffmpeg_player(This->player->player);
 #else

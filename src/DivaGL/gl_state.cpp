@@ -6,6 +6,7 @@
 #include "gl_state.hpp"
 #include "shared.hpp"
 
+// threaded PV: gl_state is the calling thread's cache (gl_state.hpp)
 gl_state_struct gl_state_main;
 thread_local gl_state_struct* gl_state_thread;
 

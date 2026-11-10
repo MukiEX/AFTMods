@@ -22,8 +22,9 @@
 #include "../wrap.hpp"
 #include "draw_object.hpp"
 #include <Helpers.h>
-#include <shared_mutex>
+#include <shared_mutex>   // threaded PV
 
+// threaded PV: disp_manager is the calling thread's draw lists (disp_manager.hpp)
 mdl::DispManager* disp_manager_main = (mdl::DispManager*)0x00000001411A27F0;
 thread_local mdl::DispManager* disp_manager_thread;
 disp_manager_ref disp_manager;
@@ -69,7 +70,7 @@ namespace mdl {
     mdl::EtcObjManager* etc_obj_manager;
 
     prj::vector<DispManager::vertex_array> vertex_array_cache;
-    // Lookups (the PV render thread's draws) share it; adding and removing (the game thread's
+    // threaded PV: lookups (the PV render thread's draws) share it; adding and removing (the game thread's
     // entries and unloads) take it alone: only for the moment of the change.
     static std::shared_mutex vertex_array_cache_mutex;
 
@@ -1079,7 +1080,7 @@ namespace mdl {
         GLsizei size_vertex = (GLsizei)mesh->size_vertex;
         obj_vertex_format vertex_format = mesh->vertex_format;
 
-        std::unique_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);
+        std::unique_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);   // threaded PV
         for (DispManager::vertex_array& i : vertex_array_cache)
             if (i.vb == vb && i.vb_offset == vb_offset
                 && i.morph_vb == morph_vb && i.morph_vb_offset == morph_vb_offset
@@ -3275,7 +3276,7 @@ namespace mdl {
         GLsizei size_vertex = (GLsizei)mesh->size_vertex;
         obj_vertex_format vertex_format = mesh->vertex_format;
 
-        std::shared_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);
+        std::shared_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);   // threaded PV
         for (DispManager::vertex_array& i : vertex_array_cache)
             if (i.vb == vb && i.vb_offset == vb_offset
                 && i.morph_vb == morph_vb && i.morph_vb_offset == morph_vb_offset
@@ -3406,7 +3407,7 @@ namespace mdl {
     }
 
     void DispManager::remove_index_buffer(GLuint ib) {
-        std::unique_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);
+        std::unique_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);   // threaded PV
         auto i_begin = vertex_array_cache.begin();
         auto i_end = vertex_array_cache.end();
         for (auto i = i_begin; i != i_end;)
@@ -3420,7 +3421,7 @@ namespace mdl {
     }
 
     void DispManager::remove_vertex_buffer(GLuint vb) {
-        std::unique_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);
+        std::unique_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);   // threaded PV
         auto i_begin = vertex_array_cache.begin();
         auto i_end = vertex_array_cache.end();
         for (auto i = i_begin; i != i_end;)
@@ -3604,7 +3605,7 @@ namespace mdl {
     }
 
     HOOK(void, FASTCALL, disp_manager_free, 0x00000001404371C0) {
-        std::unique_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);
+        std::unique_lock<std::shared_mutex> cache_lock(vertex_array_cache_mutex);   // threaded PV
         for (DispManager::vertex_array& i : vertex_array_cache)
             glDeleteVertexArrays(1, &i.vertex_array);
         vertex_array_cache.clear();
@@ -4254,7 +4255,7 @@ static void sub_140436760(const cam_data& cam) {
     }
 }
 
-/* PV render thread (render_manager.cpp): its own draw lists. At each handoff the game's lists
+/* threaded PV: the PV render thread (pv_render.cpp) has its own draw lists. At each handoff the game's lists
    and the arena their entries live in are swapped with the thread's (both arenas come from the
    game's heap, so either can end up as the game's), along with the screen and reflection lists
    kept in the render context. The game then refreshes and fills its own lists as usual. */

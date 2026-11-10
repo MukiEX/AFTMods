@@ -33,6 +33,6 @@ extern int32_t sv_stereo_content_aspect;
 extern bool sv_stereo_bg_infinity;
 extern bool sv_stereo_shadow_once;
 extern int32_t sv_stereo_max_parallax;
-extern int32_t sv_pv_frame_skip;
+extern int32_t sv_pv_frame_skip;   // PV frame skip
 extern bool sv_vr_hud_layer;   // 3D stereo: VR HUD layer
-extern bool sv_perf_log;
+extern bool sv_perf_log;   // DivaLinux: frame-time log

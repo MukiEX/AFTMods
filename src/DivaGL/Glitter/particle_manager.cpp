@@ -11,7 +11,7 @@ namespace Glitter {
     GltParticleManager* glt_particle_manager = (GltParticleManager*)0x000000141199BB0;
     GltParticleManagerX* glt_particle_manager_x;
 
-    /* PV render thread: it draws the scenes as they were at the handoff (pointer lists copied
+    /* threaded PV: the PV render thread draws the scenes as they were at the handoff (pointer lists copied
        on the game thread), so scenes the song script starts meanwhile don't move the lists
        under it. Scenes are only deleted and particles only made in the managers' ctrl, which
        the runtime runs only while the PV thread is idle. */
@@ -35,7 +35,7 @@ namespace Glitter {
         if (flags & PARTICLE_MANAGER_NOT_DISP)
             return;
 
-        for (Scene* i : use_pv_scenes ? pv_scenes : std::vector<Scene*>(scenes.begin(), scenes.end()))
+        for (Scene* i : use_pv_scenes ? pv_scenes : std::vector<Scene*>(scenes.begin(), scenes.end()))   // threaded PV
             if (i)
                 i->CalcDisp();
     }
@@ -44,7 +44,7 @@ namespace Glitter {
         if (flags & PARTICLE_MANAGER_NOT_DISP)
             return;
 
-        for (Scene* i : use_pv_scenes ? pv_scenes : std::vector<Scene*>(scenes.begin(), scenes.end()))
+        for (Scene* i : use_pv_scenes ? pv_scenes : std::vector<Scene*>(scenes.begin(), scenes.end()))   // threaded PV
             if (i)
                 i->Disp(rend_data_ctx, disp_type, cam);
 
@@ -216,7 +216,7 @@ namespace Glitter {
         if (flags & PARTICLE_MANAGER_NOT_DISP)
             return;
 
-        for (SceneX* i : use_pv_scenes ? pv_scenes_x : scenes)
+        for (SceneX* i : use_pv_scenes ? pv_scenes_x : scenes)   // threaded PV
             if (i)
                 i->CalcDisp();
     }
@@ -286,7 +286,7 @@ namespace Glitter {
         if (flags & PARTICLE_MANAGER_NOT_DISP)
             return;
 
-        for (SceneX* i : use_pv_scenes ? pv_scenes_x : scenes)
+        for (SceneX* i : use_pv_scenes ? pv_scenes_x : scenes)   // threaded PV
             if (i)
                 i->Disp(rend_data_ctx, disp_type, cam);
 

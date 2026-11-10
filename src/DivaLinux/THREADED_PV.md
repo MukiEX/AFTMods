@@ -3,8 +3,11 @@
 Goal: notes and HUD at the display's rate, whatever the PV costs. The PV (characters, stage,
 effects, camera, and the 3D render) may lag a frame or drop frames.
 
-Status: audit and design only. Nothing here is implemented yet, apart from the pieces called
-out as existing.
+Status: implemented since this was written. It's kept as the reasoning behind the design;
+the code is in `src/DivaGL/pv_render.cpp` (the PV thread, the handoff, the slots), with
+the edits it needed in upstream DivaGL files marked `// threaded PV`, and the runtime's side
+(when the PV's tasks update) in DivaDroid's `runtime/src/pv_throttle.c`. Where the code
+and this document differ, the code and its comments are current.
 
 ## Where the time goes today (Quest 3, heavy PV, DivaRecomp runtime)
 
@@ -88,7 +91,7 @@ render passes at the copy) makes the render independent of later writes.
 
 - **Glitter:** particle vertex data is built in `CalcDisp()`, called from the
   `rndpass_pre_proc` hook (hook.cpp:200) on the game thread before `render_all`. The render
-  passes call `DispScenes()` (render_manager.cpp 1114-1222), which only walks the render groups
+  passes call `DispScenes()` (render_manager.cpp), which only walks the render groups
   and draws buffers that are already filled. So `pre_proc` (with `CalcDisp`) belongs to the
   handoff, and the render thread only needs the render groups to stay put.
 - **Effects:** the user entries above (fog ring, ripple, water), and any effect drawing from its

@@ -1512,7 +1512,7 @@ namespace Glitter {
     extern void Free();
 
     extern void Patch();
-    // PV render thread: draw the scenes copied at the handoff
+    // threaded PV: the PV render thread draws the scenes copied at the handoff
     extern void SnapshotScenesForPv();
     extern void UsePvScenes(bool value);
 }

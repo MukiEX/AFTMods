@@ -84,7 +84,7 @@ HOOK(void, FASTCALL, ctrl_camera, 0x00000001401F8970) {
     stereo_update_camera(rctx->render_manager_cam);   // 3D stereo
 }
 
-/* Threaded PV: the PV render thread draws a picture over several of the game's frames, while
+/* threaded PV: the PV render thread draws a picture over several of the game's frames, while
    the game thread keeps moving the camera. Code drawing the PV that asks the game for the
    camera (shadow fitting, SSS, depth of field, particle billboards, lens flare) gets the
    camera as it was at the picture's handoff (pv_camera_snapshot_take, game thread), so it
@@ -145,7 +145,7 @@ namespace {
     bool FASTCALL pv_get_ignore_pers() { return pv_render_thread_flag ? pv_cam.ignore_pers : orig_get_ignore_pers(); }
 }
 
-// Game thread, at a PV picture's handoff (the PV thread is idle).
+// threaded PV: game thread, at a PV picture's handoff (the PV thread is idle).
 void pv_camera_snapshot_take() {
     if (!orig_get_camera_pos)
         return;
@@ -169,6 +169,7 @@ void camera_patch() {
     INSTALL_HOOK(init_projection_matrix);
     INSTALL_HOOK(ctrl_camera);
 
+    // threaded PV: the camera getters answer the PV thread with the handoff's camera
 #define PV_CAM_WRAP(name) orig_##name = name; name = pv_##name
     PV_CAM_WRAP(get_camera_aspect);
     PV_CAM_WRAP(get_camera_far_clip);
@@ -204,11 +205,11 @@ int32_t check_screen_aabb(const AABB* aabb, const mat4* mat) {
     mat4_transpose(&view_mat, &view_mat);
 
     vec4 vtx[8];
-    float_t max_depth = 0.0f;
+    float_t max_depth = 0.0f;   // 3D stereo
     for (int32_t i = 0; i < 8; i++) {
         mat4_transform_point(&view_mat, &points[i], (vec3*)&vtx[i]);
         vtx[i].w = 1.0f;
-        max_depth = max_def(max_depth, -vtx[i].z);
+        max_depth = max_def(max_depth, -vtx[i].z);   // 3D stereo
     }
 
     // 3D stereo
