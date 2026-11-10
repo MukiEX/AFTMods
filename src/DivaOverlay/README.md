@@ -24,6 +24,7 @@ Switches in `divarecomp_env.txt` are commented out rather than deleted when set 
 |---|---|---|---|---|---|
 | Windows / Wine | F10, or View + Start | arrows, D-pad, left stick | left / right | Enter, A | Esc, B |
 | Android (gamepad) | Select + Start | D-pad, left stick | left / right | A | B, Back |
+| Android (slider controller) | Select + Start (− and + on the HORI / ZhouSensor) | triangle / cross | square / circle | Start | Select |
 | Android (touch) | hold the top right corner for a second | tap and drag | tap the arrows | tap | the arrow by the title |
 | Quest | the left controller's menu button | point | point at the arrows | A/X or a trigger | B/Y |
 
