@@ -437,8 +437,7 @@ namespace dov {
         add("PV and timing", "PV threading, pacing, loading", {
             { "DIVA_PV_CTRL_EVERY_FRAME", "PV updates every frame", "PV tasks (faces, hands) update every frame; their draw lists follow the PV's schedule.", "on", { { "1", "On" }, { "0", "Off" } } },
             { "DIVA_PV_THROTTLE", "PV frame skip", "Splits the PV over two frames when frames run late. Overrides DivaLinux.ini's PV frame skip.", "DivaLinux.ini", { { "0", "Off" }, { "1", "Auto" }, { "2", "Always" } } },
-            { "DIVA_PV_THREAD_INLINE", "PV on the game thread", "Test: draw the PV pictures on the game thread instead of their own.", "off", { { "1", "On" } } },
-            { "DIVA_PV_ASYNC_OFF", "No async PV", "Test: turns off drawing the PV over several frames.", "off", { { "1", "On" } } },
+            { "DIVA_PV_ASYNC_OFF", "No threaded PV", "Fallback: the PV is drawn on the game thread, split over two frames, instead of on a thread of its own.", "off", { { "1", "On" } } },
             { "DIVA_PV_ROB_SCALE", "Motion step scaling", "Scales character motion steps when the PV updates less often.", "on", ON_OFF },
             { "DIVA_FRAME_PACING", "Frame pacing", "The game waits for the headset's frame time instead of vsync slots.", "with mailbox", ON_OFF },
             { "DIVA_FRAME_RATE_MANAGER", "Frame rate manager", "Character motion follows real time at any frame rate. Overrides components.ini.", "components.ini", ON_OFF },

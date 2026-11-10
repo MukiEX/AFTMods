@@ -1429,10 +1429,11 @@ static const ProcEntry s_procs[] = {
    HUD) got only the first of the two triangles the driver draws it with, whatever the barriers
    between them. A render pass in between (the leek pointer, when it's showing) avoided it.
    Used when the source is a single-sample, non-integer colour texture at level 0 (renderbuffers,
-   multisample resolves, depth and stencil keep the transfer path). DIVAVK_BLIT_DRAW=0: off. */
+   multisample resolves, depth and stencil keep the transfer path), and the transfer path is the
+   fallback when the draw program can't be built. */
 static std::mutex s_blit_m;
 static GLuint s_blit_prog = 0, s_blit_samp[2] = {};
-static int s_blit_state = 0;   // 0 untried, 1 ready, -1 off or failed
+static int s_blit_state = 0;   // 0 untried, 1 ready, -1 failed
 static thread_local GLuint s_blit_ubo = 0;
 
 static bool blit_draw_ready() {
@@ -1440,11 +1441,6 @@ static bool blit_draw_ready() {
     if (s_blit_state)
         return s_blit_state > 0;
     s_blit_state = -1;
-    if (const char* e = env("DIVAVK_BLIT_DRAW"))
-        if (!strcmp(e, "0")) {
-            log("Colour blits: transfers (DIVAVK_BLIT_DRAW=0)");
-            return false;
-        }
     static const char* VS =
         "#version 430 core\n"
         "void main() {\n"
@@ -1502,7 +1498,7 @@ static bool blit_draw_ready() {
     }
     s_blit_prog = prog;
     s_blit_state = 1;
-    log("Colour blits: drawn (a render pass, not a transfer; DIVAVK_BLIT_DRAW=0 for transfers)");
+    log("Colour blits: drawn (a render pass, not a transfer)");
     return true;
 }
 

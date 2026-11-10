@@ -30,9 +30,10 @@ int32_t dof_param_prefilter_tap_num = 8;
 int32_t dof_param_sample_division = 7;
 int32_t dof_param_upsample_tap_num = 8;
 
-/* DIVA_DOF=0 (a test): skip the PV's depth of field. Under Turnip, Hand in Hand goes black on
-   exactly the camera shots whose auth_3d turns depth of field on, so this tells whether the
-   DOF passes are what blacks the picture out. */
+/* DIVA_DOF=0 turns the PV's depth of field off (DivaOverlay: Android > Graphics > Depth of
+   field). It saves the DOF passes' GPU time on phones, and it's the fallback if a driver blacks
+   out the shots that use DOF, as Turnip did with Hand in Hand before the DOF shaders clamped
+   their pow() inputs (res/ft_shaders/dof_*). */
 static bool dof_disabled() {
     static int v = -1;
     if (v < 0) {

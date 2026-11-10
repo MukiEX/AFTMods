@@ -24,7 +24,6 @@ extern size_t sprite_manager_reqlist_count(int32_t index);
 extern void sprite_manager_thread_init();
 extern void sprite_manager_thread_free();
 extern void sprite_manager_thread_register();
-extern void sprite_manager_thread_bind(bool on);
 extern void sprite_manager_handoff_pv_lists();
 extern void sprite_manager_thread_clear_lists();
 

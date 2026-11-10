@@ -679,35 +679,7 @@ static void pv_thread_draw() {
     t.recorded.store(t.number);
 }
 
-/* DIVA_PV_THREAD_INLINE=1 (a test): the game thread draws each PV picture itself, right at
-   its handoff, as if it were the PV thread (its context, render context, lists and camera).
-   Everything is the same except the drawing happens on the game thread, in the handoff frame:
-   if the picture is right this way and wrong on the thread, the cause is something the game
-   thread changes while the PV thread draws. */
-static bool pv_inline_mode() {
-    static int v = -1;
-    if (v < 0) {
-        char buf[8];
-        const DWORD n = GetEnvironmentVariableA("DIVA_PV_THREAD_INLINE", buf, sizeof(buf));
-        v = n && n < sizeof(buf) && buf[0] == '1';
-        if (v)
-            OutputDebugStringA("[DivaLinux] PV thread inline test: the game thread draws each PV picture at its handoff\n");
-    }
-    return v > 0;
-}
-
 static gl_state_struct pv_gl_state_shared = {};
-
-static void pv_thread_bind(bool on) {
-    pv_render_thread_flag = on;
-    gl_state_thread = on ? &pv_gl_state_shared : 0;
-    gl_rend_state_thread_base = on ? GL_REND_STATE_COUNT : 0;
-    rctx_thread = on ? pvt->rctx.load() : 0;
-    disp_manager_thread = on ? pvt->dm : 0;
-    sprite_manager_thread_bind(on);
-    Glitter::UsePvScenes(on);
-    dvk_make_current(on ? pvt->ctx : nullptr);
-}
 
 static void pv_thread_main() {
     pv_thread_t& t = *pvt;
@@ -952,23 +924,13 @@ static void pv_threaded_frame() {
         disp_manager_handoff(t.dm, t.rctx.load());
         sprite_manager_handoff_pv_lists();
         Glitter::SnapshotScenesForPv();
-        if (pv_inline_mode()) {
-            // the test mode: draw it here and now, as the PV thread would
-            pv_thread_bind(true);
-            pv_thread_draw();
-            pv_thread_bind(false);
+        t.cpu_busy.store(true);
+        t.out.fetch_add(1);
+        {
+            std::lock_guard<std::mutex> lock(t.m);
+            t.job = true;
         }
-        else {
-            t.cpu_busy.store(true);
-            t.out.fetch_add(1);
-            {
-                std::lock_guard<std::mutex> lock(t.m);
-                t.job = true;
-            }
-            t.cv.notify_one();
-        }
-        if (pv_inline_mode())
-            t.out.fetch_add(1);
+        t.cv.notify_one();
         // busy until the PV thread is done recording it (it clears this itself) and a slot is free
         pv_sync->pv_busy = 1;
         pv_ts.handoff_ms += pv_ms_since(h0);
