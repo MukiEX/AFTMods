@@ -8,6 +8,12 @@
 // same place or the frame would go to a context that doesn't exist. This keeps the names of
 // DivaMovie's GLDXEmu helpers so ff_player.cpp stays close to the DivaMovie original.
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>   // gl.h needs WINGDIAPI / APIENTRY from here (MSVC's gl.h doesn't include it)
+#endif
 #include <GL/gl.h>
 #include <divavk/divavk.h>
 
