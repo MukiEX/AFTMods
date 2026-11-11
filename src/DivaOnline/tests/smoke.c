@@ -83,6 +83,24 @@ int main(void)
         RegCloseKey(k);
     }
 
+    /* SEGA drives: the mount registry values and Y:\ */
+    {
+        wchar_t appdata[MAX_PATH] = {0};
+        DWORD n = sizeof(appdata);
+        rc = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\SEGA\\SystemProperty\\mount", 0, KEY_READ, &k);
+        if (rc == ERROR_SUCCESS) {
+            rc = RegQueryValueExW(k, L"APPDATA", NULL, &type, (BYTE *) appdata, &n);
+            RegCloseKey(k);
+        }
+        CHECK(rc == ERROR_SUCCESS && wcsstr(appdata, L"appdata") != NULL, "mount APPDATA = %ls", appdata);
+        HANDLE f = CreateFileW(L"Y:\\smoke.txt", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+        CHECK(f != INVALID_HANDLE_VALUE, "create Y:\\smoke.txt");
+        if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
+        wchar_t real[MAX_PATH];
+        swprintf(real, MAX_PATH, L"%ls\\appdata\\smoke.txt", dir);
+        CHECK(GetFileAttributesW(real) != INVALID_FILE_ATTRIBUTES, "it landed in the game folder's appdata");
+    }
+
     /* ALL.Net host names */
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);

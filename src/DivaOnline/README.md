@@ -12,12 +12,12 @@ in `third_party/`, unchanged apart from one line of scope (below).
 
 | segatools divahook | DivaOnline |
 |---|---|
-| keychip (`nusec`), DNS, netenv, clock, PCB id, hwmon, hwreset, misc | same |
+| keychip (`nusec`), DNS, netenv, clock, PCB id, hwmon, hwreset, misc, vfs | same (vfs's `amfs`/`appdata` default to folders in the game folder) |
 | AMEX DS, EEPROM, SRAM | same |
 | AMEX GPIO | off by default (`[gpio] enable=1` turns it on) |
 | Aime reader on COM10 (TN32MSEC003S) | same, card number from the .ini |
 | JVS I/O, touch slider, Elo touch screen, printer, graphics | not included: PD Loader's TLAC and DivaLinux do these |
-| amvideo, vfs | not included: diva.exe doesn't load amvideo.dll, and PD Loader already moves the game's drive paths into the game folder |
+| amvideo | not included: diva.exe doesn't load amvideo.dll |
 
 ## Install
 

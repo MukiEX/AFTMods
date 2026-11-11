@@ -43,6 +43,7 @@ add_library(DivaOnline SHARED
     ${SEGA}/util/dump.c
     ${SEGA}/util/str.c
     ${SEGA}/hooklib/dns.c
+    ${SEGA}/hooklib/path.c
     ${SEGA}/hooklib/reg.c
     ${SEGA}/hooklib/setupapi.c
     ${SEGA}/platform/clock.c
@@ -54,6 +55,7 @@ add_library(DivaOnline SHARED
     ${SEGA}/platform/netenv.c
     ${SEGA}/platform/nusec.c
     ${SEGA}/platform/pcbid.c
+    ${SEGA}/platform/vfs.c
     ${SEGA}/amex/config.c
     ${SEGA}/amex/ds.c
     ${SEGA}/amex/eeprom.c

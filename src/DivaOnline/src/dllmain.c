@@ -6,7 +6,8 @@
    touch screen, printer or graphics hooks. What's left:
 
      platform  keychip (nusec), DNS redirection to the ALL.Net server, network
-               environment, clock, PCB id, hardware monitor/reset, misc
+               environment, clock, PCB id, hardware monitor/reset, misc, and
+               vfs (the E:\ and Y:\ drives)
      amex      DS (keychip EEPROM), EEPROM, SRAM, GPIO (off by default)
      aime      the TN32MSEC003S Aime reader on COM10, with the card number
                from DivaOnline.ini
@@ -43,6 +44,7 @@
 #include "platform/nusec.h"
 #include "platform/pcbid.h"
 #include "platform/platform.h"
+#include "platform/vfs.h"
 
 #include "util/dprintf.h"
 
@@ -148,6 +150,33 @@ static void divaonline_preload_divalinux(void)
     }
 }
 
+/* segatools resolves [vfs] paths against the current directory, which PD
+   Loader points at plugins\ while loading: anchor them to the game folder,
+   and give AMFS/APPDATA folders there when the .ini leaves them out (segatools
+   refuses to start without them). */
+static void divaonline_vfs_path(wchar_t *path, size_t max, const wchar_t *fallback)
+{
+    wchar_t tmp[MAX_PATH];
+
+    if (path[0] == L'\0') {
+        if (fallback == NULL) {
+            return;
+        }
+
+        wcsncpy(path, fallback, max - 1);
+        path[max - 1] = L'\0';
+    }
+
+    if (path[1] == L':' || (path[0] == L'\\' && path[1] == L'\\')) {
+        return;     /* already absolute */
+    }
+
+    _snwprintf(tmp, _countof(tmp), L"%s\\%s", divaonline_game_dir, path);
+    tmp[_countof(tmp) - 1] = L'\0';
+    wcsncpy(path, tmp, max - 1);
+    path[max - 1] = L'\0';
+}
+
 #define DIVAONLINE_STEP(expr, what) \
     do { \
         HRESULT step_hr = (expr); \
@@ -210,14 +239,15 @@ static void divaonline_start(void)
     divaonline_amex.gpio.enable =
             GetPrivateProfileIntW(L"gpio", L"enable", 0, divaonline_ini) != 0;
 
+    divaonline_vfs_path(divaonline_platform.vfs.amfs, _countof(divaonline_platform.vfs.amfs), L"amfs");
+    divaonline_vfs_path(divaonline_platform.vfs.appdata, _countof(divaonline_platform.vfs.appdata), L"appdata");
+    divaonline_vfs_path(divaonline_platform.vfs.option, _countof(divaonline_platform.vfs.option), NULL);
+
     /* Hook Win32 APIs (diva.exe's imports only, see hook/table.c) */
 
     serial_hook_init();
 
-    /* platform_hook_init() minus amvideo (diva.exe doesn't use amvideo.dll)
-       and vfs (PD Loader already sends the game's E:/Y:/C:\Mount paths to
-       the game folder; segatools' path hooks would sit on top of
-       DivaLinux's file layer for nothing). */
+    /* platform_hook_init() minus amvideo (diva.exe doesn't use amvideo.dll) */
 
     DIVAONLINE_STEP(clock_hook_init(&divaonline_platform.clock), "Clock hook");
     DIVAONLINE_STEP(dns_platform_hook_init(&divaonline_platform.dns), "DNS hook");
@@ -227,6 +257,12 @@ static void divaonline_start(void)
     DIVAONLINE_STEP(netenv_hook_init(&divaonline_platform.netenv, &divaonline_platform.nusec), "Netenv hook");
     DIVAONLINE_STEP(nusec_hook_init(&divaonline_platform.nusec, DIVA_GAME_ID, DIVA_PLATFORM_ID), "Keychip hook");
     DIVAONLINE_STEP(pcbid_hook_init(&divaonline_platform.pcbid), "PCB id hook");
+
+    /* The SEGA drives: E:\ (AMFS) and Y:\ (APPDATA), plus the registry values
+       that point ALL.Net at them. Its billing keeps its play counter and trace
+       log on APPDATA; without this it fails with ERROR 0800. Goes on top of
+       DivaLinux's file layer, and only rewrites E:, Y: and the AppUser home. */
+    DIVAONLINE_STEP(vfs_hook_init(&divaonline_platform.vfs), "VFS hook");
 
     /* amex_hook_init() minus JVS: PD Loader's TLAC feeds the game's input */
 
