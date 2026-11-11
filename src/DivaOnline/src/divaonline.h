@@ -16,6 +16,7 @@ struct fixups_config {
     bool undo_quick_start;
     bool undo_network_patches;
     bool undo_keychip_patches;
+    bool allnet_log;
 };
 
 /* Puts back game code PD Loader's Patches plugin changes that would keep the

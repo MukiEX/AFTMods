@@ -74,6 +74,7 @@ DivaOnline's own section:
 | `undo_quick_start` | 1 | Undo PD Loader's `quick_start` patch, which skips the card screen |
 | `undo_network_patches` | 0 | Undo the three startup network check patches PD Loader always applies (skip part of the check, no DHCP wait, ignore the location server result). Players have gone online through segatools with them in place, so they're kept unless the check fails |
 | `undo_keychip_patches` | 0 | Undo PD Loader's two "skip unnecessary checks" patches: one tells the game the keychip was found before the keychip driver answers |
+| `allnet_log` | 1 | Turn on diva.exe's own ALL.Net library log (auth, billing, keychip) and copy it into DivaOnline's log as `[ALL.Net]` lines |
 | `preload_divalinux` | 1 | Load `DivaLinux.dva` before hooking (see below) |
 | `log_file` | (none) | Also write the log to this file |
 

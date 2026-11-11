@@ -93,6 +93,38 @@ static const struct fixup_site keychip_sites[] = {
     },
 };
 
+static bool fixups_readable(uintptr_t addr, size_t len);
+
+/* diva.exe 7.10's ALL.Net library (alw/alpb/alAbEx) logs through one function
+   that is silent unless its level and mask are raised. Its lines go to a
+   callback when one is set, else to stderr. */
+#define ALLNET_LOG_LEVEL    ((volatile int32_t *) 0x14CE12320)
+#define ALLNET_LOG_MASK     ((volatile uint32_t *) 0x14CE12330)
+#define ALLNET_LOG_CALLBACK ((void (* volatile *)(const char *)) 0x14CE12338)
+
+static void allnet_log_line(const char *line)
+{
+    size_t n = strlen(line);
+
+    dprintf("[ALL.Net] %s%s", line, (n > 0 && line[n - 1] == '\n') ? "" : "\n");
+}
+
+static void allnet_log_enable(void)
+{
+    /* Only if the code that uses these globals is diva.exe 7.10's: the log
+       function reads them at these addresses */
+    static const uint8_t level_getter[] = { 0x8B, 0x05, 0xAA, 0x10, 0xE1, 0x0C, 0xC3 };
+
+    if (!fixups_readable(0x140001270, sizeof(level_getter))
+            || memcmp((void *) 0x140001270, level_getter, sizeof(level_getter)) != 0) {
+        return;
+    }
+
+    *ALLNET_LOG_LEVEL = 4;
+    *ALLNET_LOG_MASK = 0xFFFFFFFF;
+    *ALLNET_LOG_CALLBACK = allnet_log_line;
+}
+
 static struct fixups_config fixups_cfg;
 static bool fixups_done;
 
@@ -172,6 +204,10 @@ static void fixups_apply(void)
 
     fixups_done = true;
 
+    if (fixups_cfg.allnet_log) {
+        allnet_log_enable();
+    }
+
     dprintf("Fixups: game code as the game starts:\n");
     fixups_report(quick_start_sites, _countof(quick_start_sites));
     fixups_report(network_sites, _countof(network_sites));
@@ -240,6 +276,10 @@ static void hook_glutInitWithExit(int *argcp, char **argv, void (*exitfunc)(int)
 void fixups_init(const struct fixups_config *cfg)
 {
     fixups_cfg = *cfg;
+
+    if (cfg->allnet_log) {
+        allnet_log_enable();
+    }
 
     iohook_push_handler(fixups_handle_irp);
 

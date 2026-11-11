@@ -281,11 +281,12 @@ static void divaonline_start(void)
             GetPrivateProfileIntW(L"divaonline", L"undo_network_patches", 0, divaonline_ini) != 0;
     fixups.undo_keychip_patches =
             GetPrivateProfileIntW(L"divaonline", L"undo_keychip_patches", 0, divaonline_ini) != 0;
+    fixups.allnet_log =
+            GetPrivateProfileIntW(L"divaonline", L"allnet_log", 1, divaonline_ini) != 0;
     fixups_init(&fixups);
 
     /* ALL.Net billing asks the keychip for these two files (segatools serves
-       them from disk). Without them its play counter check most likely fails,
-       which the game shows as ERROR 0800. */
+       them from disk). */
 
     if (divaonline_platform.nusec.enable) {
         const wchar_t *files[2] = {
@@ -305,7 +306,7 @@ static void divaonline_start(void)
             full[_countof(full) - 1] = L'\0';
 
             if (GetFileAttributesW(full) == INVALID_FILE_ATTRIBUTES) {
-                dprintf("WARNING: %S is missing. ALL.Net billing reads it (likely cause of ERROR 0800);"
+                dprintf("WARNING: %S is missing. ALL.Net billing reads it;"
                         " it comes with segatools / your server's setup files\n", full);
             }
         }
