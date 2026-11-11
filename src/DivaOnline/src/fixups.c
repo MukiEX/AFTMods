@@ -275,6 +275,10 @@ static void fixups_apply(void)
         allnet_log_enable();
     }
 
+    if (fixups_cfg.ignore_tlac_player_data) {
+        tlac_ignore_player_files(divaonline_plugins_dir(), divaonline_game_dir_path());
+    }
+
     dprintf("Fixups: game code as the game starts:\n");
     fixups_report(quick_start_sites, _countof(quick_start_sites));
     fixups_report(network_sites, _countof(network_sites));
