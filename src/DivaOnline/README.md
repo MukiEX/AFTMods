@@ -74,7 +74,7 @@ DivaOnline's own section:
 |---|---|---|
 | `enable` | 1 | 0 turns the plugin off |
 | `undo_quick_start` | 1 | Undo PD Loader's `quick_start` patch, which skips the card screen |
-| `undo_network_patches` | 0 | Undo the three startup network check patches PD Loader always applies (skip part of the check, no DHCP wait, ignore the location server result). Players have gone online through segatools with them in place, so they're kept unless the check fails |
+| `undo_network_patches` | 0 | Undo the three startup network check patches PD Loader always applies (skip part of the check, no DHCP wait, ignore the location server result). Not needed for ARTEMiS (tested): at 1 startup waits a long time on the Location Server check, which ends NG anyway |
 | `undo_keychip_patches` | 0 | Undo PD Loader's two "skip unnecessary checks" patches (one tells the game the keychip was found before the keychip driver answers). Diagnostic only: with them undone the game ignores START on the title screen |
 | `allnet_log` | 1 | Turn on diva.exe's own ALL.Net library log (auth, billing, keychip) and copy it into DivaOnline's log as `[ALL.Net]` lines |
 | `game_log` | 0x10000 | Copy diva.exe's own debug messages for these categories (a bit mask) into the log as `[Game xx]` lines. 0x10000 is the Aime reader task |
