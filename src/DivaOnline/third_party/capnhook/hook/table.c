@@ -54,7 +54,25 @@ static void hook_table_apply_to_all(
         keychip and network checks) is all statically linked into it. */
 
     if (hook_table_exe_only) {
+        /* ...plus the Windows DLLs diva.exe hands file work to. ALL.Net
+           creates its temp folder (under the AppUser home that segatools'
+           vfs redirects) with imagehlp's MakeSureDirectoryPathExists, which
+           calls CreateDirectory from dbghelp/imagehlp's own imports. The
+           TeamTofuShop fork's divahook loads dbghelp up front for the same
+           reason. */
+        static const wchar_t *const extra[] = { L"imagehlp.dll", L"dbghelp.dll" };
+        HMODULE mod;
+        size_t i;
+
         hook_table_apply(GetModuleHandleW(NULL), depname, syms, nsyms);
+
+        for (i = 0 ; i < sizeof(extra) / sizeof(extra[0]) ; i++) {
+            mod = GetModuleHandleW(extra[i]);
+
+            if (mod != NULL) {
+                hook_table_apply(mod, depname, syms, nsyms);
+            }
+        }
 
         return;
     }
@@ -153,6 +171,14 @@ static bool hook_table_match_module(
 
     if (_stricmp(depname, "kernel32.dll") != 0) {
         return false;
+    }
+
+    /* DivaOnline: Wine's system DLLs import file APIs from kernelbase.dll
+       directly (Windows' use API sets, below). Only matters for the extra
+       DLLs hooked in hook_table_apply_to_all(). */
+
+    if (hook_table_exe_only && _stricmp(iid_name, "kernelbase.dll") == 0) {
+        return true;
     }
 
     /* There isn't really any good test for whether a DLL import wants a

@@ -243,7 +243,12 @@ static void divaonline_start(void)
     divaonline_vfs_path(divaonline_platform.vfs.appdata, _countof(divaonline_platform.vfs.appdata), L"appdata");
     divaonline_vfs_path(divaonline_platform.vfs.option, _countof(divaonline_platform.vfs.option), NULL);
 
-    /* Hook Win32 APIs (diva.exe's imports only, see hook/table.c) */
+    /* Pin dbghelp/imagehlp so the path hooks reach them (see hook/table.c) */
+
+    LoadLibraryW(L"imagehlp.dll");
+    LoadLibraryW(L"dbghelp.dll");
+
+    /* Hook Win32 APIs (diva.exe's imports, plus imagehlp/dbghelp) */
 
     serial_hook_init();
 

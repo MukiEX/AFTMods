@@ -2,10 +2,11 @@
    Acts as the game: loads plugins\DivaOnline.dva the way PD Loader does, then
    uses the APIs diva.exe uses for the keychip, ALL.Net DNS and the Aime reader
    on COM10, and checks that DivaOnline answers them.
-   Build: x86_64-w64-mingw32-clang -O1 -o smoke.exe smoke.c -lws2_32 */
+   Build: x86_64-w64-mingw32-clang -O1 -o smoke.exe smoke.c -lws2_32 -limagehlp */
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <imagehlp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -99,6 +100,20 @@ int main(void)
         wchar_t real[MAX_PATH];
         swprintf(real, MAX_PATH, L"%ls\\appdata\\smoke.txt", dir);
         CHECK(GetFileAttributesW(real) != INVALID_FILE_ATTRIBUTES, "it landed in the game folder's appdata");
+    }
+
+    /* ALL.Net makes its temp folder in the AppUser home with imagehlp, which
+       calls CreateDirectory from its own (or dbghelp's) imports */
+    {
+        wchar_t want[MAX_PATH];
+        BOOL ok = MakeSureDirectoryPathExists("C:\\Documents and Settings\\AppUser\\temp\\divaonline_smoke\\");
+        GetEnvironmentVariableW(L"USERPROFILE", want, MAX_PATH);
+        wcscat(want, L"\\temp\\divaonline_smoke");
+        CHECK(ok && GetFileAttributesW(want) != INVALID_FILE_ATTRIBUTES, "imagehlp temp folder -> %ls", want);
+        CHECK(GetFileAttributesW(L"C:\\Documents and Settings\\AppUser\\temp\\divaonline_smoke") == INVALID_FILE_ATTRIBUTES
+              || GetFileAttributesW(L"C:\\Documents and Settings\\AppUser\\temp\\divaonline_smoke") == GetFileAttributesW(want),
+              "nothing created under the real C:\\Documents and Settings");
+        RemoveDirectoryW(want);
     }
 
     /* ALL.Net host names */

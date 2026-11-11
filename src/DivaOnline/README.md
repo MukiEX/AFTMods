@@ -89,7 +89,8 @@ segatools hooks the imports of every module in the process, because it runs befo
 anything else is loaded. A PD Loader plugin loads after the other plugins have hooked
 diva.exe themselves, so DivaOnline only hooks diva.exe's own imports
 (`hook_table_exe_only` in `third_party/capnhook/hook/table.c`, the one change to the
-vendored code). ALL.Net, the Aime reader task and the keychip checks are all linked into
+vendored code), plus `imagehlp.dll` and `dbghelp.dll`: ALL.Net creates its temp folder with
+imagehlp's `MakeSureDirectoryPathExists`, which has to land in the redirected AppUser home. ALL.Net, the Aime reader task and the keychip checks are all linked into
 diva.exe, so nothing is missed.
 
 Hooks chain onto whatever is in an import when DivaOnline installs, so they go on top of
@@ -113,7 +114,7 @@ LLVM_MINGW=/path/to/llvm-mingw src/DivaOnline/build-mingw.sh   # -> build/win/Di
 values, the ALL.Net host names and a card read from COM10. It runs under Wine:
 
 ```sh
-$LLVM_MINGW/bin/x86_64-w64-mingw32-clang -O1 -o smoke.exe src/DivaOnline/tests/smoke.c -lws2_32
+$LLVM_MINGW/bin/x86_64-w64-mingw32-clang -O1 -o smoke.exe src/DivaOnline/tests/smoke.c -lws2_32 -limagehlp
 # smoke.exe next to plugins/DivaOnline.dva and the plugins/DivaOnline.ini from tests/smoke.ini
 wine smoke.exe
 ```
