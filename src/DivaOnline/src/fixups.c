@@ -25,7 +25,9 @@
 
 #include <windows.h>
 
+#include <stdarg.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -123,6 +125,71 @@ static void allnet_log_enable(void)
     *ALLNET_LOG_LEVEL = 4;
     *ALLNET_LOG_MASK = 0xFFFFFFFF;
     *ALLNET_LOG_CALLBACK = allnet_log_line;
+}
+
+/* The game's own debug print, void dbg(int category, const char *fmt, ...) at
+   0x14017B730, forwards to a va_list version at 0x14017B760 that keeps the
+   text in a ring buffer nobody reads. Category 0x10 is the Aime reader task
+   ("TaskAime::start", "->TaskAime::open(...)"). The varargs entry starts with
+   three register spills, so it can be replaced by a jump to our own version,
+   which logs and then calls the va_list one itself. */
+#define GAME_DBG_ENTRY  0x14017B730
+#define GAME_DBG_VPRINT 0x14017B760
+
+static void (*game_dbg_vprint)(int category, const char *fmt, va_list ap) =
+        (void (*)(int, const char *, va_list)) GAME_DBG_VPRINT;
+static unsigned int game_dbg_mask;
+
+static void game_dbg_hook(int category, const char *fmt, ...)
+{
+    char buf[512];
+    va_list ap;
+
+    if (category >= 0 && category < 32 && (game_dbg_mask & (1u << (category & 31))) != 0) {
+        va_start(ap, fmt);
+        vsnprintf(buf, sizeof(buf), fmt, ap);
+        va_end(ap);
+        buf[sizeof(buf) - 1] = '\0';
+        dprintf("[Game %02x] %s%s", category, buf,
+                (buf[0] != '\0' && buf[strlen(buf) - 1] == '\n') ? "" : "\n");
+    }
+
+    va_start(ap, fmt);
+    game_dbg_vprint(category, fmt, ap);
+    va_end(ap);
+}
+
+static void game_dbg_install(unsigned int mask)
+{
+    static const uint8_t entry[] = {
+        0x48, 0x89, 0x54, 0x24, 0x10,   /* mov [rsp+10h], rdx */
+        0x4C, 0x89, 0x44, 0x24, 0x18,   /* mov [rsp+18h], r8 */
+        0x4C, 0x89, 0x4C, 0x24, 0x20,   /* mov [rsp+20h], r9 */
+    };
+    static const uint8_t vprint[] = { 0x40, 0x53, 0x56, 0x57, 0x48, 0x81, 0xEC, 0x30, 0x01, 0x00, 0x00 };
+    uint8_t jump[12] = { 0x48, 0xB8 };  /* mov rax, imm64 ; jmp rax */
+    uintptr_t target = (uintptr_t) game_dbg_hook;
+    DWORD old;
+
+    game_dbg_mask = mask;
+
+    if (mask == 0
+            || !fixups_readable(GAME_DBG_ENTRY, sizeof(entry))
+            || memcmp((void *) GAME_DBG_ENTRY, entry, sizeof(entry)) != 0
+            || memcmp((void *) GAME_DBG_VPRINT, vprint, sizeof(vprint)) != 0) {
+        return;
+    }
+
+    memcpy(jump + 2, &target, sizeof(target));
+    jump[10] = 0xFF;
+    jump[11] = 0xE0;
+
+    if (VirtualProtect((void *) GAME_DBG_ENTRY, sizeof(jump), PAGE_EXECUTE_READWRITE, &old)) {
+        memcpy((void *) GAME_DBG_ENTRY, jump, sizeof(jump));
+        VirtualProtect((void *) GAME_DBG_ENTRY, sizeof(jump), old, &old);
+        FlushInstructionCache(GetCurrentProcess(), (void *) GAME_DBG_ENTRY, sizeof(jump));
+        dprintf("Fixups: game debug log categories %08x copied here\n", mask);
+    }
 }
 
 static struct fixups_config fixups_cfg;
@@ -256,6 +323,11 @@ static unsigned int fixups_opens_seen;
 
 static HRESULT fixups_handle_irp(struct irp *irp)
 {
+    if (irp->op == IRP_OP_OPEN && irp->open_filename != NULL
+            && (wcsstr(irp->open_filename, L"COM") != NULL || wcsstr(irp->open_filename, L"com") != NULL)) {
+        dprintf("Serial: game opened %S (not emulated here, passed on)\n", irp->open_filename);
+    }
+
     if (!fixups_done && irp->op == IRP_OP_OPEN && fixups_opens_seen < 100000) {
         fixups_opens_seen++;
 
@@ -280,6 +352,8 @@ void fixups_init(const struct fixups_config *cfg)
     if (cfg->allnet_log) {
         allnet_log_enable();
     }
+
+    game_dbg_install(cfg->game_log_mask);
 
     iohook_push_handler(fixups_handle_irp);
 

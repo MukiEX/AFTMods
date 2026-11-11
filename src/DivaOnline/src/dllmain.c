@@ -20,6 +20,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <wchar.h>
+#include <stdlib.h>
 
 #include "amex/config.h"
 #include "amex/ds.h"
@@ -288,6 +289,12 @@ static void divaonline_start(void)
             GetPrivateProfileIntW(L"divaonline", L"undo_keychip_patches", 0, divaonline_ini) != 0;
     fixups.allnet_log =
             GetPrivateProfileIntW(L"divaonline", L"allnet_log", 1, divaonline_ini) != 0;
+    {
+        wchar_t mask[32];
+
+        GetPrivateProfileStringW(L"divaonline", L"game_log", L"0x10000", mask, _countof(mask), divaonline_ini);
+        fixups.game_log_mask = (unsigned int) wcstoul(mask, NULL, 0);
+    }
     fixups_init(&fixups);
 
     /* ALL.Net billing asks the keychip for these two files (segatools serves
