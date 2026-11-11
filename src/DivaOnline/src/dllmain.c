@@ -104,8 +104,22 @@ static void divaonline_preload_divalinux(void)
         return;
     }
 
-    _snwprintf(pd_config, _countof(pd_config), L"%s\\config.ini", divaonline_game_dir);
-    pd_config[_countof(pd_config) - 1] = L'\0';
+    /* PD Loader's config.ini lives in plugins\ (next to us); older setups kept
+       it in the game folder */
+
+    GetModuleFileNameW(divaonline_mod, pd_config, _countof(pd_config));
+    slash = wcsrchr(pd_config, L'\\');
+
+    if (slash != NULL) {
+        slash[1] = L'\0';
+    }
+
+    wcsncat(pd_config, L"config.ini", _countof(pd_config) - wcslen(pd_config) - 1);
+
+    if (GetFileAttributesW(pd_config) == INVALID_FILE_ATTRIBUTES) {
+        _snwprintf(pd_config, _countof(pd_config), L"%s\\config.ini", divaonline_game_dir);
+        pd_config[_countof(pd_config) - 1] = L'\0';
+    }
 
     if (!GetPrivateProfileIntW(L"global", L"enable", 1, pd_config)
             || !GetPrivateProfileIntW(L"plugins", L"DivaLinux.dva", 1, pd_config)) {
