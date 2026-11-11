@@ -231,6 +231,34 @@ static void divaonline_start(void)
             GetPrivateProfileIntW(L"divaonline", L"undo_network_patches", 0, divaonline_ini) != 0;
     fixups_init(&fixups);
 
+    /* ALL.Net billing asks the keychip for these two files (segatools serves
+       them from disk). Without them its play counter check most likely fails,
+       which the game shows as ERROR 0800. */
+
+    if (divaonline_platform.nusec.enable) {
+        const wchar_t *files[2] = {
+            divaonline_platform.nusec.billing_ca,
+            divaonline_platform.nusec.billing_pub,
+        };
+        wchar_t full[MAX_PATH];
+        size_t i;
+
+        for (i = 0 ; i < 2 ; i++) {
+            if (files[i][0] != L'\0' && files[i][1] != L':' && files[i][0] != L'\\') {
+                _snwprintf(full, _countof(full), L"%s\\%s", divaonline_game_dir, files[i]);
+            } else {
+                _snwprintf(full, _countof(full), L"%s", files[i]);
+            }
+
+            full[_countof(full) - 1] = L'\0';
+
+            if (GetFileAttributesW(full) == INVALID_FILE_ATTRIBUTES) {
+                dprintf("WARNING: %S is missing. ALL.Net billing reads it (likely cause of ERROR 0800);"
+                        " it comes with segatools / your server's setup files\n", full);
+            }
+        }
+    }
+
     if (divaonline_platform.dns.enable) {
         dprintf("ALL.Net: naominet.jp -> %S, aime.naominet.jp -> %S, ib.naominet.jp -> %S\n",
                 divaonline_platform.dns.startup,
