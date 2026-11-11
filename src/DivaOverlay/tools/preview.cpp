@@ -91,6 +91,8 @@ int main(int argc, char** argv) {
     put(game + "/plugins/config.ini", "[resolution]\nwidth=1920\nheight=1080\nr.enable=1\nr.width=1920\nr.height=1088\n[graphics]\nfrm.motion.rate=300\n");
     put(game + "/plugins/components.ini", "[components]\nfast_loader=true\nfast_loader_speed=12\nframe_rate_manager=true\n");
     put(game + "/plugins/DivaLinux.ini", "[stereo]\nstereo_mode=1\nstereo_hud_parallax=-12\n[cursor]\npointer=1\n");
+    put(game + "/plugins/DivaOnline.dva", "");   // the Online section shows when the plugin is there
+    put(game + "/plugins/DivaOnline.ini", "[divaonline]\nenable=0\n[aime]\nautoInsert=1\n");
     put(game + "/divarecomp_env.txt", "# Odin 3\nDIVA_VULKAN_DRIVER=turnip   # Odin driver\n#DIVA_DOF=0\n");
 
     dov::ModelPaths p;
@@ -214,6 +216,20 @@ int main(int argc, char** argv) {
     press(&dov::Input::right);
     idle(30);
     snap("section");
+    // OV_SECTION=<title>: open that section from the top of the home page and draw it
+    if (const char* want = getenv("OV_SECTION")) {
+        ui.open();
+        idle(30);
+        int idx = -1;
+        for (size_t i = 0; i < model.sections.size(); i++)
+            if (model.sections[i]->title == want) idx = (int)i;
+        if (idx < 0) fprintf(stderr, "no section %s\n", want);
+        for (int i = 0; i < idx; i++) press(&dov::Input::down);
+        idle(30);
+        press(&dov::Input::ok);
+        idle(30);
+        snap("named_section");
+    }
     ui.flush();
     std::string env;
     dov::read_file(p.env_file.empty() ? L"" : p.env_file, env);

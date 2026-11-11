@@ -7,6 +7,7 @@ style of the game's Key Config screen, and edits three files in one place:
 |---|---|---|
 | DivaLinux | `plugins\DivaLinux.ini` | Stereo 3D, VR, movies, the pointer, reflections, performance, loading |
 | Game | `plugins\config.ini` (and `components.ini`, `playerdata.ini`, `keyconfig.ini`) | PD Launcher's pages, with the launcher's keys, defaults and help (from LauncherFS). On Android, only what the runtime reads |
+| Game → Online | `plugins\DivaOnline.ini` | Online play on/off, the card always on the reader, keeping TLAC's player data while online (only when `DivaOnline.dva` is in `plugins`) |
 | Android | `divarecomp_env.txt` | The DivaRecomp runtime's switches (only under the runtime) |
 
 Each group's sections are buttons on the home page; long sections have a button per

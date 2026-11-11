@@ -539,6 +539,31 @@ namespace dov {
         return out;
     }
 
+    // ---- DivaOnline.ini (src/DivaOnline): online play, when the plugin is there
+
+    static std::vector<SectionPtr> online_sections(const lfs::Paths& p, bool recomp) {
+        std::vector<SectionPtr> out;
+        const std::wstring dva = p.plugins_dir + L"\\DivaOnline.dva";
+        if (!file_exists(dva))
+            return out;
+        const std::wstring ini = p.plugins_dir + L"\\DivaOnline.ini";
+        auto s = std::make_shared<Section>();
+        s->title = "Online";
+        s->group = "Game";
+        s->subtitle = "DivaOnline: ALL.Net and the Aime card";
+        // DivaOnline's own default is on; the DivaRecomp runtime starts it only when the
+        // .ini says enable=1 (its default DivaOnline.ini says 0)
+        s->items.push_back(from_option(lfs::make_bool(L"enable", L"divaonline", ini, L"Online play",
+            L"Log in with your Aime card and play on the ARTEMiS server in DivaOnline.ini ([dns] default, [aime] accessCode).\n\n"
+            L"Off: the game is offline, with playerdata.ini and scores.ini.", !recomp, false)));
+        s->items.push_back(from_option(lfs::make_bool(L"autoInsert", L"aime", ini, L"Auto card tap",
+            L"The card stays on the reader: no key to hold. For controller-only setups and headsets.", recomp, false)));
+        s->items.push_back(from_option(lfs::make_bool(L"keep_tlac_player_data", L"divaonline", ini, L"Keep TLAC data",
+            L"Online, your player data and scores come from the server, so playerdata.ini and scores.ini (TLAC's player data manager and score saver) are left alone. On keeps using them.", false, false)));
+        out.push_back(s);
+        return out;
+    }
+
     // ------------------------------------------------------------ Model
 
     void Model::build(const ModelPaths& p, bool under_recomp, bool xr_on, const LiveHooks& hooks) {
@@ -550,6 +575,8 @@ namespace dov {
         for (auto& s : divalinux_sections(p.divalinux_ini, recomp, xr, hooks))
             sections.push_back(s);
         for (auto& s : game_sections(p.pd, recomp))
+            sections.push_back(s);
+        for (auto& s : online_sections(p.pd, recomp))
             sections.push_back(s);
         if (recomp && !p.env_file.empty()) {
             env.set_path(p.env_file);

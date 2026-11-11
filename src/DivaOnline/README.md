@@ -115,6 +115,17 @@ DivaOnline loads `DivaLinux.dva` first if it's in the folder and enabled in `con
 (PD Loader then skips it; it has no `InitializeDVA` to miss). PD Loader's own directory
 order would usually do the same.
 
+## On Android (DivaRecomp)
+
+The DivaRecomp runtime (DivaDroid) recompiles DivaOnline.dva with the game, as it does
+DivaLinux.dva, and its APK carries the build it was made from. There it only starts with
+`[divaonline] enable=1` in `DivaOnline.ini` (a missing file counts as off; the runtime
+writes one with `enable=0` and `autoInsert=1`), and the game's Winsock is only real while it
+runs. DivaOverlay's Game → Online section switches it. The runtime also leaves
+`playerdata.ini` and `scores.ini` alone while online, as this plugin does with TLAC here.
+The runtime provides what an llvm-mingw build imports from the Universal CRT, so build it
+with the toolchain below, as `docker/build.sh` does.
+
 ## Building
 
 With [llvm-mingw](https://github.com/mstorsjo/llvm-mingw), like segatools and LauncherFS
