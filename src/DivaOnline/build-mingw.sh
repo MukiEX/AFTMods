@@ -7,8 +7,14 @@ set -e
 here="$(cd "$(dirname "$0")" && pwd)"
 # The toolchain file stays next to the build: CMake's cache refers back to it on every
 # later build, so it can't be a temporary file.
-mkdir -p build/win
 tc="$(pwd)/build/llvm-mingw-x64.cmake"
+# A build folder configured with another toolchain file (older versions of this script used
+# a temporary one that no longer exists) can't be reused: start it over.
+if [ -f build/win/CMakeCache.txt ] && ! grep -q "^CMAKE_TOOLCHAIN_FILE:[A-Z]*=$tc\$" build/win/CMakeCache.txt; then
+    echo "== DivaOnline: build folder was set up with another toolchain file, starting it over"
+    rm -rf build/win
+fi
+mkdir -p build/win
 cat > "$tc" <<TC
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
