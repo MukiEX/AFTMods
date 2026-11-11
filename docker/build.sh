@@ -17,7 +17,7 @@ cd /src
 # creates back to whoever owns the source folder when we exit, success or failure.
 OWNER=$(stat -c %u:%g /src)
 give_back() {
-    chown -R "$OWNER" .deps bin out obj lib src/DivaVK/external/Vulkan-Headers src/DivaVK/lib src/LauncherFS/build 2>/dev/null || true
+    chown -R "$OWNER" .deps bin out obj lib src/DivaVK/external/Vulkan-Headers src/DivaVK/lib src/LauncherFS/build src/DivaOnline/build 2>/dev/null || true
 }
 trap give_back EXIT
 
@@ -102,9 +102,9 @@ for t in $TARGETS; do cp -v "bin/$t.dva" out/; done
 # on first use (with Python: the image has no curl/xz). BUILD_LAUNCHER=0 skips it.
 LLVM_MINGW_TAG=20251104
 LLVM_MINGW="$DEPS/llvm-mingw-$LLVM_MINGW_TAG-ucrt-ubuntu-22.04-x86_64"
-if [ "${BUILD_LAUNCHER:-1}" = 1 ]; then
+if [ "${BUILD_LAUNCHER:-1}" = 1 ] || [ "${BUILD_DIVAONLINE:-1}" = 1 ]; then
     if [ ! -x "$LLVM_MINGW/bin/x86_64-w64-mingw32-clang++" ]; then
-        echo "== Fetching llvm-mingw $LLVM_MINGW_TAG (for Launcher.dva)"
+        echo "== Fetching llvm-mingw $LLVM_MINGW_TAG (for Launcher.dva and DivaOnline.dva)"
         python3 - "$LLVM_MINGW_TAG" "$DEPS" <<'PY'
 import os, sys, tarfile, urllib.request
 tag, deps = sys.argv[1], sys.argv[2]
@@ -117,10 +117,20 @@ with tarfile.open(path, "r:xz") as t:
 os.remove(path)
 PY
     fi
+fi
+if [ "${BUILD_LAUNCHER:-1}" = 1 ]; then
     echo "== Building Launcher.dva (llvm-mingw)"
     (cd src/LauncherFS && LLVM_MINGW="$LLVM_MINGW" sh ./build-mingw.sh)
     cp -v src/LauncherFS/build/win/Launcher.dva out/
 fi
+# DivaOnline.dva (src/DivaOnline): segatools' divahook as a plugin, plain C like segatools,
+# so llvm-mingw too. BUILD_DIVAONLINE=0 skips it.
+if [ "${BUILD_DIVAONLINE:-1}" = 1 ]; then
+    echo "== Building DivaOnline.dva (llvm-mingw)"
+    (cd src/DivaOnline && LLVM_MINGW="$LLVM_MINGW" sh ./build-mingw.sh)
+    cp -v src/DivaOnline/build/win/DivaOnline.dva src/DivaOnline/DivaOnline.ini out/
+fi
 echo "== Done: out/DivaLinux.dva (Windows and Wine/Proton: DivaGL on Vulkan + FFmpeg movies; replaces DivaGL.dva, DivaVK.dva and DivaMovie.dva)"
 [ -f out/DivaGL.dva ] && echo "         out/DivaGL.dva (retired plain-OpenGL build, BUILD_DIVAGL=1)" || true
 [ -f out/Launcher.dva ] && echo "         out/Launcher.dva (the fullscreen launcher)" || true
+[ -f out/DivaOnline.dva ] && echo "         out/DivaOnline.dva + DivaOnline.ini (Aime card and ALL.Net)" || true
