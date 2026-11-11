@@ -64,9 +64,21 @@ static struct platform_config divaonline_platform;
 static struct amex_config divaonline_amex;
 static struct aime_config divaonline_aime;
 
+static wchar_t divaonline_plugins[MAX_PATH];
+
 const wchar_t *divaonline_ini_path(void)
 {
     return divaonline_ini;
+}
+
+const wchar_t *divaonline_plugins_dir(void)
+{
+    return divaonline_plugins;
+}
+
+const wchar_t *divaonline_game_dir_path(void)
+{
+    return divaonline_game_dir;
 }
 
 static void divaonline_paths(void)
@@ -79,6 +91,9 @@ static void divaonline_paths(void)
     if (slash != NULL) {
         slash[1] = L'\0';
     }
+
+    wcsncpy(divaonline_plugins, divaonline_ini, _countof(divaonline_plugins) - 1);
+    divaonline_plugins[wcslen(divaonline_plugins) - 1] = L'\0';    /* drop the trailing \ */
 
     wcsncat(divaonline_ini, L"DivaOnline.ini", _countof(divaonline_ini) - wcslen(divaonline_ini) - 1);
 
@@ -318,6 +333,8 @@ static void divaonline_start(void)
         GetPrivateProfileStringW(L"divaonline", L"game_log", L"0x10000", mask, _countof(mask), divaonline_ini);
         fixups.game_log_mask = (unsigned int) wcstoul(mask, NULL, 0);
     }
+    fixups.ignore_tlac_player_data =
+            GetPrivateProfileIntW(L"divaonline", L"keep_tlac_player_data", 0, divaonline_ini) == 0;
     fixups_init(&fixups);
 
     /* ALL.Net billing asks the keychip for these two files (segatools serves

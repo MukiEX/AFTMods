@@ -72,7 +72,8 @@ DivaOnline's own section:
 
 | Key | Default | |
 |---|---|---|
-| `enable` | 1 | 0 turns the plugin off |
+| `enable` | 1 | 0 turns the plugin off: the game runs offline as before, with TLAC's `playerdata.ini` and `scores.ini` |
+| `keep_tlac_player_data` | 0 | While DivaOnline is on, TLAC's `player_data_manager` and `score_saver` are switched off, since the player's data and scores come from the server. 1 keeps them |
 | `undo_quick_start` | 1 | Undo PD Loader's `quick_start` patch, which skips the card screen |
 | `undo_network_patches` | 0 | Undo the three startup network check patches PD Loader always applies (skip part of the check, no DHCP wait, ignore the location server result). Not needed for ARTEMiS (tested): at 1 startup waits a long time on the Location Server check, which ends NG anyway |
 | `undo_keychip_patches` | 0 | Undo PD Loader's two "skip unnecessary checks" patches (one tells the game the keychip was found before the keychip driver answers). Diagnostic only: with them undone the game ignores START on the title screen |
@@ -85,6 +86,17 @@ The patches are undone at the first file the game opens once `Patches.dva` is lo
 when it calls `glutInit`), after every plugin has loaded and before the game's startup
 checks run. The log lists each site as `original` or `PD Loader patch` at that moment. A site is only
 changed when it holds exactly the bytes PD Loader writes there.
+
+## TLAC's player data and scores
+
+With DivaOnline on, TLAC's `player_data_manager` (which writes `playerdata.ini` over the
+game's player data) and `score_saver` (`scores.ini`) would fight the profile the server
+sends after a card login, so they're off for that run. Nothing is edited: when TLAC reads
+`plugins\components.ini` on the game's first frame, it's handed a copy
+(`DEVICE\tlac_components.ini`) with both set to `false` on top, and TLAC keeps the first
+value it reads. Only read-only opens in the C runtime and TLAC are redirected, and only in
+the few seconds TLAC takes to read it, so a settings menu that saves `components.ini` later
+saves the real one. With `enable=0` (or `keep_tlac_player_data=1`) TLAC reads the real file.
 
 ## How it fits with the other plugins
 
@@ -121,6 +133,9 @@ $LLVM_MINGW/bin/x86_64-w64-mingw32-clang -O1 -o smoke.exe src/DivaOnline/tests/s
 # smoke.exe next to plugins/DivaOnline.dva and the plugins/DivaOnline.ini from tests/smoke.ini
 wine smoke.exe
 ```
+
+`tests/tlac_test.c` reads `plugins/components.ini` the way TLAC does and checks the
+copy is handed over, other components are unchanged and the real file isn't touched.
 
 `tests/fixups_test.c` maps the real diva.exe 7.10 next to it (without running it), writes
 PD Loader's quick start and network check patches, and checks DivaOnline puts the original

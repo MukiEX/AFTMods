@@ -25,6 +25,7 @@ add_library(DivaOnline SHARED
     src/dllmain.c
     src/card.c
     src/fixups.c
+    src/tlac.c
     src/dprintf.c
     src/DivaOnline.rc
 
