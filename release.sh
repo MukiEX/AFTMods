@@ -13,8 +13,9 @@
 #
 # One package for Windows and Wine/Proton alike, laid out like the game folder (unzip into the
 # folder with diva.exe):
-#   AFTMods-<version>.zip  plugins/DivaLinux.dva, plugins/Launcher.dva, tools/divalinux_pack.py,
-#                          docs and third-party licences
+#   AFTMods-<version>.zip  plugins/DivaLinux.dva, plugins/Launcher.dva,
+#                          plugins/LakeHP_OpenRooms.dll, tools/divalinux_pack.py, docs and
+#                          third-party licences
 # (The plain-OpenGL DivaGL.dva is retired and not released.)
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -88,10 +89,12 @@ common() {
 LIN="$STAGE/AFTMods-$VERSION"
 mkdir -p "$LIN/plugins" "$LIN/tools"
 cp out/DivaLinux.dva out/Launcher.dva "$LIN/plugins/"
+cp res/LakeHP_OpenRooms.dll "$LIN/plugins/"   # open room filters for [audio] headphones (CC BY-SA 3.0)
 cp tools/divalinux_pack.py "$LIN/tools/"
 common "$LIN"
 cp src/DivaLinux/README.md "$LIN/docs/DivaLinux_README.md"
 cp src/DivaOverlay/README.md "$LIN/docs/DivaOverlay_README.md"
+cp res/LakeHP_OpenRooms_LICENSE.txt "$LIN/licenses/LakeHP_OpenRooms.txt"
 for f in src/DivaVK/external/volk/LICENSE.md:volk.md src/DivaVK/external/vma/LICENSE.txt:VulkanMemoryAllocator.txt \
          src/DivaVK/external/openxr/LICENSE:OpenXR.txt .deps/glslang/LICENSE.txt:glslang.txt; do
     src=${f%%:*}; dst=${f##*:}
@@ -130,6 +133,10 @@ Unzip into the game folder (the one with diva.exe), so the DVAs land in plugins\
                          plugins\\DivaLinux.log.
   plugins\\Launcher.dva   Fullscreen, controller-friendly launcher (draws on the CPU under
                          WinlatorXR).
+  plugins\\LakeHP_OpenRooms.dll  Room filters for headphone surround ([audio] in
+                         DivaLinux.ini, or the menu's Audio page). Open data (CC BY-SA 3.0,
+                         licenses\\LakeHP_OpenRooms.txt). A DolbyHph.dll from your own copy
+                         of the original engine, put next to it, is used instead.
 
 $FFMPEG_NOTE
 

@@ -1,0 +1,12 @@
+LakeHP_OpenRooms.dll: open room filters for DivaLinux's headphone surround ([audio] in
+DivaLinux.ini), from LakeHP (github.com/MukiEX/LakeHeadphones, filters/).
+
+It holds three rooms (Open Small / Medium / Large) at 48 and 44.1 kHz, built by LakeHP's
+tools/make_open_filters.py from subject p0010 of the SONICOM HRTF dataset (Imperial College
+London, Audio Experience Design group), as redistributed with the DAFx 2026 HRTF tutorial
+(github.com/yzyouzhang/dafx2026-hrtf-tutorial). The DLL holds data only, no code.
+
+The SONICOM data is licensed CC BY-SA 3.0 (Creative Commons Attribution-ShareAlike 3.0
+Unported, https://creativecommons.org/licenses/by-sa/3.0/). The filters are derived from it
+and are distributed under the same licence, with attribution to SONICOM / Imperial College
+London.

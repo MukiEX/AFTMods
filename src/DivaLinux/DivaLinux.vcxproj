@@ -143,6 +143,9 @@
     <ClCompile Include="vfs\hooks.cpp" />
     <ClCompile Include="overlay\compositor.cpp" />
     <ClCompile Include="overlay\cursor.cpp" />
+    <ClCompile Include="audio\headphones.cpp" />
+    <ClCompile Include="audio\hp_core.c" />
+    <ClCompile Include="audio\lakehp.c" />
     <ClCompile Include="overlay\launcher_api.cpp" />
     <ClCompile Include="overlay\layout.cpp" />
     <ClCompile Include="overlay\overlay_gl.cpp" />

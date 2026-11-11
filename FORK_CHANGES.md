@@ -18,7 +18,7 @@ git diff --stat e3555bb fork/async-pv                 # everything, by file
 Untouched: `src/AFTModsShared`, `src/KKdLib`, `src/OPDPlayGen`, `src/RobTexAnim`,
 `src/SpriteDrawLimit`, `extern`. Two shaders changed (`res/ft_shaders/dof_downsample.frag`,
 `dof_upsample.frag`: their `pow()` inputs are clamped, because Mesa's Turnip driver on Adreno
-produced NaN there), and `res/ft_shaders.farc` was rebuilt with them (`tools/pack_ft_shaders.py`).
+produced NaN there), and `res/ft_shaders.farc` was rebuilt with them (`tools/pack_ft_shaders.py`). `res/LakeHP_OpenRooms.dll` is new: open room filters for the headphone surround.
 
 ## New folders (yours to skip)
 
@@ -27,7 +27,7 @@ None of these are needed to work on DivaGL. Each has its own README.
 | Folder | What it is |
 |---|---|
 | `src/DivaVK` | An OpenGL 4.3 subset on Vulkan, so DivaGL runs without an OpenGL driver (Wine, Android). Has its own test suite (`src/DivaVK/tests`). |
-| `src/DivaLinux` | The plugin that ships, `DivaLinux.dva`: DivaGL compiled on DivaVK, plus an FFmpeg movie player (from DivaMovie), a file layer for Wine and zip archives, the drawn mouse pointer, OpenXR output, and diagnostics. `main.cpp` is where it starts. |
+| `src/DivaLinux` | The plugin that ships, `DivaLinux.dva`: DivaGL compiled on DivaVK, plus an FFmpeg movie player (from DivaMovie), a file layer for Wine and zip archives, the drawn mouse pointer, OpenXR output, headphone surround (`audio/`, a hook on the game's mixer), and diagnostics. `main.cpp` is where it starts. |
 | `src/DivaOverlay` | An in-game settings menu drawn over the game (F10). |
 | `src/LauncherFS` | A fullscreen launcher, `Launcher.dva`. |
 | `docker/`, `release.sh`, `CMakeLists.txt` | Building with MSVC under Wine in Docker, and packaging. The `.sln`/`.vcxproj` files still build too. |

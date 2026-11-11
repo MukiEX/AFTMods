@@ -151,6 +151,9 @@ if(AFTMODS_BUILD_DIVALINUX)
         ${AFT_ROOT}/src/DivaLinux/vfs/vhandles.cpp
         ${AFT_ROOT}/src/DivaLinux/vfs/hooks.cpp
         ${AFT_ROOT}/src/DivaLinux/overlay/compositor.cpp
+        ${AFT_ROOT}/src/DivaLinux/audio/headphones.cpp
+        ${AFT_ROOT}/src/DivaLinux/audio/hp_core.c
+        ${AFT_ROOT}/src/DivaLinux/audio/lakehp.c
         ${AFT_ROOT}/src/DivaLinux/overlay/cursor.cpp
         ${AFT_ROOT}/src/DivaLinux/overlay/launcher_api.cpp
         ${AFT_ROOT}/src/DivaLinux/overlay/layout.cpp

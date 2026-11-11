@@ -106,6 +106,7 @@ int main(int argc, char** argv) {
     dov::LiveHooks hooks;
     hooks.set_option_int = [](const char* n, int v) { fprintf(stderr, "  live: SetOptionInt(%s, %d)\n", n, v); return true; };
     hooks.reload_cursor = []() { fprintf(stderr, "  live: pointer settings reloaded\n"); };
+    hooks.reload_audio = []() { fprintf(stderr, "  live: audio settings reloaded\n"); };
     dov::Model model;
     model.build(p, !windows, xr, hooks);
 

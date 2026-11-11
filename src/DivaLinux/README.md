@@ -8,6 +8,9 @@ One PD Loader plugin for Project DIVA Arcade Future Tone, on Windows and under W
 - **The FFmpeg movie player from DivaMovie** (`divamovie-ffmpeg` branch of MukiEX/PD-Loader).
   Song and attract-mode movies are decoded by FFmpeg and uploaded straight into the game's movie
   texture, so Media Foundation, DXVA2, Direct3D and `WGL_NV_DX_interop` are never needed.
+- **Headphone surround.** The game's sound played as if from two speakers in a small, medium
+  or large room, with LakeHP's engine (a C reimplementation of Lake Technology's headphone
+  engine, github.com/MukiEX/LakeHeadphones).
 
 It started as the Wine build, but it runs just as well on Windows (with any Vulkan driver), and
 it's now the only renderer plugin this fork ships. The plain-OpenGL `DivaGL.dva` is retired.
@@ -57,6 +60,18 @@ controlled Media Foundation and D3D9 paths that DivaLinux doesn't use.
 Environment switches for DivaVK: `DIVAVK_PRESENT_MODE=fifo|mailbox|immediate` picks the window's present
 mode. `DIVAVK_WINDOW_PRESENT=0` skips presenting to the window while OpenXR shows the frames: in a headset
 nobody sees the window, and its copy and image wait only cost time.
+
+## Headphone surround: `[audio]`
+
+| `[audio]` key | Default | What it does |
+| --- | --- | --- |
+| `headphones` | 0 | **0** off. **1** small, **2** medium, **3** large room: the game's stereo is played as if from two speakers in that room, for headphones. Adds 1024 samples of delay (23 ms at the game's 44.1 kHz). |
+| `filters` | auto | The DLL in `plugins` the rooms come from. **auto**: `DolbyHph.dll` when it's there (the original engine's, from your own copy; it isn't distributed), else `LakeHP_OpenRooms.dll` (LakeHP's open filters from the SONICOM HRTF data, CC BY-SA 3.0, shipped with DivaLinux). Or a file name in `plugins`. |
+
+It works on whatever plays the game's sound: the game's own WASAPI output, PD Loader's
+DivaSound, and the DivaRecomp runtime. They all pull samples through the game's mixer
+(`0x140627370`), which DivaLinux hooks. Both settings change straight away from the settings
+menu (Audio). The log says which room and DLL are in use: `[Audio] Headphones: …`.
 
 ## Mouse pointer: `[cursor]`
 
@@ -247,9 +262,10 @@ Paths below are in `src/DivaLinux/` unless they start with `src/`.
 | `overlay/` | Draws the launcher's in-game menu, DivaOverlay and the mouse pointer over the frame: `compositor.cpp` (per frame), `launcher_api.cpp` (the launcher's C ABI), `layout.cpp` (flat / side-by-side placement, where the game sees the mouse), `cursor.cpp` (`[cursor]`, the pointer), `overlay_gl.*` (the GL drawing; tested in `src/DivaVK/tests`) |
 | `src/DivaOverlay/` | `[overlay]`: the in-game settings menu (its own README) |
 | `vfs/` | `[loading]`: the lookup cache and archive reading. `vfs.cpp` (install, hooking, statistics, DivaLinux's own file access), `paths.cpp`, `wildcard.*`, `zip_index.*` (a stored zip's index), `archives.cpp`, `dir_cache.cpp`, `vhandles.cpp` (our find and member handles), `hooks.cpp` (the kernel32 replacements); tested on Linux in `tests/` |
+| `audio/` | `[audio]`: headphone surround. `headphones.cpp` (settings, the mixer hook), `hp_core.*` (finding a room in a filter DLL, the block buffering; no Windows), `lakehp.*` (LakeHP's engine, from MukiEX/LakeHeadphones `engine/` at e4a443b); tested on Linux in `tests/hp_core_test.c` |
 | `game/stages.cpp` | Songs per credit (`config.ini` `[patches] normal_stages` / `protected_stages`) |
 | `debug/io_trace.cpp` | The `[debug] io_trace` file I/O trace |
-| `tests/` | Linux tests for the file layer (`vfs_test.cpp`) and its Windows-free parts (`units_test.cpp`) |
+| `tests/` | Linux tests for the file layer (`vfs_test.cpp`) and its Windows-free parts (`units_test.cpp`), and for headphone surround (`hp_core_test.c`) |
 | `tools/divalinux_pack.py` (repo root) | Makes `rom.zip` and `mdata\<pack>.zip` |
 
 ## Building

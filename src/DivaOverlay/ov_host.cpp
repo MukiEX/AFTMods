@@ -50,6 +50,7 @@ extern const unsigned int dov_font_regular_size;
 extern "C" void divavk_log_text(const char* text);                 // DivaLinux.log (vk_bridge.cpp)
 extern "C" BOOL SetOptionInt(const char* name, int value);         // DivaGL (dllmain.cpp)
 extern "C" void divalinux_cursor_install(const wchar_t* config_file); // overlay/cursor.cpp
+extern "C" void divalinux_audio_install(const wchar_t* config_file);  // audio/headphones.cpp
 extern "C" bool dvk_xr_active(void);                                // DivaVK (xr.cpp)
 
 // ------------------------------------------------------------ files (Win32; the runtime maps them)
@@ -336,6 +337,7 @@ namespace {
         hooks.set_option_int = [](const char* name, int v) { return SetOptionInt(name, v) != FALSE; };
         const std::wstring ini = g.ini;
         hooks.reload_cursor = [ini]() { divalinux_cursor_install(ini.c_str()); };
+        hooks.reload_audio = [ini]() { divalinux_audio_install(ini.c_str()); };
         const bool xr = (g.io && g.io->xr) || dvk_xr_active();
         g.model.build(p, g.io != nullptr, xr, hooks);
 

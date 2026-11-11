@@ -91,6 +91,8 @@ namespace dov {
         std::function<bool(const char* name, int value)> set_option_int;
         // re-reads [cursor] from DivaLinux.ini
         std::function<void()> reload_cursor;
+        // re-reads [audio] from DivaLinux.ini
+        std::function<void()> reload_audio;
     };
 
     struct Model {

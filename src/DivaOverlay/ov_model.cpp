@@ -321,6 +321,29 @@ namespace dov {
             opt(lfs::make_choice_number(L"decode_threads", L"movie", ini, L"Decode threads", L"Threads for decoding movies. 0 = automatic.", 0, { 0, 1, 2, 4, 6, 8, 12, 16 }, true)),
         });
 
+        // Audio -----------------------------------------------------------
+        {
+            auto room = opt(lfs::make_choice(L"headphones", L"audio", ini, L"Headphone surround",
+                L"Plays the game's sound as if from two speakers in a room, for headphones.\n\n"
+                L"Needs a room filter DLL in plugins: DolbyHph.dll (from your own copy), or LakeHP_OpenRooms.dll, "
+                L"which comes with DivaLinux. Adds about 23 ms of delay.", 0,
+                { L"Off", L"Small room", L"Medium room", L"Large room" }));
+            auto filters = opt(lfs::make_choice_text(L"filters", L"audio", ini, L"Room filters",
+                L"The DLL in plugins the rooms come from.\n\nauto: DolbyHph.dll when it's there, else LakeHP_OpenRooms.dll.",
+                L"auto", { L"auto", L"DolbyHph.dll", L"LakeHP_OpenRooms.dll" }, false, false));
+            std::vector<ItemPtr> items = { room, filters };
+            for (auto& it : items) {
+                it->live = (bool)hooks.reload_audio;
+                auto reload = hooks.reload_audio;
+                it->apply = [reload](Item& self) {
+                    if (!reload) return;
+                    self.save();     // the audio hook reads DivaLinux.ini
+                    reload();
+                };
+            }
+            add("Audio", "Headphone surround", items);
+        }
+
         // Pointer ---------------------------------------------------------
         {
             auto ptr = opt(lfs::make_choice(L"pointer", L"cursor", ini, L"Pointer",
