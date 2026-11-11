@@ -476,16 +476,8 @@ static HRESULT card_bind_external(const wchar_t *path)
     return S_OK;
 }
 
-HRESULT aime_dll_init(const struct aime_dll_config *cfg, HINSTANCE self)
+static void card_use_builtin(void)
 {
-    (void) self;
-
-    assert(cfg != NULL);
-
-    if (cfg->path[0] != L'\0') {
-        return card_bind_external(cfg->path);
-    }
-
     card_config_load(divaonline_ini_path());
 
     aime_dll.api_version = 0x0100;
@@ -494,6 +486,50 @@ HRESULT aime_dll_init(const struct aime_dll_config *cfg, HINSTANCE self)
     aime_dll.nfc_get_aime_id = card_nfc_get_aime_id;
     aime_dll.nfc_get_felica_id = card_nfc_get_felica_id;
     aime_dll.led_set_color = card_led_set_color;
+}
+
+static HRESULT (*card_external_init)(void);
+
+/* An aimeio DLL that fails to start (reader unplugged, its own .ini missing)
+   would leave the game's card system dead. Fall back to the built-in card
+   (the scan key) instead, and say so. */
+static HRESULT card_external_init_or_fallback(void)
+{
+    HRESULT hr = card_external_init();
+
+    if (SUCCEEDED(hr)) {
+        return hr;
+    }
+
+    dprintf("Card: aimeio DLL failed to start (%08lx); using the built-in card instead"
+            " ([aime] accessCode, scan key)\n", (unsigned long) hr);
+    card_use_builtin();
+
+    return aime_dll.init();
+}
+
+HRESULT aime_dll_init(const struct aime_dll_config *cfg, HINSTANCE self)
+{
+    HRESULT hr;
+
+    (void) self;
+
+    assert(cfg != NULL);
+
+    if (cfg->path[0] != L'\0') {
+        hr = card_bind_external(cfg->path);
+
+        if (SUCCEEDED(hr)) {
+            card_external_init = aime_dll.init;
+            aime_dll.init = card_external_init_or_fallback;
+
+            return hr;
+        }
+
+        dprintf("Card: falling back to the built-in card\n");
+    }
+
+    card_use_builtin();
 
     return S_OK;
 }
