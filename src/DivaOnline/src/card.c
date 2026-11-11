@@ -326,21 +326,30 @@ static bool card_scan_held(void)
     /* Only while the game window (or its console) has focus: a key held in
        another program shouldn't tap a card. */
 
-    if (GetForegroundWindow() == NULL) {
-        return false;
-    }
-
     {
+        static bool warned;
         DWORD pid = 0;
+        bool held = (GetAsyncKeyState(card_cfg.vk_scan) & 0x8000) != 0;
 
-        GetWindowThreadProcessId(GetForegroundWindow(), &pid);
-
-        if (pid != GetCurrentProcessId()) {
+        if (!held) {
             return false;
         }
-    }
 
-    return (GetAsyncKeyState(card_cfg.vk_scan) & 0x8000) != 0;
+        if (GetForegroundWindow() != NULL) {
+            GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+        }
+
+        if (pid != GetCurrentProcessId()) {
+            if (!warned) {
+                dprintf("Card: scan key held, but the game window isn't in front; ignored\n");
+                warned = true;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
 }
 
 static HRESULT card_nfc_poll(uint8_t unit_no)
@@ -351,6 +360,15 @@ static HRESULT card_nfc_poll(uint8_t unit_no)
 
     if (unit_no != 0) {
         return S_OK;
+    }
+
+    {
+        static bool first_poll = true;
+
+        if (first_poll) {
+            dprintf("Card: the game is looking for a card now (hold the scan key)\n");
+            first_poll = false;
+        }
     }
 
     card_aime_present = false;
