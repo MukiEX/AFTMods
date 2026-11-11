@@ -56,6 +56,11 @@ emulates. Where the card number comes from:
    all of the above and reads its own settings, usually from `segatools.ini` in the game
    folder.
 
+**R3**, or **L2 and R2** together, tap the card too (`[aime] scanPad=1`, the default): on
+an XInput gamepad, or on a controller on DIVA Bridge (a HORI's ZL+ZR or right stick click,
+read by DivallerBridge.dva). On Android the runtime supplies both, plus the Quest's right
+thumbstick click.
+
 The scan key only counts while the game's window is in front. Its default is Insert rather
 than segatools' Enter, because TLAC uses Enter for START.
 

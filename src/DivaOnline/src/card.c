@@ -3,7 +3,8 @@
 
    - Built in (the default): the card number comes from DivaOnline.ini,
      [aime] accessCode=<20 digits>. The card is "on the reader" while the
-     scan key is held, or all the time with autoInsert=1. With no accessCode,
+     scan key is held, or R3 (or L2+R2) on a gamepad or a controller on DIVA
+     Bridge, or all the time with autoInsert=1. With no accessCode,
      segatools' aime.txt / felica.txt files are read instead, as aimeio does.
    - [aimeio] path=<dll>: a segatools-style aimeio DLL (for a real reader,
      e.g. a PC/SC one) is loaded and used instead, as segatools does. */
@@ -38,6 +39,7 @@ static struct {
     wchar_t felica_path[MAX_PATH];
     bool felica_gen;
     int vk_scan;
+    bool scan_pad;
     bool auto_insert;
 } card_cfg;
 
@@ -208,6 +210,7 @@ static void card_config_load(const wchar_t *ini)
     GetPrivateProfileStringW(L"aime", L"scan", L"Insert", buf, _countof(buf), ini);
     card_cfg.vk_scan = divaonline_parse_key(buf, VK_INSERT);
 
+    card_cfg.scan_pad = GetPrivateProfileIntW(L"aime", L"scanPad", 1, ini) != 0;
     card_cfg.auto_insert = GetPrivateProfileIntW(L"aime", L"autoInsert", 0, ini) != 0;
 }
 
@@ -311,10 +314,117 @@ static HRESULT card_init(void)
     }
 
     if (!card_cfg.auto_insert) {
-        dprintf("Card: scan key is VK 0x%02X\n", card_cfg.vk_scan);
+        dprintf("Card: scan key is VK 0x%02X%s\n", card_cfg.vk_scan,
+                card_cfg.scan_pad ? ", or R3 / L2+R2 on a gamepad or a controller on DIVA Bridge" : "");
     }
 
     return S_OK;
+}
+
+/* R3, or L2 and R2 together: on an XInput gamepad, or on a controller that
+   DivallerBridge.dva reads from DIVA Bridge (its extended buttons: LT bit 6,
+   RT bit 7, RS bit 9). Under the DivaRecomp runtime (Android), both come
+   from the runtime: the headset's gamepad, the Quest's right thumbstick
+   click, and slider controllers on USB, Bluetooth or the network. */
+
+typedef struct {
+    WORD wButtons;
+    BYTE bLeftTrigger;
+    BYTE bRightTrigger;
+    SHORT sThumbLX, sThumbLY, sThumbRX, sThumbRY;
+} card_xinput_gamepad;
+
+typedef struct {
+    DWORD dwPacketNumber;
+    card_xinput_gamepad Gamepad;
+} card_xinput_state;
+
+typedef DWORD (WINAPI *card_xinput_get_state_t)(DWORD, card_xinput_state *);
+typedef DWORD (__cdecl *card_bridge_ext_t)(void);
+
+#define CARD_XI_RIGHT_THUMB 0x0080
+#define CARD_EXT_LT (1u << 6)
+#define CARD_EXT_RT (1u << 7)
+#define CARD_EXT_RS (1u << 9)
+
+static const char *card_pad_held(void)
+{
+    static card_xinput_get_state_t get_state;
+    static bool xinput_tried;
+    static DWORD retry_at[4];           /* disconnected pads are slow to ask: every 2 s */
+    static card_bridge_ext_t bridge_ext;
+    static DWORD bridge_tried_at;
+    static const wchar_t *const dlls[] = { L"xinput1_4.dll", L"xinput1_3.dll", L"xinput9_1_0.dll" };
+    DWORD now = GetTickCount();
+    DWORD i;
+
+    if (!xinput_tried) {
+        xinput_tried = true;
+
+        for (i = 0 ; i < _countof(dlls) && get_state == NULL ; i++) {
+            HMODULE mod = GetModuleHandleW(dlls[i]);
+
+            if (mod == NULL) {
+                mod = LoadLibraryW(dlls[i]);
+            }
+
+            if (mod != NULL) {
+                get_state = (card_xinput_get_state_t) GetProcAddress(mod, "XInputGetState");
+            }
+        }
+    }
+
+    for (i = 0 ; get_state != NULL && i < 4 ; i++) {
+        card_xinput_state st;
+
+        if (retry_at[i] != 0 && (LONG) (now - retry_at[i]) < 0) {
+            continue;
+        }
+
+        memset(&st, 0, sizeof(st));
+
+        if (get_state(i, &st) != ERROR_SUCCESS) {
+            retry_at[i] = now + 2000;
+            if (retry_at[i] == 0) retry_at[i] = 1;
+            continue;
+        }
+
+        retry_at[i] = 0;
+
+        if (st.Gamepad.wButtons & CARD_XI_RIGHT_THUMB) {
+            return "R3";
+        }
+
+        if (st.Gamepad.bLeftTrigger > 128 && st.Gamepad.bRightTrigger > 128) {
+            return "L2+R2";
+        }
+    }
+
+    /* DivallerBridge.dva loads after us (directory order): look again now and then */
+
+    if (bridge_ext == NULL && (bridge_tried_at == 0 || now - bridge_tried_at > 2000)) {
+        HMODULE mod = GetModuleHandleW(L"DivallerBridge.dva");
+
+        bridge_tried_at = now ? now : 1;
+
+        if (mod != NULL) {
+            bridge_ext = (card_bridge_ext_t) GetProcAddress(mod, "DivallerBridge_ExtButtons");
+        }
+    }
+
+    if (bridge_ext != NULL) {
+        DWORD ext = bridge_ext();
+
+        if (ext & CARD_EXT_RS) {
+            return "R3 (DIVA Bridge)";
+        }
+
+        if ((ext & (CARD_EXT_LT | CARD_EXT_RT)) == (CARD_EXT_LT | CARD_EXT_RT)) {
+            return "L2+R2 (DIVA Bridge)";
+        }
+    }
+
+    return NULL;
 }
 
 static bool card_scan_held(void)
@@ -328,8 +438,18 @@ static bool card_scan_held(void)
 
     {
         static bool warned;
+        static const char *last_pad;
         DWORD pid = 0;
-        bool held = (GetAsyncKeyState(card_cfg.vk_scan) & 0x8000) != 0;
+        const char *pad = card_cfg.scan_pad ? card_pad_held() : NULL;
+        bool held = (GetAsyncKeyState(card_cfg.vk_scan) & 0x8000) != 0 || pad != NULL;
+
+        if (pad != last_pad) {
+            if (pad != NULL) {
+                dprintf("Card: tapped with %s\n", pad);
+            }
+
+            last_pad = pad;
+        }
 
         if (!held) {
             return false;
@@ -341,7 +461,7 @@ static bool card_scan_held(void)
 
         if (pid != GetCurrentProcessId()) {
             if (!warned) {
-                dprintf("Card: scan key held, but the game window isn't in front; ignored\n");
+                dprintf("Card: scan key or button held, but the game window isn't in front; ignored\n");
                 warned = true;
             }
 
@@ -366,7 +486,7 @@ static HRESULT card_nfc_poll(uint8_t unit_no)
         static bool first_poll = true;
 
         if (first_poll) {
-            dprintf("Card: the game is looking for a card now (hold the scan key)\n");
+            dprintf("Card: the game is looking for a card now (hold the scan key, or R3 / L2+R2)\n");
             first_poll = false;
         }
     }
