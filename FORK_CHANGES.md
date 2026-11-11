@@ -28,6 +28,7 @@ None of these are needed to work on DivaGL. Each has its own README.
 |---|---|
 | `src/DivaVK` | An OpenGL 4.3 subset on Vulkan, so DivaGL runs without an OpenGL driver (Wine, Android). Has its own test suite (`src/DivaVK/tests`). |
 | `src/DivaLinux` | The plugin that ships, `DivaLinux.dva`: DivaGL compiled on DivaVK, plus an FFmpeg movie player (from DivaMovie), a file layer for Wine and zip archives, the drawn mouse pointer, OpenXR output, headphone surround (`audio/`, a hook on the game's mixer), and diagnostics. `main.cpp` is where it starts. |
+| `src/DivaOnline` | `DivaOnline.dva`: segatools' divahook (keychip, ALL.Net DNS/netenv, AMEX, Aime reader on COM10) as a PD Loader plugin, for card login and ARTEMiS servers. Plain C, built with MinGW; doesn't touch DivaGL. |
 | `src/DivaOverlay` | An in-game settings menu drawn over the game (F10). |
 | `src/LauncherFS` | A fullscreen launcher, `Launcher.dva`. |
 | `docker/`, `release.sh`, `CMakeLists.txt` | Building with MSVC under Wine in Docker, and packaging. The `.sln`/`.vcxproj` files still build too. |
