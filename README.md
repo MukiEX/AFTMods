@@ -56,6 +56,19 @@ With DivaLinux, it can also run as an in-game menu instead (Options > In-game me
 
 It's built separately from DivaGL and DivaLinux, with llvm-mingw: `src/LauncherFS/build-mingw.sh`, or its Docker image (see `src/LauncherFS/README.md`).
 
+## DivaOnline
+Aime card and ALL.Net support for PDAFT 7.10, so the game can log in with a card and play on an ARTEMiS server without segatools' `inject.exe` (`src/DivaOnline`). It's segatools' divahook as a PD Loader plugin: the keychip, ALL.Net DNS and network environment, AMEX board and the Aime reader on COM10, minus the input and display hooks PD Loader already covers. The card is a line in `plugins/DivaOnline.ini`:
+
+```ini
+[aime]
+; hold Insert on the card screen to tap the card
+accessCode=5012 3456 7890 1234 5678
+[dns]
+default=your.artemis.server
+```
+
+It's built with llvm-mingw (`src/DivaOnline/build-mingw.sh`). See [src/DivaOnline/README.md](src/DivaOnline/README.md).
+
 ## OPD Play Gen
 Generates OPD files on demand if not present. Also allows files to be cached. It only generates cache for missing motions or modules. If FARC with OPD is present, and OPD file inside that FARC is present too, it won't do anything and will load existing data.
 
