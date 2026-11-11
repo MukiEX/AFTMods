@@ -229,16 +229,39 @@ static void divaonline_start(void)
     amex_config_load(&divaonline_amex, divaonline_ini);
     aime_config_load(&divaonline_aime, divaonline_ini);
 
-    /* Two defaults differ from segatools' when the key isn't in the .ini:
+    /* Defaults that differ from segatools' when the key isn't in the .ini:
        - [netenv] on: segatools' Diva setups turn it on, so ALL.Net sees the
          LAN (router, subnet) it expects whatever the PC's network is.
-       - [gpio] off: its SW1/SW2 keys and DIP switches would sit next to
-         TLAC's own test/service buttons, and nothing online needs it. */
+       ([gpio] and [keychip] subnet: below.) */
 
     divaonline_platform.netenv.enable =
             GetPrivateProfileIntW(L"netenv", L"enable", 1, divaonline_ini) != 0;
+    /* [gpio] follows the TeamTofuShop fork's dist/diva/segatools.ini when keys
+       are missing: on, DIP switch 1 (distribution server) set, so the cabinet
+       starts as SATELLITE:MAIN and is its own location server (as SUB it
+       looks for one on the LAN: "Location Server NG", and no card system).
+       Test/Service on F4/F5, clear of TLAC's defaults. */
+
     divaonline_amex.gpio.enable =
-            GetPrivateProfileIntW(L"gpio", L"enable", 0, divaonline_ini) != 0;
+            GetPrivateProfileIntW(L"gpio", L"enable", 1, divaonline_ini) != 0;
+    divaonline_amex.gpio.dipsw[0] =
+            GetPrivateProfileIntW(L"gpio", L"dipsw1", 1, divaonline_ini) != 0;
+    divaonline_amex.gpio.vk_sw1 =
+            (uint8_t) GetPrivateProfileIntW(L"gpio", L"sw1", VK_F4, divaonline_ini);
+    divaonline_amex.gpio.vk_sw2 =
+            (uint8_t) GetPrivateProfileIntW(L"gpio", L"sw2", VK_F5, divaonline_ini);
+
+    /* ...and so does the keychip's subnet (Diva's is 192.168.78.0) */
+    {
+        wchar_t subnet[16];
+        unsigned int ip[4] = { 0 };
+
+        GetPrivateProfileStringW(L"keychip", L"subnet", L"192.168.78.0", subnet, _countof(subnet), divaonline_ini);
+
+        if (swscanf(subnet, L"%u.%u.%u.%u", &ip[0], &ip[1], &ip[2], &ip[3]) == 4) {
+            divaonline_platform.nusec.subnet = (ip[0] << 24) | (ip[1] << 16) | (ip[2] << 8);
+        }
+    }
 
     divaonline_vfs_path(divaonline_platform.vfs.amfs, _countof(divaonline_platform.vfs.amfs), L"amfs");
     divaonline_vfs_path(divaonline_platform.vfs.appdata, _countof(divaonline_platform.vfs.appdata), L"appdata");

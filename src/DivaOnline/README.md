@@ -14,7 +14,7 @@ in `third_party/`, unchanged apart from one line of scope (below).
 |---|---|
 | keychip (`nusec`), DNS, netenv, clock, PCB id, hwmon, hwreset, misc, vfs | same (vfs's `amfs`/`appdata` default to folders in the game folder) |
 | AMEX DS, EEPROM, SRAM | same |
-| AMEX GPIO | off by default (`[gpio] enable=1` turns it on) |
+| AMEX GPIO | same, with the fork's Diva defaults: DIP switch 1 on (SATELLITE:MAIN), Test/Service on F4/F5 |
 | Aime reader on COM10 (TN32MSEC003S) | same, card number from the .ini |
 | JVS I/O, touch slider, Elo touch screen, printer, graphics | not included: PD Loader's TLAC and DivaLinux do these |
 | amvideo | not included: diva.exe doesn't load amvideo.dll |
@@ -63,8 +63,10 @@ than segatools' Enter, because TLAC uses Enter for START.
 
 `DivaOnline.ini` lists every setting with a comment. The sections and keys are
 segatools.ini's (`[keychip]`, `[dns]`, `[netenv]`, `[clock]`, `[ds]`, `[eeprom]`, `[sram]`,
-`[aime]`, `[aimeio]`, ...), so a working `segatools.ini` can be pasted in. Two defaults
-differ when a key is missing: `[netenv] enable` is on, `[gpio] enable` is off.
+`[aime]`, `[aimeio]`, ...), so a working `segatools.ini` can be pasted in. Some defaults
+differ from segatools' when a key is missing, following the TeamTofuShop fork's
+`dist/diva/segatools.ini`: `[netenv] enable` on, `[gpio] dipsw1=1` (SATELLITE:MAIN),
+Test/Service on F4/F5, `[keychip] subnet=192.168.78.0`.
 
 DivaOnline's own section:
 
