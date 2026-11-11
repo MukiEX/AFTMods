@@ -65,4 +65,7 @@ bool pv_threaded_active();      // and the PV thread is running (hook.cpp)
 void pv_threaded_frame();       // game thread: show a finished picture, hand off the next
 void pv_threaded_leave();       // game thread: the first frame after a song
 void pv_thread_stop();
+// Game thread, before freeing anything a PV picture may read (scenes, object sets, textures):
+// waits for the PV thread to finish recording the picture it's on. `what` names it in the log.
+void pv_thread_wait_idle(const char* what);
 Shadow* render_shadow();        // the shadow state the calling thread draws with

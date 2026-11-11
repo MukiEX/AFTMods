@@ -13,6 +13,8 @@
 #include <Helpers.h>
 #include <map>
 
+void pv_thread_wait_idle(const char* what);   // threaded PV (pv_render.cpp)
+
 struct ObjsetInfo {
     p_file_handler obj_file_handler;
     bool obj_ready;
@@ -227,6 +229,7 @@ HOOK(bool, FASTCALL, create_objset_vertex_buffer, 0x00000001404589B0, ObjsetInfo
 }
 
 HOOK(void, FASTCALL, free_objset_index_buffer, 0x0000000140459B40, ObjsetInfo* info) {
+    pv_thread_wait_idle("an object set");   // threaded PV
     if (info->objib) {
         for (int32_t i = 0; i < info->objib_num; i++)
             free_object_index_buffer(&info->objib[i]);
@@ -246,6 +249,7 @@ HOOK(void, FASTCALL, free_objset_index_buffer, 0x0000000140459B40, ObjsetInfo* i
 }
 
 HOOK(void, FASTCALL, free_objset_vertex_buffer, 0x0000000140459C70, ObjsetInfo* info) {
+    pv_thread_wait_idle("an object set");   // threaded PV
     if (info->objvb) {
         for (int32_t i = 0; i < info->objvb_num; i++)
             free_object_vertex_buffer(&info->objvb[i]);
@@ -547,6 +551,7 @@ HOOK(uint32_t, FASTCALL, VertexBuffer__get_size, 0x00000000140461A50, VertexBuff
 HOOK(void, FASTCALL, free_index_buffer, 0x0000000140461900, GLuint ib) {
     if (!ib)
         return;
+    pv_thread_wait_idle("an index buffer");   // threaded PV
 
     disp_manager->remove_index_buffer(ib);
 
@@ -568,6 +573,7 @@ HOOK(void, FASTCALL, free_index_buffer, 0x0000000140461900, GLuint ib) {
 HOOK(void, FASTCALL, free_vertex_buffer, 0x0000000140461990, GLuint vb) {
     if (!vb)
         return;
+    pv_thread_wait_idle("a vertex buffer");   // threaded PV
 
     disp_manager->remove_vertex_buffer(vb);
 

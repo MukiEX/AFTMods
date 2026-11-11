@@ -7,19 +7,43 @@
 #include "../render_context.hpp"
 #include <Helpers.h>
 
+void pv_thread_wait_idle(const char* what);   // threaded PV (pv_render.cpp)
+
 namespace Glitter {
     GltParticleManager* glt_particle_manager = (GltParticleManager*)0x000000141199BB0;
     GltParticleManagerX* glt_particle_manager_x;
 
     /* threaded PV: the PV render thread draws the scenes as they were at the handoff (pointer lists copied
        on the game thread), so scenes the song script starts meanwhile don't move the lists
-       under it. Scenes are only deleted and particles only made in the managers' ctrl, which
-       the runtime runs only while the PV thread is idle. */
+       under it. Particles are only made in the managers' ctrl, which the runtime runs only
+       while the PV thread is idle; scenes are deleted there and by the song script (below). */
     static std::vector<Scene*> pv_scenes;
     static std::vector<SceneX*> pv_scenes_x;
     static thread_local bool use_pv_scenes;
 
+    /* threaded PV: the song script deletes scenes outside the managers' ctrl too: a stage
+       change unloads the old stage's effect group, scenes with it, from TaskPvGame, which runs
+       every frame. So the game's Scene destructor (slot 0 of its vtable, patched once from
+       the first live scene) waits for the PV thread to finish its picture first. (A scene's
+       effects are deleted with it or in ctrl.) */
+    typedef void* (FASTCALL* vdtor_func)(void* self, uint32_t flags);
+    static vdtor_func scene_dtor_orig;
+
+    static void* FASTCALL scene_dtor_guard(void* self, uint32_t flags) {
+        pv_thread_wait_idle("a Glitter scene");
+        return scene_dtor_orig(self, flags);
+    }
+
     void SnapshotScenesForPv() {
+        if (!scene_dtor_orig)
+            for (Scene* i : glt_particle_manager->scenes) {
+                if (!i || !i->__vftable)
+                    continue;
+                void** vtable = (void**)i->__vftable;
+                scene_dtor_orig = (vdtor_func)vtable[0];
+                WRITE_MEMORY(&vtable[0], void*, (void*)scene_dtor_guard);
+                break;
+            }
         pv_scenes.assign(glt_particle_manager->scenes.begin(), glt_particle_manager->scenes.end());
         if (glt_particle_manager_x)
             pv_scenes_x.assign(glt_particle_manager_x->scenes.begin(), glt_particle_manager_x->scenes.end());

@@ -89,15 +89,21 @@ context draws the PV pictures. The design and its reasoning are in
   up, the game thread adds and removes).
 - `hook.cpp`: `rndpass_pre_proc` and the PV's post-process are skipped on the game thread
   while the PV thread does them.
+- `object.cpp`, `texture.cpp`, `effect.cpp`, `light_param.cpp`, `Glitter/particle_manager.cpp`:
+  frees wait for the PV thread's picture (`pv_thread_wait_idle`, rule 2 below).
 
 The rules it depends on, which an edit to these areas must keep:
 1. Handoff happens on the game thread, only while the PV thread is idle: the draw lists, the
    PV's sprite lists (1 and 2), the Glitter scene pointers, the camera and the shadow state
    move or are copied to the PV thread then (`disp_manager_handoff`,
    `sprite_manager_handoff_pv_lists`, `SnapshotScenesForPv`, `pv_camera_snapshot_take`).
-2. The PV's game tasks (characters, effects, stage) update only while the PV thread is idle.
-   The runtime enforces this (`pv_throttle.c` in DivaDroid), so the PV thread can read
-   objects without locks.
+2. The game tasks that make and free what the PV thread draws (Glitter, the stage effects)
+   update only while the PV thread is idle; the runtime schedules them (`pv_throttle.c` in
+   DivaDroid). The characters' tasks update every frame (their motion needs it); they change
+   matrices but don't free memory. Anything freed outside those tasks (a stage change in the
+   song script unloads effects, object sets and textures right away) waits for the PV thread
+   to finish its picture first: `pv_thread_wait_idle` in DivaGL's free hooks and in the game's
+   Glitter scene destructor.
 3. Anything the PV thread reads that the game thread changes every frame has to come from a
    handoff copy. A new read of live game state on the PV's draw path breaks this rule.
 4. The game thread never waits for the PV thread during a song; it only checks whether a

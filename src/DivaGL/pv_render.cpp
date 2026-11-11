@@ -894,6 +894,30 @@ bool pv_threaded_active() {
     return pvt && pvt->ready.load() && pv_threaded_on();
 }
 
+/* Game thread, before something a PV picture may read is freed. The runtime runs the tasks
+   that make and free what the PV draws (Glitter, the stage effects) only while the PV thread
+   is idle, but the song script (TaskPvGame, on the HUD side, every frame) changes stages
+   too, and a stage change unloads the old stage's effect group (its Glitter scenes), object
+   sets and textures right away. A picture being recorded would then read freed memory. So
+   the frees wait for the PV thread to finish its picture first. They're rare (a stage
+   change, an unload), and the wait is at most one picture's recording. */
+void pv_thread_wait_idle(const char* what) {
+    if (!pvt || pv_render_thread_flag || !pvt->cpu_busy.load())
+        return;
+    LARGE_INTEGER t0;
+    QueryPerformanceCounter(&t0);
+    while (pvt->cpu_busy.load())
+        Sleep(0);
+    static int32_t said = 0;
+    if (said < 20) {
+        said++;
+        char buf[200];
+        snprintf(buf, sizeof(buf), "[DivaLinux] threaded PV: freeing %s waited %.1f ms for the PV thread's picture%s\n",
+            what, pv_ms_since(t0), said == 20 ? " (not logged again)" : "");
+        OutputDebugStringA(buf);
+    }
+}
+
 /* Game thread, the first frame after a song with threaded PV: the PV thread may still be
    drawing the last picture with the shared post-process state and objects; the game thread
    draws the PV itself from now on, so let that finish first (not during play: this is the
@@ -934,6 +958,9 @@ void pv_threaded_leave() {
 }
 
 void pv_thread_stop() {
+}
+
+void pv_thread_wait_idle(const char* what) {
 }
 
 #endif

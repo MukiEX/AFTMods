@@ -11,6 +11,8 @@
 #include "render_context.hpp"
 #include <Helpers.h>
 
+void pv_thread_wait_idle(const char* what);   // threaded PV (pv_render.cpp)
+
 struct light_param_data_light_data {
     bool has_type;
     light_type type;
@@ -233,6 +235,7 @@ HOOK(void, FASTCALL, light_param_data_storage__gen_textures, 0x00000001403E8C50,
 }
 
 HOOK(void, FASTCALL, light_param_data_storage__delete_textures, 0x00000001403E8D80, light_param_data_storage* storage) {
+    pv_thread_wait_idle("light parameter textures");   // threaded PV
     glDeleteTexturesDLL(5, storage->textures);
 }
 

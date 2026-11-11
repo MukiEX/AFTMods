@@ -9,6 +9,8 @@
 #include "shared.hpp"
 #include <Helpers.h>
 
+void pv_thread_wait_idle(const char* what);   // threaded PV (pv_render.cpp)
+
 struct texture_handler {
     texture tex;
     int32_t field_2C;
@@ -299,6 +301,7 @@ HOOK(texture*, FASTCALL, texture_load_tex_2d, 0x000000014069B8E0,
 HOOK(void, FASTCALL, texture_release, 0x000000014069DA70, texture* tex) {
     if (!texture_manager_work_ptr || !tex)
         return;
+    pv_thread_wait_idle("a texture");   // threaded PV
 
     texture_manager_work_ptr->entry_count--;
     if (tex->ref_count > 1) {

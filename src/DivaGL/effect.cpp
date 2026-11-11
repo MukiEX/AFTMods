@@ -27,6 +27,8 @@
 #include "texture.hpp"
 #include <Helpers.h>
 
+void pv_thread_wait_idle(const char* what);   // threaded PV (pv_render.cpp)
+
 struct fog_ring_data {
     vec3 position;
     vec3 direction;
@@ -957,6 +959,7 @@ HOOK(void, FASTCALL, EffectFogRing__draw_static, 0x0000000140349940,
 }
 
 HOOK(void, FASTCALL, leaf_particle_free, 0x000000014034BB30) {
+    pv_thread_wait_idle("leaf particles");   // threaded PV
     if (leaf_ptcl_data) {
         free(leaf_ptcl_data);
         leaf_ptcl_data = 0;
@@ -1040,6 +1043,7 @@ HOOK(void, FASTCALL, leaf_particle_init, 0x000000014034C530, bool change_stage) 
 }
 
 HOOK(void, FASTCALL, particle_free, 0x0000000140351600) {
+    pv_thread_wait_idle("particles");   // threaded PV
     if (ptcl_data)
         free(ptcl_data);
 
@@ -1437,6 +1441,7 @@ HOOK(void, FASTCALL, snow_particle_init, 0x000000014035DD30, bool change_stage) 
 }
 
 HOOK(void, FASTCALL, water_particle__free, 0x0000000140363F00, water_particle* water_ptcl) {
+    pv_thread_wait_idle("water particles");   // threaded PV
     auto elem = water_particle_storage.find(water_ptcl);
     if (elem != water_particle_storage.end()) {
         elem->second.Destroy();
