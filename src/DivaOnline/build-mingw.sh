@@ -9,10 +9,23 @@ here="$(cd "$(dirname "$0")" && pwd)"
 # later build, so it can't be a temporary file.
 tc="$(pwd)/build/llvm-mingw-x64.cmake"
 # A build folder configured with another toolchain file (older versions of this script used
-# a temporary one that no longer exists) can't be reused: start it over.
-if [ -f build/win/CMakeCache.txt ] && ! grep -q "^CMAKE_TOOLCHAIN_FILE:[A-Z]*=$tc\$" build/win/CMakeCache.txt; then
-    echo "== DivaOnline: build folder was set up with another toolchain file, starting it over"
-    rm -rf build/win
+# a temporary one that no longer exists) can't be reused: start it over. CMake records the
+# file in two places, the cache and CMakeFiles/<version>/CMakeSystem.cmake, and a failed
+# configure can leave them disagreeing, so both are checked.
+if [ -d build/win ]; then
+    stale=0
+    if [ -f build/win/CMakeCache.txt ] && ! grep -qF "CMAKE_TOOLCHAIN_FILE:FILEPATH=$tc" build/win/CMakeCache.txt \
+            && ! grep -qF "CMAKE_TOOLCHAIN_FILE:UNINITIALIZED=$tc" build/win/CMakeCache.txt; then
+        stale=1
+    fi
+    for sys in build/win/CMakeFiles/*/CMakeSystem.cmake; do
+        [ -f "$sys" ] || continue
+        grep -q "^include(" "$sys" && ! grep -qF "include(\"$tc\")" "$sys" && stale=1
+    done
+    if [ "$stale" = 1 ]; then
+        echo "== DivaOnline: build folder was set up with another toolchain file, starting it over"
+        rm -rf build/win
+    fi
 fi
 mkdir -p build/win
 cat > "$tc" <<TC
