@@ -5,7 +5,10 @@
 set -e
 : "${LLVM_MINGW:?set LLVM_MINGW to the llvm-mingw directory}"
 here="$(cd "$(dirname "$0")" && pwd)"
-tc=$(mktemp)
+# The toolchain file stays next to the build: CMake's cache refers back to it on every
+# later build, so it can't be a temporary file.
+mkdir -p build/win
+tc="$(pwd)/build/llvm-mingw-x64.cmake"
 cat > "$tc" <<TC
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
@@ -14,4 +17,3 @@ set(CMAKE_RC_COMPILER  $LLVM_MINGW/bin/x86_64-w64-mingw32-windres)
 TC
 cmake -S "$here" -B build/win -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$tc"
 cmake --build build/win
-rm -f "$tc"
