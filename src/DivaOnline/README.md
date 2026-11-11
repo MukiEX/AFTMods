@@ -73,11 +73,13 @@ DivaOnline's own section:
 | `enable` | 1 | 0 turns the plugin off |
 | `undo_quick_start` | 1 | Undo PD Loader's `quick_start` patch, which skips the card screen |
 | `undo_network_patches` | 0 | Undo the three startup network check patches PD Loader always applies (skip part of the check, no DHCP wait, ignore the location server result). Players have gone online through segatools with them in place, so they're kept unless the check fails |
+| `undo_keychip_patches` | 0 | Undo PD Loader's two "skip unnecessary checks" patches: one tells the game the keychip was found before the keychip driver answers |
 | `preload_divalinux` | 1 | Load `DivaLinux.dva` before hooking (see below) |
 | `log_file` | (none) | Also write the log to this file |
 
-The patches are undone when the game calls `glutInit`, after every plugin (including
-`Patches.dva`) has loaded and before the game's startup checks run. A site is only
+The patches are undone at the first file the game opens once `Patches.dva` is loaded (or
+when it calls `glutInit`), after every plugin has loaded and before the game's startup
+checks run. The log lists each site as `original` or `PD Loader patch` at that moment. A site is only
 changed when it holds exactly the bytes PD Loader writes there.
 
 ## How it fits with the other plugins

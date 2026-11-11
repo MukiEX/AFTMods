@@ -3,7 +3,7 @@
    network check patches, loads DivaOnline.dva and checks the original bytes are back.
    Build with a different image base so 0x140000000 is free for diva.exe:
      x86_64-w64-mingw32-clang -O1 -o fixups_test.exe fixups_test.c -Wl,--image-base,0x10000000
-   Run next to diva.exe and plugins/DivaOnline.dva (with undo_network_patches=1). */
+   Run next to diva.exe and plugins/DivaOnline.dva (with undo_network_patches=1 and undo_keychip_patches=1). */
 #include <windows.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -37,6 +37,8 @@ int main(void)
     put(0x1406717B1, "\xE9\x22\x03\x00", 4);
     put(0x1406724E7, "\x00\x00", 2);
     put(0x1406732A2, "\x90\x90", 2);
+    put(0x14066E820, "\xB8\x01\x00\x00\x00\xC3", 6);
+    put(0x140210820, "\xB8\x00\x00\x00\x00\xC3", 6);
 
     HMODULE m = LoadLibraryW(L"plugins\\DivaOnline.dva");
     ((void (*)(void)) GetProcAddress(m, "InitializeDVA"))();
@@ -46,6 +48,8 @@ int main(void)
     expect(0x1406717B1, "\x0F\x85\x21\x03", 4, "network check jump restored");
     expect(0x1406724E7, "\xA0\x8C", 2, "DHCP wait restored");
     expect(0x1406732A2, "\x75\x1E", 2, "location server check restored");
+    expect(0x14066E820, "\x0F\xB6\x05\xE3\x65\x62", 6, "keychip found check restored");
+    expect(0x140210820, "\x40\x53\x48\x83\xEC\x20", 6, "skipped check restored");
     printf("%s\n", failures ? "FAILED" : "PASSED");
     return failures != 0;
 }

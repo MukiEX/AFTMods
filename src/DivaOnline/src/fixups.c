@@ -10,9 +10,16 @@
      have gone online with segatools' divahook.dll alongside them, so they're
      left alone unless [divaonline] undo_network_patches=1.
 
-   Patches.dva loads after DivaOnline.dva, so these run when the game calls
-   glutInit: by then every plugin has loaded, and the game hasn't reached its
-   startup checks or the card screen yet. Each site is only written when it
+   - Two always-on "skip unnecessary checks" patches: one makes the game
+     believe the keychip was found before the keychip driver has answered,
+     the other stubs out a check next to it. Undone with
+     [divaonline] undo_keychip_patches=1.
+
+   Patches.dva loads after DivaOnline.dva (and writes its patches in its
+   DllMain), so these run at the first file the game opens once Patches.dva is
+   loaded, or when the game calls glutInit, whichever comes first: by then
+   every plugin has loaded, and the game hasn't reached its startup checks or
+   the card screen yet. Each site is only written when it
    holds exactly what PD Loader writes there, so another game version or
    another patch is never overwritten. */
 
@@ -22,6 +29,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "hook/iohook.h"
 #include "hook/table.h"
 
 #include "util/dprintf.h"
@@ -67,6 +75,20 @@ static const struct fixup_site network_sites[] = {
         0x1406732A2, "ignore location server checks", 2,
         { 0x75, 0x1E },
         { { 0x90, 0x90 } },
+        1,
+    },
+};
+
+static const struct fixup_site keychip_sites[] = {
+    {
+        0x14066E820, "keychip found (forced true)", 6,
+        { 0x0F, 0xB6, 0x05, 0xE3, 0x65, 0x62 },
+        { { 0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3 } },
+        1,
+    }, {
+        0x140210820, "skip check (forced 0)", 6,
+        { 0x40, 0x53, 0x48, 0x83, 0xEC, 0x20 },
+        { { 0xB8, 0x00, 0x00, 0x00, 0x00, 0xC3 } },
         1,
     },
 };
@@ -140,6 +162,8 @@ static void fixups_restore(const struct fixup_site *sites, size_t n)
     }
 }
 
+static void fixups_report(const struct fixup_site *sites, size_t n);
+
 static void fixups_apply(void)
 {
     if (fixups_done) {
@@ -148,6 +172,11 @@ static void fixups_apply(void)
 
     fixups_done = true;
 
+    dprintf("Fixups: game code as the game starts:\n");
+    fixups_report(quick_start_sites, _countof(quick_start_sites));
+    fixups_report(network_sites, _countof(network_sites));
+    fixups_report(keychip_sites, _countof(keychip_sites));
+
     if (fixups_cfg.undo_quick_start) {
         fixups_restore(quick_start_sites, _countof(quick_start_sites));
     }
@@ -155,6 +184,51 @@ static void fixups_apply(void)
     if (fixups_cfg.undo_network_patches) {
         fixups_restore(network_sites, _countof(network_sites));
     }
+
+    if (fixups_cfg.undo_keychip_patches) {
+        fixups_restore(keychip_sites, _countof(keychip_sites));
+    }
+}
+
+/* Logs which of PD Loader's patches are in place, whatever is undone */
+static void fixups_report(const struct fixup_site *sites, size_t n)
+{
+    size_t i;
+    size_t j;
+
+    for (i = 0 ; i < n ; i++) {
+        const struct fixup_site *s = &sites[i];
+        const char *state = "unexpected bytes";
+
+        if (!fixups_readable(s->addr, s->len)) {
+            state = "not mapped";
+        } else if (memcmp((void *) s->addr, s->original, s->len) == 0) {
+            state = "original";
+        } else {
+            for (j = 0 ; j < s->npatched ; j++) {
+                if (memcmp((void *) s->addr, s->patched[j], s->len) == 0) {
+                    state = "PD Loader patch";
+                }
+            }
+        }
+
+        dprintf("Fixups: %-32s %s\n", s->what, state);
+    }
+}
+
+static unsigned int fixups_opens_seen;
+
+static HRESULT fixups_handle_irp(struct irp *irp)
+{
+    if (!fixups_done && irp->op == IRP_OP_OPEN && fixups_opens_seen < 100000) {
+        fixups_opens_seen++;
+
+        if (GetModuleHandleW(L"Patches.dva") != NULL) {
+            fixups_apply();
+        }
+    }
+
+    return iohook_invoke_next(irp);
 }
 
 static void hook_glutInitWithExit(int *argcp, char **argv, void (*exitfunc)(int))
@@ -167,9 +241,7 @@ void fixups_init(const struct fixups_config *cfg)
 {
     fixups_cfg = *cfg;
 
-    if (!cfg->undo_quick_start && !cfg->undo_network_patches) {
-        return;
-    }
+    iohook_push_handler(fixups_handle_irp);
 
     hook_table_apply(GetModuleHandleW(NULL), "glut32.dll", fixups_glut_syms, _countof(fixups_glut_syms));
 

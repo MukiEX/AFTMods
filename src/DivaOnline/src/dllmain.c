@@ -279,6 +279,8 @@ static void divaonline_start(void)
             GetPrivateProfileIntW(L"divaonline", L"undo_quick_start", 1, divaonline_ini) != 0;
     fixups.undo_network_patches =
             GetPrivateProfileIntW(L"divaonline", L"undo_network_patches", 0, divaonline_ini) != 0;
+    fixups.undo_keychip_patches =
+            GetPrivateProfileIntW(L"divaonline", L"undo_keychip_patches", 0, divaonline_ini) != 0;
     fixups_init(&fixups);
 
     /* ALL.Net billing asks the keychip for these two files (segatools serves

@@ -15,6 +15,7 @@ int divaonline_parse_key(const wchar_t *s, int fallback);
 struct fixups_config {
     bool undo_quick_start;
     bool undo_network_patches;
+    bool undo_keychip_patches;
 };
 
 /* Puts back game code PD Loader's Patches plugin changes that would keep the
