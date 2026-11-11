@@ -24,14 +24,18 @@ Switches in `divarecomp_env.txt` are commented out rather than deleted when set 
 |---|---|---|---|---|---|
 | Windows / Wine | F10, or View + Start | arrows, D-pad, left stick | left / right | Enter, B | Esc, A |
 | Android (gamepad) | Select + Start | D-pad, left stick | left / right | B | A, Back |
-| Android (slider controller) | Select + Start (− and + on the HORI / ZhouSensor) | the slider's left / right edge | △ / □ | ○ | × |
-
-Opened from a slider controller, the menu shows a card in the bottom right with the controller's
-controls, and its footer names the buttons ○ and ×.
+| Slider controller (Android; Windows with DivallerBridge) | Select + Start (− and + on the HORI / ZhouSensor) | the slider's left / right edge | △ / □ | ○ | × |
 | Android (touch) | hold the top right corner for a second | tap and drag | tap the arrows | tap | the arrow by the title |
 | Quest | the left controller's menu button | point | point at the arrows | A/X or a trigger | B/Y |
 
 On a gamepad B confirms and A goes back, as in the game (its ○ and ×).
+
+Opened from a slider controller, the menu shows a card in the bottom right with the controller's
+controls, and its footer names the buttons ○ and ×. On Windows the controller reaches the menu
+through DivallerBridge (MukiEX/DIVA_Bridge_project), for a Divaller through the bridge or
+plugged in directly: it finds the menu's controller struct through DivaLinux.dva's export
+`DivaOverlay_ControllerIO` (the runtime's layout) and holds TLAC's view of the controller back
+while the menu has it.
 
 Mouse and touch: tap a row to open it or switch it, tap the arrows on its value box to step
 it, drag to scroll, the X at the top right closes the menu.

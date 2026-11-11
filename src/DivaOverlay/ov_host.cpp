@@ -110,6 +110,11 @@ namespace {
     };
     enum { DOV_SRC_PAD = 0, DOV_SRC_XR = 1, DOV_SRC_SLIDER = 2, DOV_SRC_TOUCH = 3 };
 
+    // Windows: the same struct, ours, for a plugin that reads a DIVA controller (DivallerBridge)
+    // to drive the menu with, as the runtime does on Android. It finds it through
+    // DivaOverlay_ControllerIO (below), bumps toggles with opened_by DOV_SRC_SLIDER, keeps the
+    // menu buttons held in buttons, and holds the game's input back while open is set.
+    RecompOverlayIO g_ctl = { 0x4C564F44u, 2 };
     void ov_log(const char* fmt, ...) {
         char buf[512];
         va_list ap;
@@ -214,6 +219,7 @@ namespace {
         std::wstring ini, game_dir;
         RecompOverlayIO* io = nullptr;
         uint32_t toggles_seen = 0;
+        uint32_t ctl_toggles_seen = 0;   // Windows: g_ctl's
         bool open_slider = false;    // the menu was opened from a slider controller
         int key = VK_F10;
         bool open = false, draining = false, toggle_was_down = false;
@@ -385,6 +391,7 @@ namespace {
         }
         g.open = open;
         if (g.io) g.io->open = open ? 1 : 0;
+        g_ctl.open = open ? 1 : 0;
     }
 
     void restart_game() {
@@ -421,14 +428,20 @@ namespace {
             if (b) g.device = dov::Device::Pad;
         }
         else {
+            // a DIVA controller, through a plugin (DivallerBridge)
+            const uint32_t cb = g_ctl.buttons;
+            in.up = cb & DOV_UP; in.down = cb & DOV_DOWN; in.left = cb & DOV_LEFT; in.right = cb & DOV_RIGHT;
+            in.ok = cb & DOV_OK; in.back = cb & DOV_BACK;
+            const bool ctl = cb != 0;
             auto key = [](int k) { return ((o_GetAsyncKeyState ? o_GetAsyncKeyState(k) : GetAsyncKeyState(k)) & 0x8000) != 0; };
             const bool focused = GetForegroundWindow() == hwnd;
             bool kb = false;
             if (focused) {
-                in.up = key(VK_UP); in.down = key(VK_DOWN); in.left = key(VK_LEFT); in.right = key(VK_RIGHT);
-                in.ok = key(VK_RETURN) || key(VK_SPACE); in.back = key(VK_ESCAPE) || key(VK_BACK);
+                in.up |= key(VK_UP); in.down |= key(VK_DOWN); in.left |= key(VK_LEFT); in.right |= key(VK_RIGHT);
+                in.ok |= key(VK_RETURN) || key(VK_SPACE); in.back |= key(VK_ESCAPE) || key(VK_BACK);
                 in.page_up = key(VK_PRIOR); in.page_down = key(VK_NEXT);
-                kb = in.up || in.down || in.left || in.right || in.ok || in.back || in.page_up || in.page_down;
+                kb = key(VK_UP) || key(VK_DOWN) || key(VK_LEFT) || key(VK_RIGHT) || key(VK_RETURN) || key(VK_SPACE)
+                    || key(VK_ESCAPE) || key(VK_BACK) || in.page_up || in.page_down;
             }
             int lx = 0, ly = 0;
             const WORD pb = pad_buttons(&lx, &ly);
@@ -439,7 +452,7 @@ namespace {
             in.ok |= (pb & XI_B) != 0; in.back |= (pb & XI_A) != 0;
             in.page_up |= (pb & XI_LB) != 0; in.page_down |= (pb & XI_RB) != 0;
             if (kb) g.device = dov::Device::Keys;
-            else if (pad) g.device = dov::Device::Pad;
+            else if (pad || ctl) g.device = dov::Device::Pad;
             const int w = g.wheel.exchange(0);
             in.wheel = w / 120.0f;
         }
@@ -479,6 +492,12 @@ static void find_runtime() {
     }
 }
 
+// Windows: the menu's controller struct, for a plugin that reads a DIVA controller (DivallerBridge
+// finds it with GetProcAddress on DivaLinux.dva). seen is set while the menu is on.
+extern "C" __declspec(dllexport) void* __cdecl DivaOverlay_ControllerIO(void) {
+    return &g_ctl;
+}
+
 // From DivaLinux's dllmain, with DivaLinux.ini's path.
 extern "C" void divaoverlay_install(HMODULE self, const wchar_t* divalinux_ini) {
     std::lock_guard<std::mutex> lock(g_lock);
@@ -492,6 +511,7 @@ extern "C" void divaoverlay_install(HMODULE self, const wchar_t* divalinux_ini) 
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     g.game_dir = dir_of(exe);
     find_runtime();
+    g_ctl.seen = g.enabled && !g.io ? 1 : 0;   // under the runtime, it reads the controller itself
     if (!g.enabled) {
         ov_log("DivaOverlay: off ([overlay] enabled=0 in DivaLinux.ini)");
         return;
@@ -596,9 +616,18 @@ extern "C" int divaoverlay_frame(HWND hwnd, int32_t lay_w, int32_t lay_h,
         const bool key = GetForegroundWindow() == hwnd && raw_key(g.key);
         const bool combo = (pad_buttons() & (XI_BACK | XI_START)) == (XI_BACK | XI_START);
         const bool down = key || (!g.open && combo);
-        if (down && !g.toggle_was_down)
+        if (down && !g.toggle_was_down) {
+            g.open_slider = false;
             set_open(!g.open);
+        }
         g.toggle_was_down = down;
+        // Select + Start on a DIVA controller (DivallerBridge)
+        const uint32_t t = g_ctl.toggles;
+        if (t != g.ctl_toggles_seen) {
+            g.ctl_toggles_seen = t;
+            g.open_slider = g_ctl.opened_by == DOV_SRC_SLIDER;
+            set_open(!g.open);
+        }
     }
     if (g.restart_requested) {
         g.restart_requested = false;
