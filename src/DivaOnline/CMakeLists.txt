@@ -24,6 +24,7 @@ set(SEGA ${CMAKE_CURRENT_SOURCE_DIR}/third_party/segatools)
 add_library(DivaOnline SHARED
     src/dllmain.c
     src/card.c
+    src/reader.c
     src/fixups.c
     src/tlac.c
     src/dprintf.c

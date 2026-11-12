@@ -32,3 +32,7 @@ struct fixups_config {
    card screen or the network checks from running. Applied once all plugins
    have loaded (when the game calls glutInit). */
 void fixups_init(const struct fixups_config *cfg);
+
+/* reader.c: a PC/SC card reader ([aime] reader=) */
+bool divaonline_reader_start(const wchar_t *ini);
+int divaonline_reader_card(uint64_t *idm, uint8_t code[10]);

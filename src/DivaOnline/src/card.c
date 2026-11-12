@@ -6,6 +6,9 @@
      scan key is held, or R3 (or L2+R2) on a gamepad or a controller on DIVA
      Bridge, or all the time with autoInsert=1. With no accessCode,
      segatools' aime.txt / felica.txt files are read instead, as aimeio does.
+   - [aime] reader=auto (or a reader's name): a real reader through PC/SC,
+     such as an ACR122U (reader.c). The card on it wins; with none on it,
+     the above still applies.
    - [aimeio] path=<dll>: a segatools-style aimeio DLL (for a real reader,
      e.g. a PC/SC one) is loaded and used instead, as segatools does. */
 
@@ -48,6 +51,7 @@ static uint64_t card_felica_id;
 static bool card_aime_present;
 static bool card_felica_present;
 static bool card_was_present;
+static bool card_reader;            /* [aime] reader= is running */
 
 /* ---------------------------------------------------------------- config */
 
@@ -494,6 +498,31 @@ static HRESULT card_nfc_poll(uint8_t unit_no)
     card_aime_present = false;
     card_felica_present = false;
 
+    /* a card on a real reader comes first */
+    if (card_reader) {
+        uint64_t idm;
+        uint8_t code[10];
+        int kind = divaonline_reader_card(&idm, code);
+
+        if (kind == 1) {
+            card_felica_id = idm;
+            card_felica_present = true;
+        } else if (kind == 2) {
+            memcpy(card_aime_id, code, sizeof(card_aime_id));
+            card_aime_present = true;
+        }
+
+        if (kind != 0) {
+            if (!card_was_present) {
+                dprintf("Card: on the reader (the real one)\n");
+            }
+
+            card_was_present = true;
+
+            return S_OK;
+        }
+    }
+
     if (!card_scan_held()) {
         card_was_present = false;
 
@@ -617,6 +646,11 @@ static HRESULT card_bind_external(const wchar_t *path)
 static void card_use_builtin(void)
 {
     card_config_load(divaonline_ini_path());
+
+    /* the reader is watched from the start, so it's ready when the card screen comes */
+    if (!card_reader) {
+        card_reader = divaonline_reader_start(divaonline_ini_path());
+    }
 
     aime_dll.api_version = 0x0100;
     aime_dll.init = card_init;

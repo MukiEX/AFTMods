@@ -56,6 +56,12 @@ emulates. Where the card number comes from:
    all of the above and reads its own settings, usually from `segatools.ini` in the game
    folder.
 
+**A real card reader**: `[aime] reader=auto` reads the card on a PC/SC reader such as an
+ACR122U (no extra software on Windows; on Android the DivaRecomp runtime drives it over
+USB). A FeliCa card goes to the game as its IDm, as `felicaIdm=` would; an older MIFARE
+Aime as the access code stored on it. While no card is on the reader, the settings above
+still apply.
+
 **R3**, or **L2 and R2** together, tap the card too (`[aime] scanPad=1`, the default): on
 an XInput gamepad, or on a controller on DIVA Bridge (a HORI's ZL+ZR or right stick click,
 read by DivallerBridge.dva). On Android the runtime supplies both, plus the Quest's right
