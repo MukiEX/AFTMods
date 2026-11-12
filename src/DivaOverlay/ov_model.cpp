@@ -326,7 +326,7 @@ namespace dov {
             auto room = opt(lfs::make_choice(L"headphones", L"audio", ini, L"Headphone surround",
                 L"Plays the game's sound as if from two speakers in a room, for headphones.\n\n"
                 L"Needs a room filter DLL in plugins: DolbyHph.dll (from your own copy), or LakeHP_OpenRooms.dll, "
-                L"which comes with DivaLinux. Adds about 23 ms of delay.", 0,
+                L"which comes with DivaLinux. Adds about 3 ms of delay.", 0,
                 { L"Off", L"Small room", L"Medium room", L"Large room" }));
             auto filters = opt(lfs::make_choice_text(L"filters", L"audio", ini, L"Room filters",
                 L"The DLL in plugins the rooms come from.\n\nauto: DolbyHph.dll when it's there, else LakeHP_OpenRooms.dll.",

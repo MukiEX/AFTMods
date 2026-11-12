@@ -27,8 +27,11 @@ void hp_destroy(hp_state *s);
 int hp_load(hp_state *s, const uint8_t *blob, size_t len);
 /* In place: the first two of `channels` interleaved 16-bit channels are rendered for
  * headphones and written to every pair of channels (the game's 4-channel output carries
- * the same stereo twice, for speakers and headphones). Adds 1024 frames of latency. */
+ * the same stereo twice, for speakers and headphones). Adds hp_latency() frames of delay. */
 void hp_process(hp_state *s, int16_t *buf, int frames, int channels);
+/* The delay hp_process adds, in frames (128: the Lake engine's 1024-frame blocks are only
+ * used at load time, to measure the room; see hp_core.c). */
+int hp_latency(void);
 
 #ifdef __cplusplus
 }

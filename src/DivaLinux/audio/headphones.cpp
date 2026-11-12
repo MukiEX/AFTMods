@@ -112,7 +112,7 @@ namespace {
         a.active = true;
         static const char* const rooms[] = { "", "small", "medium", "large" };
         dl::log("[Audio] Headphones: %s room from %s at %u Hz (adds %.0f ms)",
-            rooms[a.setup.room], a.setup.name.c_str(), rate, 1024 * 1000.0 / rate);
+            rooms[a.setup.room], a.setup.name.c_str(), rate, hp_latency() * 1000.0 / rate);
     }
 }
 

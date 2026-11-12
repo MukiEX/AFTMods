@@ -65,7 +65,7 @@ nobody sees the window, and its copy and image wait only cost time.
 
 | `[audio]` key | Default | What it does |
 | --- | --- | --- |
-| `headphones` | 0 | **0** off. **1** small, **2** medium, **3** large room: the game's stereo is played as if from two speakers in that room, for headphones. Adds 1024 samples of delay (23 ms at the game's 44.1 kHz). |
+| `headphones` | 0 | **0** off. **1** small, **2** medium, **3** large room: the game's stereo is played as if from two speakers in that room, for headphones. Adds 128 samples of delay (3 ms at the game's 44.1 kHz): the room is measured from the Lake engine when it loads and played back in short pieces. |
 | `filters` | auto | The DLL in `plugins` the rooms come from. **auto**: `DolbyHph.dll` when it's there (the original engine's, from your own copy; it isn't distributed), else `LakeHP_OpenRooms.dll` (LakeHP's open filters from the SONICOM HRTF data, CC BY-SA 3.0, shipped with DivaLinux). Or a file name in `plugins`. |
 
 It works on whatever plays the game's sound: the game's own WASAPI output, PD Loader's

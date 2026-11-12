@@ -3,6 +3,7 @@
  *   ./hp_core_test plugins/LakeHP_OpenRooms.dll [out.wav]    (out.wav: the medium room)
  * The test signal is noise on the left channel for a second: the left ear should hear more. */
 #include "hp_core.h"
+#include "lakehp.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,10 +62,46 @@ int main(int argc, char **argv) {
             }
             pos += n;
         }
-        /* the first block is the latency: silent */
+        /* the first hp_latency() frames are the delay: silent */
         int silent = 1;
-        for (int i = 0; i < 1024 * 2; i++) if (all[i]) silent = 0;
+        for (int i = 0; i < hp_latency() * 2; i++) if (all[i]) silent = 0;
         CHECK(silent);
+        CHECK(hp_latency() <= 128);
+        {   /* the same as the Lake engine itself (1024 frames later): the difference well below the sound */
+            static lhp_engine e;
+            lhp_init(&e);
+            const int8_t map[LHP_NPOS] = { 0, -1, 1, -1, -1, -1 };
+            lhp_set_map(&e, map, 2); lhp_set_map_back(&e, -1, -1);
+            CHECK(lhp_load_filter(&e, blob, blen, 1.0f) == 0);
+            lhp_reset(&e);
+            int16_t *ref = calloc((size_t)total * 2, sizeof(int16_t));
+            int16_t in[LHP_BLOCK * 2], out[LHP_BLOCK * 2];
+            seed = 12345;
+            for (int p = 0; p + LHP_BLOCK <= total; p += LHP_BLOCK) {
+                for (int i = 0; i < LHP_BLOCK; i++) {
+                    int n2 = p + i; (void)n2;
+                    in[2 * i] = 0; in[2 * i + 1] = 0;
+                }
+                /* the same noise as above: regenerate it sample by sample */
+                for (int i = 0; i < LHP_BLOCK; i++) {
+                    seed = seed * 1664525u + 1013904223u;
+                    in[2 * i] = (p + i) < rate ? (int16_t)((int32_t)(seed >> 16) % 8000) : 0;
+                }
+                lhp_push_s16(&e, in, LHP_BLOCK, out);
+                memcpy(ref + (size_t)p * 2, out, sizeof(out));
+            }
+            double err = 0, sig = 0;
+            const int lat = hp_latency();
+            for (int i = 0; i + lat < total - LHP_BLOCK; i++)
+                for (int c = 0; c < 2; c++) {
+                    double x = ref[2 * i + c], y = all[2 * (i + lat) + c];
+                    err += (x - y) * (x - y); sig += x * x;
+                }
+            double db = 10 * log10(err / sig + 1e-30);
+            printf("  difference from the Lake engine: %.1f dB\n", db);
+            CHECK(db < -45);
+            free(ref);
+        }
         printf("  left %.1f dB, right %.1f dB (both ears hear the left speaker)\n",
                10 * log10(el / total + 1e-9), 10 * log10(er / total + 1e-9));
         CHECK(el > 0 && er > 0 && el > er);
