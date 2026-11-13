@@ -1013,6 +1013,22 @@ samplers(), render_samplers(), sprite_samplers(), screen_width(), screen_height(
 
     static const vec4 border_color = 0.0f;
 
+    // DivaLinux: DIVA_ANISO=<1..16> sets the anisotropy of the material and sprite samplers
+    // (16 by default, as upstream), for finding whether the texture filtering AMD gets with
+    // anisotropy is what steps magnified textures (close-up gears, eyes).
+    static const float_t max_aniso = [] {
+        char v[16] = {};
+        DWORD n = GetEnvironmentVariableA("DIVA_ANISO", v, sizeof(v));
+        float_t a = n && n < sizeof(v) ? (float_t)atof(v) : 16.0f;
+        a = a < 1.0f ? 1.0f : a > 16.0f ? 16.0f : a;
+        if (a != 16.0f) {
+            char buf[96];
+            snprintf(buf, sizeof(buf), "[DivaLinux] DIVA_ANISO=%s: sampler anisotropy %.0f\n", v, a);
+            OutputDebugStringA(buf);
+        }
+        return a;
+    }();
+
     glGenSamplers(18, samplers);
     for (int32_t i = 0; i < 18; i++) {
         GLuint sampler = samplers[i];
@@ -1021,7 +1037,7 @@ samplers(), render_samplers(), sprite_samplers(), screen_width(), screen_height(
         glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER,
             i % 2 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
         glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT, 16.0f);
+        glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT, max_aniso);
 
         GLuint wrap_s;
         switch (i / 2 % 3) {
@@ -1086,14 +1102,14 @@ samplers(), render_samplers(), sprite_samplers(), screen_width(), screen_height(
     glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT, 16.0f);
+    glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT, max_aniso);
 
     sampler = sprite_samplers[1];
     glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
     glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT, 16.0f);
+    glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT, max_aniso);
 
     sampler = sprite_samplers[2];
     glSamplerParameterfv(sampler, GL_TEXTURE_BORDER_COLOR, (GLfloat*)&border_color);
@@ -1101,7 +1117,7 @@ samplers(), render_samplers(), sprite_samplers(), screen_width(), screen_height(
     glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-    glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT, 16.0f);
+    glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT, max_aniso);
 
     if (!max_uniform_block_size)
         max_uniform_block_size = min_def((uint32_t)sv_max_uniform_buffer_size, 64u * 1024);
