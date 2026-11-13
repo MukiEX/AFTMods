@@ -27,6 +27,8 @@ add_library(DivaOnline SHARED
     src/reader.c
     src/fixups.c
     src/tlac.c
+    src/devicezip.c
+    src/zipread.c
     src/dprintf.c
     src/DivaOnline.rc
 

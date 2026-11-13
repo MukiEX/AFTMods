@@ -85,6 +85,7 @@ DivaOnline's own section:
 |---|---|---|
 | `enable` | 1 | 0 turns the plugin off: the game runs offline as before, with TLAC's `playerdata.ini` and `scores.ini` |
 | `keep_tlac_player_data` | 0 | While DivaOnline is on, TLAC's `player_data_manager` and `score_saver` are switched off, since the player's data and scores come from the server. 1 keeps them |
+| `reset_device` | 0 | 1 deletes `DEVICE\eeprom.bin`, `DEVICE\sram.bin` and every file `DivaOnline.zip` has a copy of at the next start, then sets itself back to 0 (see below) |
 | `undo_quick_start` | 1 | Undo PD Loader's `quick_start` patch, which skips the card screen |
 | `undo_network_patches` | 0 | Undo the three startup network check patches PD Loader always applies (skip part of the check, no DHCP wait, ignore the location server result). Not needed for ARTEMiS (tested): at 1 startup waits a long time on the Location Server check, which ends NG anyway |
 | `undo_keychip_patches` | 0 | Undo PD Loader's two "skip unnecessary checks" patches (one tells the game the keychip was found before the keychip driver answers). Diagnostic only: with them undone the game ignores START on the title screen |
@@ -97,6 +98,33 @@ The patches are undone at the first file the game opens once `Patches.dva` is lo
 when it calls `glutInit`), after every plugin has loaded and before the game's startup
 checks run. The log lists each site as `original` or `PD Loader patch` at that moment. A site is only
 changed when it holds exactly the bytes PD Loader writes there.
+
+## DivaOnline.zip: known-good device files
+
+The game keeps the arcade board's state in `DEVICE\eeprom.bin` and `DEVICE\sram.bin`, and
+ALL.Net reads its certificates from `billing\`. If those get into a bad state (the card
+system shows NG), a copy from a working install fixes it. Put it in
+`plugins\DivaOnline.zip` with the folders at the top of the archive:
+
+```
+DEVICE\eeprom.bin
+DEVICE\sram.bin
+billing\ca.crt
+billing\billing.pub
+```
+
+Only `DEVICE\` and `billing\` entries are used (stored or deflated, as any zip tool
+makes). At startup, before the game opens them:
+
+- If any of those files in the game folder is newer than the zip, the game has been
+  writing them since, so they're kept; only files missing from the folders are written
+  from the zip.
+- Otherwise every file is written from the zip.
+
+The game then reads and writes the folders as usual. To go back to the zip's copies, set
+`reset_device=1` (the overlay's Online > Reset device data): at the next start the files
+are deleted and written again from the zip. Without a zip, the reset just deletes the
+EEPROM and SRAM and the game makes new ones.
 
 ## TLAC's player data and scores
 

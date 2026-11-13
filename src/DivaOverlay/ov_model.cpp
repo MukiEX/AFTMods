@@ -582,6 +582,10 @@ namespace dov {
             L"The card stays on the reader: no key to hold. For controller-only setups and headsets.", recomp, false)));
         s->items.push_back(from_option(lfs::make_bool(L"keep_tlac_player_data", L"divaonline", ini, L"Keep TLAC data",
             L"Online, your player data and scores come from the server, so playerdata.ini and scores.ini (TLAC's player data manager and score saver) are left alone. On keeps using them.", false, false)));
+        s->items.push_back(from_option(lfs::make_bool(L"reset_device", L"divaonline", ini, L"Reset device data",
+            L"At the next start, DivaOnline deletes the arcade board's saved state (DEVICE\\eeprom.bin, DEVICE\\sram.bin) and "
+            L"any file plugins\\DivaOnline.zip has a copy of, then puts the zip's copies back. Try this when the card system "
+            L"shows NG. It turns itself off again.\n\nWithout DivaOnline.zip the game starts its EEPROM and SRAM afresh.", false, false)));
         out.push_back(s);
         return out;
     }

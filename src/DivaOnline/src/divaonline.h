@@ -14,6 +14,10 @@ void divaonline_log_init(const wchar_t *log_path);
 void tlac_ignore_player_files(const wchar_t *plugins_dir, const wchar_t *game_dir);
 
 const wchar_t *divaonline_plugins_dir(void);
+
+/* devicezip.c: DEVICE\ and billing\ from plugins\DivaOnline.zip, and [divaonline]
+   reset_device. Called at startup, before the hooks open any of those files. */
+void divaonline_device_files(const wchar_t *ini, const wchar_t *plugins_dir, const wchar_t *game_dir);
 const wchar_t *divaonline_game_dir_path(void);
 
 /* "0x2D", "45", "Insert", "F3", "C" -> virtual-key code */
