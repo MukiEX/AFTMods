@@ -10,8 +10,13 @@ layout(set = 0, binding = 0) uniform sampler2D g_presort; //r=coc[sample], g=bac
 layout(set = 0, binding = 1) uniform sampler2D g_color;
 layout(set = 0, binding = 2) uniform sampler2D g_tile; //r=min_depth_m, g=max_coc_pixel
 
+// Two offsets per vec4: the CPU uploads them packed (vec2 data[50]), and a vec4 array has a
+// 16-byte stride in every block layout. A vec2 array doesn't: std140 (and AMD's default
+// layout) gives each element 16 bytes, so AMD read every other offset and then past the end
+// of the buffer, most taps landed on the centre pixel and the near field showed the
+// unblurred half-resolution image (Gaikotsu Gakudan to Riria's foreground gears).
 layout(std140, set = 1, binding = 1) uniform Texcoords {
-    vec2 g_offsets[SAMPLE_MAX_COUNT];
+    vec4 g_offsets[(SAMPLE_MAX_COUNT + 1) / 2];
 };
 
 layout(location = 0) out vec3 result_color;
@@ -29,7 +34,8 @@ void main() {
     const float tile_min_depth = tile.r;
     float coc_pixel_sum = 0.0;
     for (int i = 0; i < SAMPLE_COUNT; i++) {
-        vec2 offset_coc_pixel = g_offsets[i].xy; //[pixel]
+        const vec4 offset_pair = g_offsets[i >> 1];
+        vec2 offset_coc_pixel = (i & 1) == 0 ? offset_pair.xy : offset_pair.zw; //[pixel]
         float offset_max_radius_pixel = ((SAMPLE_MAX_DIVISION - 1) * 0.5) * SCALE_FROM_SAMPLE_TO_PIXEL;
         offset_coc_pixel /= offset_max_radius_pixel; //Normalization
         offset_coc_pixel *= clamp_coc_pixel(tile_max_coc_pixel);

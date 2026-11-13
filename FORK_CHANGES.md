@@ -16,9 +16,12 @@ git diff --stat e3555bb fork/async-pv                 # everything, by file
 ```
 
 Untouched: `src/AFTModsShared`, `src/KKdLib`, `src/OPDPlayGen`, `src/RobTexAnim`,
-`src/SpriteDrawLimit`, `extern`. Two shaders changed (`res/ft_shaders/dof_downsample.frag`,
+`src/SpriteDrawLimit`, `extern`. Three shaders changed (`res/ft_shaders/dof_downsample.frag`,
 `dof_upsample.frag`: their `pow()` inputs are clamped, because Mesa's Turnip driver on Adreno
-produced NaN there), and `res/ft_shaders.farc` was rebuilt with them (`tools/pack_ft_shaders.py`). `res/LakeHP_OpenRooms.dll` is new: open room filters for the headphone surround.
+produced NaN there; `dof_main_filter.frag`: its sample offsets are read as `vec4` pairs, because
+the CPU uploads them packed and a `vec2[]` uniform array has a 16-byte stride on AMD and under
+`std140`, which left the near field unblurred at half resolution on AMD), and `res/ft_shaders.farc`
+was rebuilt with them (`tools/pack_ft_shaders.py`). `res/LakeHP_OpenRooms.dll` is new: open room filters for the headphone surround.
 
 ## New folders (yours to skip)
 

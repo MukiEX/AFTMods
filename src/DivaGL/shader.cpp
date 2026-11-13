@@ -201,7 +201,8 @@ static char* get_uniform_location(char* data, prj::vector_pair<int32_t, std::str
 
         if (DIVA_GL_VERSION_4_2) {
             char buf[0x40];
-            sprintf_s(buf, sizeof(buf), "layout(binding = %d) uniform", binding);
+            // DivaLinux: keep std140; without it the block layout is up to the driver
+            sprintf_s(buf, sizeof(buf), "layout(std140, binding = %d) uniform", binding);
             temp.replace(binding_pos, binding_end_pos + 9 - binding_pos, buf);
         }
         else {
