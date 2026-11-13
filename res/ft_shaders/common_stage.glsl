@@ -84,20 +84,8 @@ vec4 get_light_coef_stage(in const vec3 normal_w, in const vec3 eye_w, in const 
     return lc;
 }
 
-// DivaLinux: the stage's ESM depth map, bilinearly filtered in the shader (a gather of the 2x2
-// footprint, weighted in full precision) rather than by the texture unit. exp2() of the depth
-// difference sharpens every step of the hardware's filter into a hard edge, and the stage map is
-// only 512x512, so on AMD self-shadowed stage objects near the camera came out stepped in
-// shadow-map texels (Gaikotsu Gakudan to Riria's gears) where NVIDIA's filter left them smooth.
-float sample_esm_depth_stage(sampler2D tex, in const vec2 uv) {
-    const vec2 size = vec2(textureSize(tex, 0));
-    const vec2 f = fract(uv * size - 0.5);
-    const vec4 d = textureGather(tex, uv, 0); // x=(0,1) y=(1,1) z=(1,0) w=(0,0)
-    return mix(mix(d.w, d.z, f.x), mix(d.x, d.y, f.x), f.y);
-}
-
 vec4 get_shadow_stage(sampler2D shadow_tex, sampler2D shadow_depth1_tex, in const vec3 texcoord_shadow) {
-    float shadow_depth = sample_esm_depth_stage(shadow_depth1_tex, texcoord_shadow.xy);
+    float shadow_depth = texture(shadow_depth1_tex, texcoord_shadow.xy).x;
     shadow_depth = clamp(exp2((shadow_depth - texcoord_shadow.z) * g_esm_param.x), 0.0, 1.0);
 
     vec4 shadow = texture(shadow_tex, texcoord_shadow.xy);
@@ -106,10 +94,10 @@ vec4 get_shadow_stage(sampler2D shadow_tex, sampler2D shadow_depth1_tex, in cons
 
 vec4 get_shadow_stage(sampler2D shadow0_tex, sampler2D shadow1_tex,
     sampler2D shadow_depth1_tex, in const vec3 texcoord_shadow0, in const vec3 texcoord_shadow1) {
-    float shadow_depth0 = sample_esm_depth_stage(shadow_depth1_tex, texcoord_shadow0.xy);
+    float shadow_depth0 = texture(shadow_depth1_tex, texcoord_shadow0.xy).x;
     shadow_depth0 = clamp(exp2((shadow_depth0 - texcoord_shadow0.z) * g_esm_param.x), 0.0, 1.0);
 
-    float shadow_depth1 = sample_esm_depth_stage(shadow_depth1_tex, texcoord_shadow1.xy);
+    float shadow_depth1 = texture(shadow_depth1_tex, texcoord_shadow1.xy).x;
     shadow_depth1 = clamp(exp2((shadow_depth1 - texcoord_shadow1.z) * g_esm_param.x), 0.0, 1.0);
 
     float shadow_depth = min(shadow_depth0, shadow_depth1);
