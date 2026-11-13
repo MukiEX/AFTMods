@@ -373,13 +373,15 @@ namespace dov {
             auto scale = opt(lfs::make_choice_number(L"reflect_res_scale", L"general", ini, L"Reflection resolution (%)", L"Reflection buffer size. Lower is faster.\n\nDefault: 100", 100, { 25, 50, 75, 100 }, true));
             set_live(scale, hooks, "reflect_res_scale");
 
-            auto lp_full = opt(lfs::make_bool(L"litproj_full_res", L"general", ini, L"Full resolution",
-                L"Stage spotlight patterns (light projection) drawn at the game's resolution instead of 1280x720. "
-                L"Without it, projected light edges come out stepped at high resolutions.\n\nOff is faster.", true, false));
-            set_live(lp_full, hooks, "litproj_full_res");
+            auto lp_full = opt(lfs::make_choice(L"litproj_res", L"general", ini, L"Resolution",
+                L"Resolution of the stage's projected spotlight lighting.\n\n"
+                L"Game: its own 1280x720, stretched; light edges come out stepped on wide or large screens.\n"
+                L"Half: half the game's resolution; smooth, and the default.\n"
+                L"Full: sharpest, but fine metalwork shimmers.", 1, { L"Game", L"Half", L"Full" }));
+            set_live(lp_full, hooks, "litproj_res");
             auto lp_shadow = opt(lfs::make_choice_number(L"litproj_shadow_scale", L"general", ini, L"Shadow size (x)",
                 L"Size of the light projection's shadow map, times the game's 2048x512. Larger keeps the shadows of thin "
-                L"moving objects (spinning gears) from flickering.\n\n1 is the game's and the fastest. Default: 2", 2, { 1, 2, 4 }, true));
+                L"moving objects sharper.\n\n1 is the game's and the fastest. Default: 1", 1, { 1, 2, 4 }, true));
             set_live(lp_shadow, hooks, "litproj_shadow_scale");
             add("Graphics", "Reflections, light projection",
                 { header("Reflections"), full, scale, header("Light projection"), lp_full, lp_shadow });

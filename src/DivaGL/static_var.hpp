@@ -16,7 +16,7 @@ extern int32_t sv_min_storage_buffer_alignment;
 
 extern bool sv_reflect_full;
 extern int32_t sv_reflect_res_scale;
-extern bool sv_litproj_full_res;       // DivaLinux: light projection at the scene's resolution
+extern int32_t sv_litproj_res;         // DivaLinux: light projection target: 0 the game's 1280x720, 1 half the scene's, 2 the scene's
 extern int32_t sv_litproj_shadow_scale; // DivaLinux: light projection shadow map, x the game's 2048x512
 
 extern bool sv_shared_storage_uniform_buffer;

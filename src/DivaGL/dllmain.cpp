@@ -114,9 +114,9 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
         sv_reflect_full = GetPrivateProfileIntW(L"general", L"reflect_full", 0, CONFIG_FILE) > 0 ? true : false;
         sv_reflect_res_scale = GetPrivateProfileIntW(L"general", L"reflect_res_scale", 100, CONFIG_FILE);
         sv_reflect_res_scale = sv_reflect_res_scale > 0 ? clamp_def(sv_reflect_res_scale, 25, 100) : 100;
-        sv_litproj_full_res = GetPrivateProfileIntW(L"general", L"litproj_full_res", 1, CONFIG_FILE) > 0 ? true : false;
+        sv_litproj_res = clamp_def((int32_t)GetPrivateProfileIntW(L"general", L"litproj_res", 1, CONFIG_FILE), 0, 2);
         sv_litproj_shadow_scale = litproj_shadow_scale_clamp((int32_t)GetPrivateProfileIntW(L"general",
-            L"litproj_shadow_scale", 2, CONFIG_FILE));
+            L"litproj_shadow_scale", 1, CONFIG_FILE));
 
         sv_shared_storage_uniform_buffer = GetPrivateProfileIntW(L"experimentals",
             L"shared_storage_uniform_buffer", 1, CONFIG_FILE) > 0 ? true : false;
@@ -222,10 +222,10 @@ extern "C" __declspec(dllexport) BOOL SetOption(const char* str) {
         if (parse_int(val, value))
             sv_reflect_res_scale = value > 0 ? clamp_def(value, 25, 100) : 100;
     }
-    else if (!strncmp(name, "litproj_full_res", name_len)) {
+    else if (!strncmp(name, "litproj_res", name_len)) {
         int32_t value = 0;
-        if (parse_bool(val, val_len, value))
-            sv_litproj_full_res = !!value;
+        if (parse_int(val, value))
+            sv_litproj_res = clamp_def(value, 0, 2);
     }
     else if (!strncmp(name, "litproj_shadow_scale", name_len)) {
         int32_t value = 0;
@@ -304,8 +304,8 @@ extern "C" __declspec(dllexport) BOOL SetOptionInt(const char* name, int value) 
         sv_reflect_full = !!value;
     else if (!strcmp(name, "reflect_res_scale"))
         sv_reflect_res_scale = value > 0 ? clamp_def(value, 25, 100) : 100;
-    else if (!strcmp(name, "litproj_full_res"))
-        sv_litproj_full_res = !!value;
+    else if (!strcmp(name, "litproj_res"))
+        sv_litproj_res = clamp_def(value, 0, 2);
     else if (!strcmp(name, "litproj_shadow_scale"))
         sv_litproj_shadow_scale = litproj_shadow_scale_clamp(value);
     else if (!strcmp(name, "shared_storage_uniform_buffer"))
