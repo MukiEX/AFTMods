@@ -404,6 +404,31 @@ void Shadow::bind_shadow(render_data_context& rend_data_ctx) {
 
     rend_data_ctx.state.bind_sampler(6, 0);
     rend_data_ctx.state.bind_sampler(7, 0);
+
+    // DivaLinux: DIVA_STAGE_SHADOW=soft|esm keeps one of the stage shadow's two terms, for
+    // finding which one goes wrong. The stage shader takes max(soft, exp2((esm - z) * k)), so
+    // a black ESM map (with self-shadow on) leaves the soft shadow, and black soft maps leave
+    // the ESM one.
+    static int stage_shadow_debug = -1;
+    if (stage_shadow_debug < 0) {
+        char v[16] = {};
+        DWORD n = GetEnvironmentVariableA("DIVA_STAGE_SHADOW", v, sizeof(v));
+        stage_shadow_debug = n && n < sizeof(v) ? (!lstrcmpiA(v, "soft") ? 1 : !lstrcmpiA(v, "esm") ? 2 : 0) : 0;
+        if (stage_shadow_debug) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "[DivaLinux] DIVA_STAGE_SHADOW=%s: the stage shadow keeps only its %s term\n",
+                v, stage_shadow_debug == 1 ? "soft (silhouette)" : "ESM (depth)");
+            OutputDebugStringA(buf);
+        }
+    }
+    if (stage_shadow_debug == 1)
+        rend_data_ctx.state.active_bind_texture_2d(20, rctx->empty_texture_2d->glid);
+    else if (stage_shadow_debug == 2) {
+        rend_data_ctx.state.active_bind_texture_2d(6, rctx->empty_texture_2d->glid);
+        rend_data_ctx.state.active_bind_texture_2d(7, rctx->empty_texture_2d->glid);
+    }
+    if (stage_shadow_debug)
+        rend_data_ctx.state.active_texture(0);
 }
 
 // 0x1405E8D40
