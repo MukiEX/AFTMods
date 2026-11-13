@@ -288,15 +288,20 @@ namespace dov {
             auto shadow = opt(lfs::make_bool(L"stereo_shadow_once", L"stereo", ini, L"Shadows once per frame",
                 L"Renders shadows for the first eye only and reuses them for the second: faster, and they look the same.", true, false));
             set_live(shadow, hooks, "stereo_shadow_once");
+            auto hud_once = opt(lfs::make_bool(L"stereo_hud_once", L"stereo", ini, L"HUD drawn once",
+                L"Draws the HUD once per frame and places it into each eye, instead of drawing it for each eye: faster on busy charts, "
+                L"and its depth comes out the same on any screen shape.\n\nHUD effects that darken or tint the picture under them "
+                L"(multiply and overlay blends) are approximate.", false, false));
+            set_live(hud_once, hooks, "stereo_hud_once");
             auto aspect = opt(lfs::make_choice_number(L"stereo_content_aspect", L"stereo", ini, L"Picture shape (x1000)",
                 L"The game picture's aspect ratio x1000: 1778 is 16:9. On screens of another shape, only this part goes into each eye.\n0 uses the whole screen.",
                 1778, { 0, 1333, 1600, 1778, 2000, 2333 }, true));
             set_live(aspect, hooks, "stereo_content_aspect");
-            for (auto& it : { sep, conv, hud, maxp, swap, bg, shadow, aspect }) {
+            for (auto& it : { sep, conv, hud, maxp, swap, bg, shadow, hud_once, aspect }) {
                 it->enabled = on;
                 it->disabled_hint = off_hint;
             }
-            add("Stereo 3D", "Side-by-side 3D, depth, HUD depth", { mode, header("Depth"), sep, conv, maxp, header("Picture"), hud, bg, swap, shadow, aspect });
+            add("Stereo 3D", "Side-by-side 3D, depth, HUD depth", { mode, header("Depth"), sep, conv, maxp, header("Picture"), hud, bg, swap, shadow, hud_once, aspect });
         }
 
         // VR (not on Android without a headset: the flat build has no OpenXR) ----

@@ -57,5 +57,6 @@ extern void stereo_make_eye_cam(const cam_data& center, cam_data& eye, int32_t e
 extern void stereo_eye_begin(int32_t eye_sign);
 extern void stereo_eye_end(int32_t eye_sign);
 extern void stereo_present();
+extern void stereo_composite_hud(uint32_t hud_tex);   // SBS: the once-drawn HUD into each eye's half
 
 extern void stereo_free();

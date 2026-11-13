@@ -270,6 +270,7 @@ void pv_cache_save(render_data_context& rend_data_ctx, int32_t eye) {
 static RenderTexture* hud_layer_rt = 0;
 bool hud_layer_active = false;   // this frame
 bool hud_layer_was = false;
+bool stereo_hud_once_active = false;   // 3D stereo: [stereo] stereo_hud_once, this frame
 extern bool sprite_hud_layer_blend;
 
 bool hud_layer_wanted() {
@@ -280,8 +281,10 @@ bool hud_layer_wanted() {
 #endif
 }
 
-void draw_hud_layer() {
-#ifdef DIVAVK
+// The HUD (sprite list 0) drawn once into the transparent layer target, premultiplied; its
+// texture, or 0. For the VR layer (draw_hud_layer) and for SBS stereo's HUD drawn once
+// (stereo_composite_hud).
+GLuint render_hud_layer_texture() {
     // The HUD layer is shown at the picture's shape: with SBS stereo the window can be 32:9
     // (two 16:9 eyes), but the HUD is one 16:9 picture over both.
     const int32_t h = rctx->screen_height;
@@ -289,7 +292,7 @@ void draw_hud_layer() {
     if (stereo_enabled() && sv_stereo_content_aspect > 0 && h > 0)
         w = (int32_t)(h * (sv_stereo_content_aspect / 1000.0) + 0.5);
     if (w <= 0 || h <= 0)
-        return;
+        return 0;
     if (!hud_layer_rt)
         hud_layer_rt = new RenderTexture;
     if (hud_layer_rt->m_txhd_color && (hud_layer_rt->get_width() != w || hud_layer_rt->get_height() != h))
@@ -318,6 +321,10 @@ void draw_hud_layer() {
         sprite_manager_draw(rend_data_ctx, 0, true,
             rctx->screen_overlay_buffer.get_texture(), set_projection_matrix_2d(false));
         sprite_hud_layer_blend = false;
+        // Back to the screen's resolution for the next frame's other sprite lists, which
+        // don't set it themselves (pass_sprite does, before list 0).
+        sprite_manager_set_res((double_t)rctx->screen_width / (double_t)rctx->screen_height,
+            rctx->screen_width, rctx->screen_height);
         rend_data_ctx.state.enable_cull_face();
         rend_data_ctx.state.disable_blend();
         rend_data_ctx.state.enable_depth_test();
@@ -327,7 +334,12 @@ void draw_hud_layer() {
     rend_data_ctx.state.bind_framebuffer(0);
     rend_data_ctx.state.end_event();
     rend_data_ctx.state.finish();
-    dvk_xr_set_hud_texture(hud_layer_rt->get_texture_glid());
+    return hud_layer_rt->get_texture_glid();
+}
+
+void draw_hud_layer() {
+#ifdef DIVAVK
+    dvk_xr_set_hud_texture(render_hud_layer_texture());
 #endif
 }
 

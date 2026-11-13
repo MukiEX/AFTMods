@@ -34,6 +34,7 @@ extern int32_t sv_stereo_hud_parallax;
 extern int32_t sv_stereo_content_aspect;
 extern bool sv_stereo_bg_infinity;
 extern bool sv_stereo_shadow_once;
+extern bool sv_stereo_hud_once;   // DivaLinux: SBS stereo draws the HUD once, not per eye
 extern int32_t sv_stereo_max_parallax;
 extern int32_t sv_pv_frame_skip;   // PV frame skip
 extern bool sv_vr_hud_layer;   // 3D stereo: VR HUD layer

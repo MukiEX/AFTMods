@@ -142,6 +142,8 @@ bool APIENTRY DllMain(HMODULE handle, DWORD ul_reason_for_call, LPVOID lpReserve
             L"stereo_bg_infinity", 1, CONFIG_FILE) > 0 ? true : false;
         sv_stereo_shadow_once = GetPrivateProfileIntW(L"stereo",
             L"stereo_shadow_once", 1, CONFIG_FILE) > 0 ? true : false;
+        sv_stereo_hud_once = GetPrivateProfileIntW(L"stereo",
+            L"stereo_hud_once", 0, CONFIG_FILE) > 0 ? true : false;
         sv_stereo_max_parallax = clamp_def((int32_t)GetPrivateProfileIntW(L"stereo",
             L"stereo_max_parallax", 20, CONFIG_FILE), 0, 200);
         sv_stereo_content_aspect = clamp_def((int32_t)GetPrivateProfileIntW(L"stereo",
@@ -288,6 +290,11 @@ extern "C" __declspec(dllexport) BOOL SetOption(const char* str) {
         if (parse_bool(val, val_len, value))
             sv_stereo_shadow_once = !!value;
     }
+    else if (!strncmp(name, "stereo_hud_once", name_len)) {
+        int32_t value = 0;
+        if (parse_bool(val, val_len, value))
+            sv_stereo_hud_once = !!value;
+    }
     else if (!strncmp(name, "stereo_content_aspect", name_len)) {
         int32_t value = 0;
         if (parse_int(val, value))
@@ -331,6 +338,8 @@ extern "C" __declspec(dllexport) BOOL SetOptionInt(const char* name, int value) 
         sv_stereo_max_parallax = clamp_def(value, 0, 200);
     else if (!strcmp(name, "stereo_shadow_once"))
         sv_stereo_shadow_once = !!value;
+    else if (!strcmp(name, "stereo_hud_once"))
+        sv_stereo_hud_once = !!value;
     else if (!strcmp(name, "stereo_content_aspect"))
         sv_stereo_content_aspect = clamp_def(value, 0, 10000);
     else

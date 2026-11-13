@@ -58,6 +58,11 @@ extern bool hud_layer_active;   // this frame
 extern bool hud_layer_was;
 bool hud_layer_wanted();
 void draw_hud_layer();
+GLuint render_hud_layer_texture();   // the HUD drawn once into the layer target, premultiplied
+
+// 3D stereo: SBS with [stereo] stereo_hud_once: the HUD isn't drawn in each eye's passes but
+// once after both, then placed into each eye's half with its parallax (stereo_composite_hud)
+extern bool stereo_hud_once_active;   // this frame
 
 // threaded PV
 bool pv_threaded_on();          // the host's schedule asks for it this frame

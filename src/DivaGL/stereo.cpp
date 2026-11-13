@@ -16,7 +16,9 @@
 #include "stereo.hpp"
 #include "camera_render.hpp"
 #include "render_context.hpp"
+#include "render.hpp"
 #include "render_texture.hpp"
+#include "shader_ft.hpp"
 #include "shared.hpp"
 #include "static_var.hpp"
 #include "../AFTModsShared/rob/rob.hpp"
@@ -250,6 +252,48 @@ void stereo_eye_begin(int32_t eye_sign) {
     sprite_stereo_offset[3] = sprite_stereo_offset[0];
 }
 
+// Where an eye's picture comes from in the screen buffer (src) and where it goes in the SBS
+// buffer (dst).
+static void stereo_eye_rects(int32_t eye_sign, int32_t width, int32_t height,
+    int32_t& src_x, int32_t& src_y, int32_t& src_w, int32_t& src_h,
+    int32_t& dst_x, int32_t& dst_y, int32_t& dst_w, int32_t& dst_h) {
+    const bool left_half = (eye_sign < 0) != sv_stereo_swap_eyes;
+    const int32_t half_width = width / 2;
+    const int32_t half_x = left_half ? 0 : width - half_width;
+
+    // The game's picture is 16:9 and sits centred in the screen buffer, with black bars on
+    // screens of any other shape (an ultrawide, say). Take only that picture, so the bars
+    // aren't copied into each eye as well.
+    src_x = 0; src_y = 0; src_w = width; src_h = height;
+    if (sv_stereo_content_aspect > 0) {
+        const double aspect = (double)sv_stereo_content_aspect / 1000.0;
+        if ((double)width / height > aspect + 0.01) {
+            src_w = (int32_t)(height * aspect + 0.5);
+            src_x = (width - src_w) / 2;
+        }
+        else if ((double)width / height < aspect - 0.01) {
+            src_h = (int32_t)(width / aspect + 0.5);
+            src_y = (height - src_h) / 2;
+        }
+    }
+
+    // Half SBS: the picture is squeezed into its half (the display stretches it back).
+    // Full SBS: the picture keeps its shape and is fitted into its half, with bars only
+    // where the half's shape differs from the picture's.
+    dst_x = half_x; dst_y = 0; dst_w = half_width; dst_h = height;
+    if (sv_stereo_mode == STEREO_MODE_SBS_FULL) {
+        const double src_aspect = (double)src_w / src_h;
+        if ((double)half_width / height > src_aspect) {
+            dst_w = (int32_t)(height * src_aspect + 0.5);
+            dst_x = half_x + (half_width - dst_w) / 2;
+        }
+        else {
+            dst_h = (int32_t)(half_width / src_aspect + 0.5);
+            dst_y = (height - dst_h) / 2;
+        }
+    }
+}
+
 void stereo_eye_end(int32_t eye_sign) {
     const int32_t width = rctx->screen_width;
     const int32_t height = rctx->screen_height;
@@ -274,41 +318,8 @@ void stereo_eye_end(int32_t eye_sign) {
         stereo_buffer->end_render(rend_data_ctx.state);
     }
 
-    const bool left_half = (eye_sign < 0) != sv_stereo_swap_eyes;
-    const int32_t half_width = width / 2;
-    const int32_t half_x = left_half ? 0 : width - half_width;
-
-    // The game's picture is 16:9 and sits centred in the screen buffer, with black bars on
-    // screens of any other shape (an ultrawide, say). Take only that picture, so the bars
-    // aren't copied into each eye as well.
-    int32_t src_x = 0, src_y = 0, src_w = width, src_h = height;
-    if (sv_stereo_content_aspect > 0) {
-        const double aspect = (double)sv_stereo_content_aspect / 1000.0;
-        if ((double)width / height > aspect + 0.01) {
-            src_w = (int32_t)(height * aspect + 0.5);
-            src_x = (width - src_w) / 2;
-        }
-        else if ((double)width / height < aspect - 0.01) {
-            src_h = (int32_t)(width / aspect + 0.5);
-            src_y = (height - src_h) / 2;
-        }
-    }
-
-    // Half SBS: the picture is squeezed into its half (the display stretches it back).
-    // Full SBS: the picture keeps its shape and is fitted into its half, with bars only
-    // where the half's shape differs from the picture's.
-    int32_t dst_x = half_x, dst_y = 0, dst_w = half_width, dst_h = height;
-    if (sv_stereo_mode == STEREO_MODE_SBS_FULL) {
-        const double src_aspect = (double)src_w / src_h;
-        if ((double)half_width / height > src_aspect) {
-            dst_w = (int32_t)(height * src_aspect + 0.5);
-            dst_x = half_x + (half_width - dst_w) / 2;
-        }
-        else {
-            dst_h = (int32_t)(half_width / src_aspect + 0.5);
-            dst_y = (height - dst_h) / 2;
-        }
-    }
+    int32_t src_x, src_y, src_w, src_h, dst_x, dst_y, dst_w, dst_h;
+    stereo_eye_rects(eye_sign, width, height, src_x, src_y, src_w, src_h, dst_x, dst_y, dst_w, dst_h);
 
     fbo_blit(rend_data_ctx.state, rctx->screen_buffer.get_fb(), stereo_buffer->get_fb(),
         src_x, src_y, src_w, src_h,
@@ -319,6 +330,65 @@ void stereo_eye_end(int32_t eye_sign) {
     rend_data_ctx.state.finish();
 
     stereo_current_eye = 0;
+}
+
+// [stereo] stereo_hud_once: the HUD (sprite list 0) wasn't drawn in each eye's passes but
+// once, into a transparent premultiplied layer (render_hud_layer_texture). Place it into each
+// eye's half of the SBS buffer with that eye's parallax: shifted, and enlarged about the
+// picture's centre just enough to still reach both of its edges, as the per-eye HUD is. Both
+// are measured against the eye's picture, so the HUD depth means the same on any window shape.
+void stereo_composite_hud(uint32_t hud_tex) {
+    const int32_t width = rctx->screen_width;
+    const int32_t height = rctx->screen_height;
+    if (!hud_tex || !stereo_buffer || !stereo_buffer->m_txhd_color
+        || stereo_buffer_width != width || stereo_buffer_height != height)
+        return;
+
+    render_data_context rend_data_ctx(GL_REND_STATE_POST_2D);
+    rend_data_ctx.state.get();
+    rend_data_ctx.state.begin_event("stereo_composite_hud");
+    stereo_buffer->begin_render(rend_data_ctx.state);
+    rend_data_ctx.state.disable_depth_test();
+    rend_data_ctx.state.disable_cull_face();
+    rend_data_ctx.state.set_color_mask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    rend_data_ctx.state.enable_blend();
+    rend_data_ctx.state.set_blend_func(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   // the layer is premultiplied
+    rend_data_ctx.state.enable_scissor_test();
+    rend_data_ctx.shader_flags.arr[U_REDUCE_TEX] = 0;
+    shaders_ft.set(rend_data_ctx.state, rend_data_ctx.shader_flags, SHADER_FT_REDUCE);
+    rend_data_ctx.state.active_bind_texture_2d(0, hud_tex);
+    rend_data_ctx.state.bind_sampler(0, rctx->render_samplers[0]);   // linear, clamped
+
+    for (int32_t eye_sign = -1; eye_sign <= 1; eye_sign += 2) {
+        int32_t src_x, src_y, src_w, src_h, dst_x, dst_y, dst_w, dst_h;
+        stereo_eye_rects(eye_sign, width, height, src_x, src_y, src_w, src_h, dst_x, dst_y, dst_w, dst_h);
+        if (dst_w <= 0 || dst_h <= 0)
+            continue;
+
+        const float_t offset = (float_t)eye_sign * (float_t)sv_stereo_hud_parallax * 0.001f;   // as sprite_stereo_offset[0]
+        const float_t grow = 1.0f + fabsf(offset) + 0.002f;
+        const float_t w = (float_t)dst_w * grow;
+        const float_t h = (float_t)dst_h * grow;
+        const float_t cx = (float_t)dst_x + (float_t)dst_w * 0.5f * (1.0f + offset);
+        const float_t cy = (float_t)dst_y + (float_t)dst_h * 0.5f;
+        rend_data_ctx.state.set_viewport((GLint)floorf(cx - w * 0.5f + 0.5f), (GLint)floorf(cy - h * 0.5f + 0.5f),
+            (GLsizei)(w + 0.5f), (GLsizei)(h + 0.5f));
+        rend_data_ctx.state.set_scissor(dst_x, dst_y, dst_w, dst_h);
+        render_get()->draw_quad(rend_data_ctx, (int32_t)(w + 0.5f), (int32_t)(h + 0.5f),
+            1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
+    }
+
+    rend_data_ctx.state.disable_scissor_test();
+    rend_data_ctx.state.disable_blend();
+    rend_data_ctx.state.enable_cull_face();
+    rend_data_ctx.state.enable_depth_test();
+    shader::unbind(rend_data_ctx.state);
+    rend_data_ctx.state.active_bind_texture_2d(0, 0);
+    rend_data_ctx.state.bind_sampler(0, 0);
+    stereo_buffer->end_render(rend_data_ctx.state);
+    rend_data_ctx.state.bind_framebuffer(0);
+    rend_data_ctx.state.end_event();
+    rend_data_ctx.state.finish();
 }
 
 void stereo_present() {
