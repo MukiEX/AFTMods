@@ -1532,6 +1532,19 @@ static bool litproj_clear(render_data_context& rend_data_ctx, cam_data& cam) {
     if (!tex)
         return false;
 
+    // DivaLinux: the game makes the light projection target at its own 1280x720 and the
+    // composite stretches it over the picture, so at higher resolutions (and most at 32:9,
+    // 4x across) its hard light edges came out in steps: Gaikotsu Gakudan to Riria's
+    // spot-lit gears. Render it at the scene's resolution instead (upstream has the same
+    // line, commented out, in render_context::ctrl).
+    {
+        const int32_t w = render_get()->render_width[0];
+        const int32_t h = render_get()->render_height[0];
+        if (w > 0 && h > 0 && (!litproj_texture->m_txhd_color
+            || litproj_texture->get_width() != w || litproj_texture->get_height() != h))
+            litproj_texture->create_texture(w, h, 0, GL_RGBA8, GL_DEPTH_COMPONENT32F);
+    }
+
     litproj_texture->begin_render(rend_data_ctx.state);
     litproj_texture->set_viewport(rend_data_ctx.state);
     rend_data_ctx.state.enable_depth_test();
