@@ -6,7 +6,9 @@
     default framebuffer) to <dir>/NNN_<what>_tex<name>_<w>x<h>_<format>.png, plus
     <dir>/index.txt with per-channel min/max/mean of the full-resolution float data.
     Images are written with values clamped to 0..1 and downscaled to at most 960 pixels
-    wide; HDR values above 1 are visible in index.txt.
+    wide; HDR values above 1 are visible in index.txt. DIVALINUX_DUMP_FULL=1 keeps targets
+    at least 1280 pixels wide (the scene and screen passes) at full resolution, for looking
+    at aliasing and sampling problems pixel by pixel.
 */
 
 #include "context.hpp"
@@ -18,6 +20,7 @@
 #include <algorithm>
 #include <vector>
 #include <string>
+#include <cstdlib>
 
 namespace dvk {
     static const char* vk_format_name(VkFormat f) {
@@ -113,7 +116,8 @@ namespace dvk {
                 sum[c] += v;
             }
 
-        int step = std::max(1, (w + 959) / 960);
+        static const bool full = [] { const char* v = std::getenv("DIVALINUX_DUMP_FULL"); return v && *v && *v != '0'; }();
+        int step = full && w >= 1280 ? 1 : std::max(1, (w + 959) / 960);
         int ow = std::max(1, w / step), oh = std::max(1, h / step);
         std::vector<uint8_t> out((size_t)ow * oh * 4);
         for (int y = 0; y < oh; y++) {
