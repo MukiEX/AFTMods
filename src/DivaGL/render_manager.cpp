@@ -1535,11 +1535,20 @@ static bool litproj_clear(render_data_context& rend_data_ctx, cam_data& cam) {
     // DivaLinux: the game makes the light projection target at its own 1280x720 and the
     // composite stretches it over the picture, so at higher resolutions (and most at 32:9,
     // 4x across) its hard light edges came out in steps: Gaikotsu Gakudan to Riria's
-    // spot-lit gears. Render it at the scene's resolution instead (upstream has the same
-    // line, commented out, in render_context::ctrl).
+    // spot-lit gears. With [general] litproj_full_res (on by default) it's drawn at the
+    // scene's resolution instead (upstream has the same line, commented out, in
+    // render_context::ctrl); off goes back to the game's size, for speed.
     {
-        const int32_t w = render_get()->render_width[0];
-        const int32_t h = render_get()->render_height[0];
+        static int32_t game_w = 0, game_h = 0;
+        if (!game_w && litproj_texture->m_txhd_color) {
+            game_w = litproj_texture->get_width();
+            game_h = litproj_texture->get_height();
+        }
+        int32_t w = game_w, h = game_h;
+        if (sv_litproj_full_res) {
+            w = render_get()->render_width[0];
+            h = render_get()->render_height[0];
+        }
         if (w > 0 && h > 0 && (!litproj_texture->m_txhd_color
             || litproj_texture->get_width() != w || litproj_texture->get_height() != h))
             litproj_texture->create_texture(w, h, 0, GL_RGBA8, GL_DEPTH_COMPONENT32F);
@@ -1575,16 +1584,11 @@ static bool litproj_set(render_data_context& rend_data_ctx, cam_data& cam) {
 
     // DivaLinux: the light projection's shadow map is 2048x512 in the game for the whole
     // projected area, so thin moving casters (Gaikotsu Gakudan to Riria's spinning gear
-    // spokes) are a few texels wide and their shadows flicker frame to frame; now that the
-    // projection itself is drawn at the scene's resolution, that shows. Render it at twice
-    // the size by default; DIVA_LITPROJ_SHADOW=1, 2 or 4 picks the scale (1 = the game's).
+    // spokes) are a few texels wide and their shadows flicker frame to frame; with the
+    // projection itself drawn at the scene's resolution, that shows. [general]
+    // litproj_shadow_scale renders it at 1, 2 (the default) or 4 times the game's size.
     {
-        static const int32_t scale = [] {
-            char v[8] = {};
-            DWORD n = GetEnvironmentVariableA("DIVA_LITPROJ_SHADOW", v, sizeof(v));
-            int32_t s = n && n < sizeof(v) ? atoi(v) : 2;
-            return s >= 4 ? 4 : s >= 2 ? 2 : 1;
-        }();
+        const int32_t scale = sv_litproj_shadow_scale >= 4 ? 4 : sv_litproj_shadow_scale >= 2 ? 2 : 1;
         const int32_t w = 2048 * scale, h = 512 * scale;
         for (int32_t i = 0; i < 2; i++) {
             RenderTexture& rt = litproj_shadow[i];

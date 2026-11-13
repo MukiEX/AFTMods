@@ -222,7 +222,7 @@ int main(int argc, char** argv) {
         idle(30);
         int idx = -1;
         for (size_t i = 0; i < model.sections.size(); i++)
-            if (model.sections[i]->title == want) idx = (int)i;
+            if (idx < 0 && model.sections[i]->title == want) idx = (int)i;   // the first, e.g. DivaLinux's Graphics before Android's
         if (idx < 0) fprintf(stderr, "no section %s\n", want);
         for (int i = 0; i < idx; i++) press(&dov::Input::down);
         idle(30);

@@ -14,6 +14,8 @@ int32_t sv_min_storage_buffer_alignment = 0x100;
 
 bool sv_reflect_full = true;
 int32_t sv_reflect_res_scale = 100;
+bool sv_litproj_full_res = true;
+int32_t sv_litproj_shadow_scale = 2;
 
 bool sv_shared_storage_uniform_buffer = false;
 
