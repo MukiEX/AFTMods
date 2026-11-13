@@ -556,6 +556,11 @@ namespace dov {
         s->items.push_back(from_option(lfs::make_bool(L"enable", L"divaonline", ini, L"Online play",
             L"Log in with your Aime card and play on the ARTEMiS server in DivaOnline.ini ([dns] default, [aime] accessCode).\n\n"
             L"Off: the game is offline, with playerdata.ini and scores.ini.", !recomp, false)));
+        s->items.push_back(from_option(lfs::make_choice_text(L"reader", L"aime", ini, L"Card reader",
+            L"A real card reader (an ACR122U) on USB: auto finds it, and the card tapped on it is the one used. "
+            L"none: the card comes from accessCode / felicaIdm in DivaOnline.ini.\n\n"
+            L"With a reader, turn Auto card tap off, or your access code logs in by itself whenever no card is on the reader.",
+            L"none", { L"none", L"auto" }, false, false)));
         s->items.push_back(from_option(lfs::make_bool(L"autoInsert", L"aime", ini, L"Auto card tap",
             L"The card stays on the reader: no key to hold. For controller-only setups and headsets.", recomp, false)));
         s->items.push_back(from_option(lfs::make_bool(L"keep_tlac_player_data", L"divaonline", ini, L"Keep TLAC data",

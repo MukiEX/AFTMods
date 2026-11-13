@@ -79,12 +79,21 @@ namespace lfs {
         return out;
     }
 
+#ifndef _WIN32
+    // the overlay preview (Linux): Windows paths as built for the game, with backslashes
+    static std::string host_path(const wchar_t* path) {
+        std::string p = to_utf8(path);
+        for (auto& c : p) if (c == '\\') c = '/';
+        return p;
+    }
+#endif
+
     static bool file_exists(const wchar_t* path) {
 #ifdef _WIN32
         return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
 #else
         struct stat st;
-        return stat(to_utf8(path).c_str(), &st) == 0;
+        return stat(host_path(path).c_str(), &st) == 0;
 #endif
     }
 
@@ -92,7 +101,7 @@ namespace lfs {
 #ifdef _WIN32
         return s_ini.LoadFile(path);
 #else
-        return s_ini.LoadFile(to_utf8(path).c_str());
+        return s_ini.LoadFile(host_path(path).c_str());
 #endif
     }
 
@@ -103,7 +112,7 @@ namespace lfs {
 #ifdef _WIN32
         s_ini.SaveFile(path, false);
 #else
-        s_ini.SaveFile(to_utf8(path).c_str(), false);
+        s_ini.SaveFile(host_path(path).c_str(), false);
 #endif
     }
 

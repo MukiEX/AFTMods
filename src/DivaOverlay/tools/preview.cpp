@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
     put(game + "/plugins/components.ini", "[components]\nfast_loader=true\nfast_loader_speed=12\nframe_rate_manager=true\n");
     put(game + "/plugins/DivaLinux.ini", "[stereo]\nstereo_mode=1\nstereo_hud_parallax=-12\n[cursor]\npointer=1\n");
     put(game + "/plugins/DivaOnline.dva", "");   // the Online section shows when the plugin is there
-    put(game + "/plugins/DivaOnline.ini", "[divaonline]\nenable=0\n[aime]\nautoInsert=1\n");
+    put(game + "/plugins/DivaOnline.ini", "[divaonline]\nenable=0\n[aime]\nreader=auto\nautoInsert=1\n");
     put(game + "/divarecomp_env.txt", "# Odin 3\nDIVA_VULKAN_DRIVER=turnip   # Odin driver\n#DIVA_DOF=0\n");
 
     dov::ModelPaths p;
