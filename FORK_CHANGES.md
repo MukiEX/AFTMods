@@ -20,8 +20,10 @@ Untouched: `src/AFTModsShared`, `src/KKdLib`, `src/OPDPlayGen`, `src/RobTexAnim`
 `dof_upsample.frag`: their `pow()` inputs are clamped, because Mesa's Turnip driver on Adreno
 produced NaN there; `dof_main_filter.frag`: its sample offsets are read as `vec4` pairs, because
 the CPU uploads them packed and a `vec2[]` uniform array has a 16-byte stride on AMD and under
-`std140`, which left the near field unblurred at half resolution on AMD), and `res/ft_shaders.farc`
-was rebuilt with them (`tools/pack_ft_shaders.py`). `res/LakeHP_OpenRooms.dll` is new: open room filters for the headphone surround.
+`std140`, which left the near field unblurred at half resolution on AMD; `common_stage.glsl`: the
+stage's 512x512 ESM shadow depth is filtered in the shader with a `textureGather`, because AMD's
+texture-unit filtering of it came out stepped in shadow-map texels once `exp2()` sharpened it), and
+`res/ft_shaders.farc` was rebuilt with them (`tools/pack_ft_shaders.py`). `res/LakeHP_OpenRooms.dll` is new: open room filters for the headphone surround.
 
 ## New folders (yours to skip)
 
