@@ -376,8 +376,8 @@ namespace dov {
             auto lp_full = opt(lfs::make_choice(L"litproj_res", L"general", ini, L"Resolution",
                 L"Resolution of the stage's projected spotlight lighting.\n\n"
                 L"Game: its own 1280x720, stretched; light edges come out stepped on wide or large screens.\n"
-                L"Half: half the game's resolution; smooth, and the default.\n"
-                L"Full: sharpest, but fine metalwork shimmers.", 1, { L"Game", L"Half", L"Full" }));
+                L"Half: half the game's resolution; softer and faster.\n"
+                L"Full: the game's resolution, sharp metalwork included. The default.", 2, { L"Game", L"Half", L"Full" }));
             set_live(lp_full, hooks, "litproj_res");
             auto lp_shadow = opt(lfs::make_choice_number(L"litproj_shadow_scale", L"general", ini, L"Shadow size (x)",
                 L"Size of the light projection's shadow map, times the game's 2048x512. Larger keeps the shadows of thin "
