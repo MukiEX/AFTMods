@@ -265,6 +265,7 @@ namespace rndr {
         gl_state.get();
         pv_frame_begin();   // PV frame skip
         hud_layer_active = hud_layer_wanted();   // 3D stereo: VR HUD layer
+        stereo_hud_once_active = stereo_enabled() && sv_stereo_hud_once && !hud_layer_active;   // 3D stereo
         LARGE_INTEGER render_start;   // DivaLinux: the frame-time log
         QueryPerformanceCounter(&render_start);
         sprite_manager_pre_draw();
@@ -445,6 +446,10 @@ namespace rndr {
             stereo_eye_end(eye_sign);
         }
 
+        // 3D stereo: the HUD once for both eyes
+        if (stereo_hud_once_active)
+            stereo_composite_hud(render_hud_layer_texture());
+
         stereo_present();
 
         rctx->render_manager_cam = center_cam;
@@ -525,17 +530,29 @@ namespace rndr {
         rend_data_ctx.state.begin_event("pass_shadow");
         rend_data_ctx.state.begin_event("texproj");
         cam_data texproj_cam;
-        if (litproj_set(rend_data_ctx, texproj_cam)) {
-            rend_data_ctx.set_batch_scene_camera(texproj_cam);
-            disp_manager->draw(rend_data_ctx, mdl::OBJ_TYPE_OPAQUE, texproj_cam);
-            disp_manager->draw(rend_data_ctx, mdl::OBJ_TYPE_TRANSPARENT, texproj_cam);
-            disp_manager->draw(rend_data_ctx, mdl::OBJ_TYPE_TRANSLUCENT, texproj_cam);
+        // 3D stereo: the light projection's shadow map is drawn from the spotlight, so the
+        // first eye's is what the second would draw; with stereo_shadow_once the second eye
+        // goes straight to its own lit pass (litproj_clear, from this eye's camera).
+        thread_local bool litproj_shadow_drawn = false;
+        bool litproj_on;
+        if (stereo_reuse_shadow_maps() && litproj_shadow_drawn)
+            litproj_on = true;
+        else {
+            litproj_on = litproj_set(rend_data_ctx, texproj_cam);
+            litproj_shadow_drawn = litproj_on;
+            if (litproj_on) {
+                rend_data_ctx.set_batch_scene_camera(texproj_cam);
+                disp_manager->draw(rend_data_ctx, mdl::OBJ_TYPE_OPAQUE, texproj_cam);
+                disp_manager->draw(rend_data_ctx, mdl::OBJ_TYPE_TRANSPARENT, texproj_cam);
+                disp_manager->draw(rend_data_ctx, mdl::OBJ_TYPE_TRANSLUCENT, texproj_cam);
 
-            rctx->draw_state_rend_data[rend_data_ctx.index].shader_index = -1;
-            rend_data_ctx.shader_flags.arr[U_DEPTH] = 0;
-            apply_esm_filter(rend_data_ctx, &litproj_shadow[0],
-                &litproj_shadow[1], 0, 1.5f, 0.01f, true);
-
+                rctx->draw_state_rend_data[rend_data_ctx.index].shader_index = -1;
+                rend_data_ctx.shader_flags.arr[U_DEPTH] = 0;
+                apply_esm_filter(rend_data_ctx, &litproj_shadow[0],
+                    &litproj_shadow[1], 0, 1.5f, 0.01f, true);
+            }
+        }
+        if (litproj_on) {
             if (litproj_clear(rend_data_ctx, texproj_cam)) {
                 for (int32_t i = LIGHT_SET_MAIN; i < LIGHT_SET_MAX; i++)
                     lighting_set(rend_data_ctx, (light_set_id)i);
@@ -1156,7 +1173,8 @@ namespace rndr {
         rend_data_ctx.state.begin_event("pass_sprite");
         // 3D stereo: VR HUD layer
         // With the HUD layer on, the HUD goes to its own target after the passes (draw_hud_layer)
-        if (!hud_layer_active && sprite_manager_reqlist_count(0)) {   // threaded PV: the calling thread's
+        // 3D stereo: with stereo_hud_once it's drawn once after both eyes (stereo_composite_hud)
+        if (!hud_layer_active && !stereo_hud_once_active && sprite_manager_reqlist_count(0)) {   // threaded PV: the calling thread's
             rend_data_ctx.state.set_viewport(0, 0, render->screen_width, render->screen_height);
 
             if (multisample && multisample_framebuffer) {
