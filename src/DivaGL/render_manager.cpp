@@ -1573,8 +1573,31 @@ static bool litproj_set(render_data_context& rend_data_ctx, cam_data& cam) {
     static const vec4 color_clear = 0.0f;
     static const GLfloat depth_clear = 1.0f;
 
+    // DivaLinux: the light projection's shadow map is 2048x512 in the game for the whole
+    // projected area, so thin moving casters (Gaikotsu Gakudan to Riria's spinning gear
+    // spokes) are a few texels wide and their shadows flicker frame to frame; now that the
+    // projection itself is drawn at the scene's resolution, that shows. Render it at twice
+    // the size by default; DIVA_LITPROJ_SHADOW=1, 2 or 4 picks the scale (1 = the game's).
+    {
+        static const int32_t scale = [] {
+            char v[8] = {};
+            DWORD n = GetEnvironmentVariableA("DIVA_LITPROJ_SHADOW", v, sizeof(v));
+            int32_t s = n && n < sizeof(v) ? atoi(v) : 2;
+            return s >= 4 ? 4 : s >= 2 ? 2 : 1;
+        }();
+        const int32_t w = 2048 * scale, h = 512 * scale;
+        for (int32_t i = 0; i < 2; i++) {
+            RenderTexture& rt = litproj_shadow[i];
+            if (!rt.m_txhd_color || (rt.get_width() == w && rt.get_height() == h))
+                continue;
+            const GLenum color_format = rt.m_txhd_color->internal_format;
+            const GLenum depth_format = rt.m_txhd_depth ? rt.m_txhd_depth->internal_format : GL_ZERO;
+            rt.create_texture(w, h, 0, color_format, depth_format);
+        }
+    }
+
     litproj_shadow[0].begin_render(rend_data_ctx.state);
-    rend_data_ctx.state.set_viewport(0, 0, 2048, 512);
+    rend_data_ctx.state.set_viewport(0, 0, litproj_shadow[0].get_width(), litproj_shadow[0].get_height());
     rend_data_ctx.state.enable_depth_test();
     rend_data_ctx.state.set_depth_mask(GL_TRUE);
     rend_data_ctx.state.clear_buffer(GL_COLOR, 0, (float_t*)&color_clear);
