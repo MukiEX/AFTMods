@@ -2,6 +2,8 @@
    ALL.Net keep in the game folder, with the folders at the top of the archive:
      DEVICE\eeprom.bin, DEVICE\sram.bin, ...   the arcade board's EEPROM and SRAM
      billing\ca.crt, billing\billing.pub       ALL.Net's billing certificates
+     firm\837_15084_1_01.hex, ...              the reader and LED boards' firmware, which the
+                                              game's updater reads from .\firm\
    At startup, before anything opens them:
    - [divaonline] reset_device = 1 deletes DEVICE\eeprom.bin and DEVICE\sram.bin, and every
      file the zip has a copy of, then sets itself back to 0 (the overlay's "Reset device data").
@@ -9,7 +11,7 @@
      they are (the game has been writing them); only files missing from them come from the
      zip. Otherwise every file is written out from the zip. Either way the game then reads
      and writes the folders as before, so its changes stay until the zip is replaced.
-   Only DEVICE\ and billing\ entries are used. */
+   Only DEVICE\, billing\ and firm\ entries are used. */
 
 #include <windows.h>
 
@@ -85,7 +87,7 @@ static bool devicezip_write_file(const wchar_t *path, const uint8_t *data, size_
     return ok;
 }
 
-/* DEVICE/x or billing/x (either slash, any case), no "..", ASCII; game_dir\DEVICE\x */
+/* DEVICE/x, billing/x or firm/x (either slash, any case), no "..", ASCII; game_dir\DEVICE\x */
 static bool devicezip_dest(const wchar_t *game_dir, const char *name, wchar_t *out, size_t cap)
 {
     size_t gl = wcslen(game_dir), nl = strlen(name);
@@ -94,13 +96,16 @@ static bool devicezip_dest(const wchar_t *game_dir, const char *name, wchar_t *o
         return false;
     }
 
-    if (_strnicmp(name, "DEVICE", 6) != 0 && _strnicmp(name, "billing", 7) != 0) {
-        return false;
+    static const char *tops[] = { "DEVICE", "billing", "firm" };
+    bool allowed = false;
+
+    for (size_t i = 0; i < _countof(tops) && !allowed; i++) {
+        size_t tl = strlen(tops[i]);
+
+        allowed = nl > tl && _strnicmp(name, tops[i], tl) == 0 && (name[tl] == '/' || name[tl] == '\\');
     }
 
-    size_t top = name[0] == 'D' || name[0] == 'd' ? 6 : 7;
-
-    if (name[top] != '/' && name[top] != '\\') {
+    if (!allowed) {
         return false;
     }
 
@@ -216,7 +221,7 @@ void divaonline_device_files(const wchar_t *ini, const wchar_t *plugins_dir, con
     }
 
     if (count == 0) {
-        dprintf("Device files: %S has no DEVICE\\ or billing\\ files\n", zip_path);
+        dprintf("Device files: %S has no DEVICE\\, billing\\ or firm\\ files\n", zip_path);
         free(data);
 
         return;

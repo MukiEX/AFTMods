@@ -102,7 +102,8 @@ changed when it holds exactly the bytes PD Loader writes there.
 ## DivaOnline.zip: known-good device files
 
 The game keeps the arcade board's state in `DEVICE\eeprom.bin` and `DEVICE\sram.bin`, and
-ALL.Net reads its certificates from `billing\`. If those get into a bad state (the card
+ALL.Net reads its certificates from `billing\`, and the card reader's firmware updater
+reads `firm\` at startup (`firm\837_15084_1_01.hex` and the others). If those get into a bad state (the card
 system shows NG), a copy from a working install fixes it. Put it in
 `plugins\DivaOnline.zip` with the folders at the top of the archive:
 
@@ -111,9 +112,12 @@ DEVICE\eeprom.bin
 DEVICE\sram.bin
 billing\ca.crt
 billing\billing.pub
+firm\837-15286-P_LPC1112_NFC_RW_LED_BD_0x92.bin
+firm\837_15084_1_01.hex
+firm\TN32MSEC003S_V12.hex
 ```
 
-Only `DEVICE\` and `billing\` entries are used (stored or deflated, as any zip tool
+Only `DEVICE\`, `billing\` and `firm\` entries are used (stored or deflated, as any zip tool
 makes). At startup, before the game opens them:
 
 - If any of those files in the game folder is newer than the zip, the game has been

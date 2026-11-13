@@ -237,7 +237,7 @@ static void divaonline_start(void)
     device_dir[_countof(device_dir) - 1] = L'\0';
     CreateDirectoryW(device_dir, NULL);
 
-    /* DivaOnline.zip's DEVICE\ and billing\ files, and the overlay's reset */
+    /* DivaOnline.zip's DEVICE\, billing\ and firm\ files, and the overlay's reset */
     divaonline_device_files(divaonline_ini, divaonline_plugins, divaonline_game_dir);
 
     /* Config load: segatools.ini's sections ([keychip], [dns], [netenv],
