@@ -12,8 +12,9 @@
      2 can't be read is ignored (its UID is not an access code).
 
    The reader's own "get data" and MIFARE commands (FF xx ...) are PC/SC part 3
-   pseudo-APDUs the reader answers itself, so nothing here speaks the NFC chip
-   directly. Under the DivaRecomp runtime (Android), winscard.dll is the
+   pseudo-APDUs the reader answers itself. One PN532 command goes through too:
+   each look polls for the card over the air, since an ACR122U keeps reporting
+   the last card it saw after it has gone (reader_card_answers). Under the DivaRecomp runtime (Android), winscard.dll is the
    runtime's: a CCID reader on USB.
 
    winscard.dll is loaded only when a reader is configured. */
@@ -162,6 +163,46 @@ static bool reader_read_mifare(ULONG_PTR card, DWORD proto, uint8_t code[10])
     return false;
 }
 
+/* Is the card really there? The ACR122U keeps reporting the last card it saw (FeliCa
+   especially) after it has left, even to a program started later, until the reader sees
+   another card or is replugged: "get data" answers from that memory. So the card is
+   polled for over the air, through the reader's direct-transmit pseudo-APDU
+   (FF 00 00 00 Lc + a PN532 command): InListPassiveTarget, FeliCa 212 kbps or ISO 14443A,
+   then InRelease so the reader carries on as before.
+   1: the card with this ID answered, 0: nothing (or another card) answered, -1: the
+   reader doesn't take direct commands (then "get data" is all there is). */
+static int reader_card_answers(ULONG_PTR card, DWORD proto, const BYTE *uid, int n)
+{
+    static const BYTE poll_felica[] = { 0xFF, 0x00, 0x00, 0x00, 0x09,
+                                        0xD4, 0x4A, 0x01, 0x01, 0x00, 0xFF, 0xFF, 0x01, 0x00 };
+    static const BYTE poll_a[] = { 0xFF, 0x00, 0x00, 0x00, 0x04, 0xD4, 0x4A, 0x01, 0x00 };
+    static const BYTE release[] = { 0xFF, 0x00, 0x00, 0x00, 0x03, 0xD4, 0x52, 0x00 };
+    BYTE r[64];
+    int len;
+    int found = 0;
+
+    len = reader_ok(card, proto, n == 8 ? poll_felica : poll_a,
+                    n == 8 ? sizeof(poll_felica) : sizeof(poll_a), r, sizeof(r));
+
+    if (len < 3 || r[0] != 0xD5 || r[1] != 0x4B) {
+        return -1;
+    }
+
+    if (r[2] >= 1) {
+        if (n == 8) {
+            /* D5 4B 01 Tg len 01 IDm[8] PMm[8] ... */
+            found = len >= 14 && r[5] == 0x01 && memcmp(r + 6, uid, 8) == 0;
+        } else {
+            /* D5 4B 01 Tg SENS_RES[2] SEL_RES NFCIDLength NFCID... */
+            found = len >= 8 && r[7] == n && len >= 8 + n && memcmp(r + 8, uid, (size_t) n) == 0;
+        }
+    }
+
+    reader_ok(card, proto, release, sizeof(release), NULL, 0);
+
+    return found;
+}
+
 /* One look at the reader. 1: a card was read, 0: no card, -1: the reader is gone */
 static int reader_poll_once(ULONG_PTR ctx, const char *name)
 {
@@ -172,6 +213,7 @@ static int reader_poll_once(ULONG_PTR ctx, const char *name)
     static bool last_felica;
     static uint64_t last_idm;
     static uint8_t last_code[10];
+    static uint64_t logged_idm;     /* said once per tap, however often the reader re-reads it */
     ULONG_PTR card;
     DWORD proto = 0;
     BYTE uid[16];
@@ -201,6 +243,31 @@ static int reader_poll_once(ULONG_PTR ctx, const char *name)
         return 0;
     }
 
+    {
+        static bool warned_direct;
+        int there = reader_card_answers(card, proto, uid, n);
+
+        if (there == 0) {
+            /* the reader remembers a card that isn't on it */
+            sc.disc(card, R_LEAVE_CARD);
+
+            if (last_uid_len != 0 || logged_idm != 0) {
+                dprintf("Reader: card removed\n");
+            }
+
+            logged_idm = 0;
+
+            last_uid_len = 0;
+
+            return 0;
+        }
+
+        if (there < 0 && !warned_direct) {
+            dprintf("Reader: this reader doesn't take direct commands; trusting it to say when a card has left\n");
+            warned_direct = true;
+        }
+    }
+
     if (n == last_uid_len && memcmp(uid, last_uid, (size_t) n) == 0) {
         sc.disc(card, R_LEAVE_CARD);    /* the same card: as read before */
     } else {
@@ -217,7 +284,11 @@ static int reader_poll_once(ULONG_PTR ctx, const char *name)
 
             last_felica = true;
             last_ok = true;
-            dprintf("Reader: FeliCa card %016llX\n", (unsigned long long) last_idm);
+
+            if (last_idm != logged_idm) {
+                dprintf("Reader: FeliCa card %016llX\n", (unsigned long long) last_idm);
+                logged_idm = last_idm;
+            }
         } else {
             last_felica = false;
             last_ok = reader_read_mifare(card, proto, last_code);
