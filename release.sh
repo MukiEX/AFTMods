@@ -16,6 +16,11 @@
 #   AFTMods-<version>.zip  plugins/DivaLinux.dva, plugins/Launcher.dva,
 #                          plugins/LakeHP_OpenRooms.dll, tools/divalinux_pack.py, docs and
 #                          third-party licences
+#   AFTMods-DivaOnline-<version>.zip
+#                          plugins/DivaOnline.dva and the sample plugins/DivaOnline.ini (Aime
+#                          card and ALL.Net/ARTEMiS), its README and licences. A zip of its
+#                          own, because a DivaOnline.dva in plugins/ turns online play on.
+#                          BUILD_DIVAONLINE=0 (as for docker/build.sh) releases without it.
 # (The plain-OpenGL DivaGL.dva is retired and not released.)
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -55,12 +60,16 @@ if [ "$BUILD" = 1 ]; then
     docker run --rm --ulimit nofile=65536:65536 -v "$PWD:/src:z" --entrypoint /src/docker/build.sh aftmods-msvc
 fi
 
-for f in DivaLinux.dva Launcher.dva; do
+DIVAONLINE=${BUILD_DIVAONLINE:-1}
+DVAS="DivaLinux.dva Launcher.dva"
+[ "$DIVAONLINE" = 1 ] && DVAS="$DVAS DivaOnline.dva"
+for f in $DVAS; do
     [ -f "out/$f" ] || { echo "out/$f is missing; build first (or use --build)" >&2; exit 1; }
 done
 # DVAs older than the last commit were probably built from older source
 LAST_COMMIT_TIME=$(git log -1 --format=%ct)
-for f in out/DivaLinux.dva out/Launcher.dva; do
+for f in $DVAS; do
+    f="out/$f"
     if [ "$(stat -c %Y "$f")" -lt "$LAST_COMMIT_TIME" ]; then
         echo "!! $f is older than the last commit ($COMMIT); rebuild (--build) unless that's intended." >&2
     fi
@@ -148,7 +157,54 @@ Copy rom.zip and mdata\\*.zip into the game folder on the device.
 Steam Deck / Proton: launch option  WINEDLLOVERRIDES="dinput8=n,b" %command%
 Details: docs\\DivaLinux_README.md and docs\\RELEASE_NOTES.md. DivaGL and its shaders are
 korenkonder's work; credit them in anything you make with it (see docs\\AFTMods_README.md).
+
+Online play (Aime card and ALL.Net, for an ARTEMiS server) is DivaOnline.dva, released as
+AFTMods-DivaOnline-$VERSION.zip next to this one.
 EOF
+
+# ---- DivaOnline (its own zip: a DivaOnline.dva in plugins\ turns online play on)
+if [ "$DIVAONLINE" = 1 ]; then
+    ONL="$STAGE/AFTMods-DivaOnline-$VERSION"
+    mkdir -p "$ONL/plugins" "$ONL/docs" "$ONL/licenses"
+    cp out/DivaOnline.dva "$ONL/plugins/"
+    cp src/DivaOnline/DivaOnline.ini "$ONL/plugins/"
+    cp src/DivaOnline/README.md "$ONL/docs/DivaOnline_README.md"
+    cp RELEASE_NOTES.md "$ONL/docs/RELEASE_NOTES.md"
+    cp src/DivaOnline/third_party/segatools/LICENSE "$ONL/licenses/segatools.txt"
+    cp src/DivaOnline/third_party/capnhook/LICENSE "$ONL/licenses/capnhook.txt"
+    cat > "$ONL/INSTALL.txt" <<EOF
+DivaOnline $VERSION (AFTMods, MukiEX fork, built from $COMMIT) - Aime card and ALL.Net
+
+For Hatsune Miku: Project DIVA Arcade Future Tone 7.10 (not Mega Mix+) under PD Loader:
+the game logs in with an Aime card and plays on an ARTEMiS server, without segatools'
+inject.exe. It's segatools' divahook as a PD Loader plugin.
+
+Unzip into the game folder (the one with diva.exe), so the files land in plugins\\.
+
+  plugins\\DivaOnline.dva  The plugin. With it in plugins\\ the game is online: remove it,
+                          or set [divaonline] enable=0, to play offline as before.
+  plugins\\DivaOnline.ini  Settings, every key commented. Set at least:
+                            [aime] accessCode=  your card's 20-digit access code
+                            [dns]  default=     your ARTEMiS server
+                          UPDATING: keep your own DivaOnline.ini (don't overwrite it with
+                          this sample).
+
+On the card screen, hold Insert (or R3, or L2 + R2 on a gamepad) to tap the card.
+[aime] reader=auto reads a real card on a PC/SC reader such as an ACR122U.
+
+While online, TLAC's playerdata.ini and scores.ini are switched off for the run (your
+profile and scores come from the server); nothing is edited.
+
+The game also needs the arcade's certificate and card reader firmware files from a working
+install. A known-good copy in plugins\\DivaOnline.zip is restored at startup (see the
+README, "DivaOnline.zip").
+
+With DivaLinux.dva 0.1.6 or newer, the in-game settings menu (F10) has Game > Online.
+
+Details: docs\\DivaOnline_README.md. segatools is public domain and capnhook MIT
+(licenses\\).
+EOF
+fi
 
 # ---- zip, checksums, notes
 python3 - "$STAGE" "$OUT" <<'PY'
